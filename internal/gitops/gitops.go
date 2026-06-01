@@ -119,6 +119,14 @@ func CloneWithProgress(ctx context.Context, cloneURL, path, username, token stri
 }
 
 func CopyProjectDirectory(ctx context.Context, src, dst string) error {
+	return copyProjectDirectoryWithOptions(ctx, src, dst, false)
+}
+
+func CopyProjectDirectoryWithNodeModules(ctx context.Context, src, dst string) error {
+	return copyProjectDirectoryWithOptions(ctx, src, dst, true)
+}
+
+func copyProjectDirectoryWithOptions(ctx context.Context, src, dst string, includeNodeModules bool) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -144,7 +152,9 @@ func CopyProjectDirectory(ctx context.Context, src, dst string) error {
 	if err := os.MkdirAll(stagingDst, 0755); err != nil {
 		return err
 	}
-	if err := copyDirRecursive(ctx, expandedSrc, stagingDst, false); err != nil {
+	if err := copyDirRecursiveWithOptions(ctx, expandedSrc, stagingDst, false, copyOptions{
+		IncludeNodeModules: includeNodeModules,
+	}); err != nil {
 		return err
 	}
 	if hasGitMetadata(expandedSrc) {
@@ -158,6 +168,10 @@ func CopyProjectDirectory(ctx context.Context, src, dst string) error {
 		return fmt.Errorf(errs.FmtCopyDirMoveFail, err)
 	}
 	return nil
+}
+
+type copyOptions struct {
+	IncludeNodeModules bool
 }
 
 func EnsureSnapshotRepository(ctx context.Context, referencePath, path string) (bool, error) {
@@ -580,6 +594,10 @@ func initGitRepository(ctx context.Context, path, branch string) error {
 }
 
 func copyDirRecursive(ctx context.Context, src, dst string, publishMode bool) error {
+	return copyDirRecursiveWithOptions(ctx, src, dst, publishMode, copyOptions{})
+}
+
+func copyDirRecursiveWithOptions(ctx context.Context, src, dst string, publishMode bool, options copyOptions) error {
 	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err

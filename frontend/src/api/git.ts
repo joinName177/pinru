@@ -86,6 +86,22 @@ export interface ImportLocalSourcesResult {
   details: ImportLocalSourceDetail[];
 }
 
+export interface CustomProjectCandidate {
+  name: string;
+  path: string;
+  questionId: number;
+  targetPath: string;
+}
+
+export interface CustomProjectCandidateScanResult {
+  projectId: string;
+  projectName: string;
+  rootPath: string;
+  totalCount: number;
+  skippedCount: number;
+  candidates: CustomProjectCandidate[];
+}
+
 export interface QuestionBankSyncDetail {
   questionId: number;
   displayName: string;
@@ -180,6 +196,21 @@ export async function listQuestionBankItems(projectId: string): Promise<Question
 
 export async function scanLocalQuestionBank(projectId: string): Promise<ImportLocalSourcesResult> {
   return callService('GitService', 'ScanLocalQuestionBank', projectId);
+}
+
+export async function scanCustomProjects(projectId: string): Promise<ImportLocalSourcesResult> {
+  return callService('GitService', 'ScanCustomProjects', projectId);
+}
+
+export async function scanCustomProjectCandidates(projectId: string): Promise<CustomProjectCandidateScanResult> {
+  return callService('GitService', 'ScanCustomProjectCandidates', projectId);
+}
+
+export async function importSelectedCustomProjects(
+  projectId: string,
+  projectNames: string[],
+): Promise<ImportLocalSourcesResult> {
+  return callService('GitService', 'ImportSelectedCustomProjects', projectId, projectNames);
 }
 
 export async function syncGitLabQuestionBank(

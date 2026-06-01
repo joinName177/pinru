@@ -630,6 +630,107 @@ func TestImportLocalSourcesMigratesDirectoryAndPrefersDirectoryOverArchive(t *te
 	}
 }
 
+func TestScanCustomProjectsCopiesTopLevelZwDirectories(t *testing.T) {
+	testStore := testutil.OpenTestStore(t)
+	defer testStore.Close()
+
+	project := store.Project{
+		ID:                "project-custom-scan",
+		Name:              "Demo",
+		GitLabURL:         "https://gitlab.example.com",
+		GitLabToken:       "glpat-test",
+		CloneBasePath:     t.TempDir(),
+		Models:            "ORIGIN",
+		SourceModelFolder: "ORIGIN",
+	}
+	if err := testStore.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	customRoot := t.TempDir()
+	zwProject := filepath.Join(customRoot, "zw-001")
+	if err := os.MkdirAll(filepath.Join(zwProject, "nested"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(zwProject) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(zwProject, "README.md"), []byte("# custom"), 0o644); err != nil {
+		t.Fatalf("WriteFile(zwProject README) error = %v", err)
+	}
+	ignored := filepath.Join(customRoot, "label-001")
+	if err := os.MkdirAll(ignored, 0o755); err != nil {
+		t.Fatalf("MkdirAll(ignored) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ignored, "README.md"), []byte("# ignored"), 0o644); err != nil {
+		t.Fatalf("WriteFile(ignored README) error = %v", err)
+	}
+	nestedZw := filepath.Join(ignored, "zw-nested")
+	if err := os.MkdirAll(nestedZw, 0o755); err != nil {
+		t.Fatalf("MkdirAll(nestedZw) error = %v", err)
+	}
+
+	if err := testStore.SetConfig("custom_project_root_path", customRoot); err != nil {
+		t.Fatalf("SetConfig(custom_project_root_path) error = %v", err)
+	}
+
+	s := &GitService{store: testStore}
+	scanResult, err := s.ScanCustomProjectCandidates(project.ID)
+	if err != nil {
+		t.Fatalf("ScanCustomProjectCandidates() error = %v", err)
+	}
+	if scanResult.TotalCount != 1 || scanResult.SkippedCount != 0 || len(scanResult.Candidates) != 1 {
+		t.Fatalf("unexpected candidate summary: %+v", scanResult)
+	}
+	if scanResult.Candidates[0].Name != "zw-001" {
+		t.Fatalf("candidate name = %q, want zw-001", scanResult.Candidates[0].Name)
+	}
+	itemsBeforeImport, err := testStore.ListQuestionBankItems(project.ID)
+	if err != nil {
+		t.Fatalf("ListQuestionBankItems(before import) error = %v", err)
+	}
+	if len(itemsBeforeImport) != 0 {
+		t.Fatalf("question bank items before import len = %d, want 0", len(itemsBeforeImport))
+	}
+
+	result, err := s.ImportSelectedCustomProjects(project.ID, []string{"zw-001"})
+	if err != nil {
+		t.Fatalf("ImportSelectedCustomProjects() error = %v", err)
+	}
+	if result.ImportedCount != 1 || result.SkippedCount != 0 || result.ErrorCount != 0 {
+		t.Fatalf("unexpected import summary: %+v", result)
+	}
+	assertPathExists(t, filepath.Join(zwProject, "README.md"))
+
+	items, err := testStore.ListQuestionBankItems(project.ID)
+	if err != nil {
+		t.Fatalf("ListQuestionBankItems() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("question bank items len = %d, want 1", len(items))
+	}
+	item := items[0]
+	if item.DisplayName != "zw-001" {
+		t.Fatalf("DisplayName = %q, want zw-001", item.DisplayName)
+	}
+	if item.SourceKind != "local_directory" {
+		t.Fatalf("SourceKind = %q, want local_directory", item.SourceKind)
+	}
+	if item.OriginRef != "custom:zw-001" {
+		t.Fatalf("OriginRef = %q, want custom:zw-001", item.OriginRef)
+	}
+	if util.SamePath(item.SourcePath, zwProject) {
+		t.Fatalf("SourcePath = %q, should be managed copy not original path", item.SourcePath)
+	}
+	assertPathExists(t, filepath.Join(item.SourcePath, "README.md"))
+	assertPathExists(t, filepath.Join(item.SourcePath, ".git"))
+
+	second, err := s.ScanCustomProjects(project.ID)
+	if err != nil {
+		t.Fatalf("second ScanCustomProjects() error = %v", err)
+	}
+	if second.ImportedCount != 0 || second.SkippedCount != 1 || second.ErrorCount != 0 {
+		t.Fatalf("unexpected second import summary: %+v", second)
+	}
+}
+
 func TestImportLocalSourcesSkipsTrackedHiddenAndModelDirectories(t *testing.T) {
 	testStore := testutil.OpenTestStore(t)
 	defer testStore.Close()

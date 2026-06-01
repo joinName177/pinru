@@ -1,20 +1,66 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   deleteQuestionBankItem,
+  importSelectedCustomProjects,
   importQuestionBankArchives,
   listQuestionBankItems,
   pickQuestionBankArchives,
   refreshQuestionBankItem,
   scanLocalQuestionBank,
+  scanCustomProjectCandidates,
   syncGitLabQuestionBank,
   normalizeManagedSourceFolders,
+  type CustomProjectCandidateScanResult,
   type ImportLocalSourcesResult,
   type QuestionBankItem,
   type QuestionBankSyncResult,
   type NormalizeManagedSourceFoldersResult,
 } from '../../../api/git';
+import {
+  pickCustomPromptDocuments,
+  type CreateTasksFromCustomPromptDocumentsResult,
+} from '../../../api/task';
+import {
+  getJob,
+  submitCustomPromptDocumentGenerateJob,
+  submitCustomPromptTaskCreateJob,
+} from '../../../api/job';
+import {
+  readCustomProjectPromptDocument,
+  saveCustomProjectPromptDocument,
+  type CustomProjectPromptDocumentDetail,
+  type GenerateCustomProjectPromptDocumentsResult,
+} from '../../../api/llm';
 import { useAppStore } from '../../../store';
 import { parseQuestionBankProjectIds } from '../utils/claimUtils';
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+async function waitForJobOutput<T>(jobId: string, fallbackMessage: string): Promise<T> {
+  while (true) {
+    const job = await getJob(jobId);
+    if (!job) {
+      throw new Error('后台任务不存在');
+    }
+    if (job.status === 'done') {
+      if (!job.outputPayload) {
+        throw new Error(fallbackMessage);
+      }
+      return JSON.parse(job.outputPayload) as T;
+    }
+    if (job.status === 'error') {
+      throw new Error(job.errorMessage || fallbackMessage);
+    }
+    if (job.status === 'cancelled') {
+      throw new Error('后台任务已取消');
+    }
+    await wait(1000);
+  }
+}
 
 export type QuestionBankState = {
   questionBankItems: QuestionBankItem[];
@@ -40,6 +86,32 @@ export type QuestionBankState = {
   localImportError: string;
   localImportResult: ImportLocalSourcesResult | null;
   handleScanLocalQuestionBank: () => Promise<void>;
+  customProjectImporting: boolean;
+  customProjectImportError: string;
+  customProjectImportResult: ImportLocalSourcesResult | null;
+  customProjectPromptDocGenerating: boolean;
+  customProjectPromptDocError: string;
+  customProjectPromptDocResult: GenerateCustomProjectPromptDocumentsResult | null;
+  customPromptTaskCreating: boolean;
+  customPromptTaskError: string;
+  customPromptTaskResult: CreateTasksFromCustomPromptDocumentsResult | null;
+  customPromptPreviewOpen: boolean;
+  customPromptPreviewDocs: CustomProjectPromptDocumentDetail[];
+  customPromptPreviewSaving: boolean;
+  customPromptPreviewError: string;
+  customPromptPreviewStatus: string;
+  customProjectScanResult: CustomProjectCandidateScanResult | null;
+  customProjectScanLoading: boolean;
+  customProjectPickerOpen: boolean;
+  closeCustomProjectPicker: () => void;
+  handleScanCustomProjects: () => Promise<void>;
+  handleImportSelectedCustomProjects: (projectNames: string[]) => Promise<void>;
+  handleCreateTasksFromGeneratedPromptDocs: () => Promise<void>;
+  handleCreateTasksFromPickedPromptDocs: () => Promise<void>;
+  closeCustomPromptPreview: () => void;
+  handleSaveCustomPromptDocument: (path: string, content: string) => Promise<void>;
+  handleRegenerateCustomPromptDocument: (projectName: string) => Promise<void>;
+  handleConfirmCustomPromptPreview: (drafts?: Record<string, string>) => Promise<void>;
   handleImportArchivesViaPicker: () => Promise<void>;
   questionBankSyncing: boolean;
   questionBankSyncError: string;
@@ -59,6 +131,7 @@ export type QuestionBankState = {
 
 export function useQuestionBank(projectId: string, questionBankProjectIdsRaw: string): QuestionBankState {
   const loadTasks = useAppStore((state) => state.loadTasks);
+  const loadBackgroundJobs = useAppStore((state) => state.loadBackgroundJobs);
 
   const [questionBankItems, setQuestionBankItems] = useState<QuestionBankItem[]>([]);
   const [questionBankLoading, setQuestionBankLoading] = useState(false);
@@ -69,6 +142,23 @@ export function useQuestionBank(projectId: string, questionBankProjectIdsRaw: st
   const [importingLocalSources, setImportingLocalSources] = useState(false);
   const [localImportError, setLocalImportError] = useState('');
   const [localImportResult, setLocalImportResult] = useState<ImportLocalSourcesResult | null>(null);
+  const [customProjectImporting, setCustomProjectImporting] = useState(false);
+  const [customProjectImportError, setCustomProjectImportError] = useState('');
+  const [customProjectImportResult, setCustomProjectImportResult] = useState<ImportLocalSourcesResult | null>(null);
+  const [customProjectPromptDocGenerating, setCustomProjectPromptDocGenerating] = useState(false);
+  const [customProjectPromptDocError, setCustomProjectPromptDocError] = useState('');
+  const [customProjectPromptDocResult, setCustomProjectPromptDocResult] = useState<GenerateCustomProjectPromptDocumentsResult | null>(null);
+  const [customPromptTaskCreating, setCustomPromptTaskCreating] = useState(false);
+  const [customPromptTaskError, setCustomPromptTaskError] = useState('');
+  const [customPromptTaskResult, setCustomPromptTaskResult] = useState<CreateTasksFromCustomPromptDocumentsResult | null>(null);
+  const [customPromptPreviewOpen, setCustomPromptPreviewOpen] = useState(false);
+  const [customPromptPreviewDocs, setCustomPromptPreviewDocs] = useState<CustomProjectPromptDocumentDetail[]>([]);
+  const [customPromptPreviewSaving, setCustomPromptPreviewSaving] = useState(false);
+  const [customPromptPreviewError, setCustomPromptPreviewError] = useState('');
+  const [customPromptPreviewStatus, setCustomPromptPreviewStatus] = useState('');
+  const [customProjectScanResult, setCustomProjectScanResult] = useState<CustomProjectCandidateScanResult | null>(null);
+  const [customProjectScanLoading, setCustomProjectScanLoading] = useState(false);
+  const [customProjectPickerOpen, setCustomProjectPickerOpen] = useState(false);
 
   const [questionBankSyncing, setQuestionBankSyncing] = useState(false);
   const [questionBankSyncError, setQuestionBankSyncError] = useState('');
@@ -141,6 +231,223 @@ export function useQuestionBank(projectId: string, questionBankProjectIdsRaw: st
       setImportingLocalSources(false);
     }
   }, [projectId, reloadQuestionBankItems, handleNormalize]);
+
+  const handleScanCustomProjects = useCallback(async () => {
+    if (!projectId) return;
+    setCustomProjectScanLoading(true);
+    setCustomProjectImportError('');
+    setCustomProjectPromptDocError('');
+    setCustomPromptTaskError('');
+    setCustomProjectImportResult(null);
+    setCustomProjectPromptDocResult(null);
+    setCustomPromptTaskResult(null);
+    try {
+      const result = await scanCustomProjectCandidates(projectId);
+      setCustomProjectScanResult(result);
+      setCustomProjectPickerOpen(true);
+    } catch (error) {
+      setCustomProjectImportError(error instanceof Error ? error.message : '刷新自定义项目失败');
+    } finally {
+      setCustomProjectScanLoading(false);
+    }
+  }, [projectId]);
+
+  const closeCustomProjectPicker = useCallback(() => {
+    if (customProjectImporting || customProjectPromptDocGenerating) return;
+    setCustomProjectPickerOpen(false);
+  }, [customProjectImporting, customProjectPromptDocGenerating]);
+
+  const handleImportSelectedCustomProjects = useCallback(async (projectNames: string[]) => {
+    if (!projectId || projectNames.length === 0) return;
+    let generatingPromptDocs = false;
+    setCustomProjectImporting(true);
+    setCustomProjectPromptDocGenerating(false);
+    setCustomProjectImportError('');
+    setCustomProjectPromptDocError('');
+    try {
+      const result = await importSelectedCustomProjects(projectId, projectNames);
+      setCustomProjectImportResult(result);
+      await reloadQuestionBankItems();
+      if (result.importedCount > 0) {
+        await handleNormalize();
+      }
+      const importedNames = result.details
+        .filter((detail) => detail.status === 'imported')
+        .map((detail) => detail.name);
+      if (importedNames.length > 0) {
+        generatingPromptDocs = true;
+        setCustomProjectPromptDocGenerating(true);
+        const docRequest = {
+          projectId,
+          projectNames: importedNames,
+        };
+        const docJob = await submitCustomPromptDocumentGenerateJob(docRequest);
+        await loadBackgroundJobs();
+        const docResult = await waitForJobOutput<GenerateCustomProjectPromptDocumentsResult>(
+          docJob.id,
+          '生成提示词文档失败',
+        );
+        setCustomProjectPromptDocResult(docResult);
+        const generatedDocs = docResult.details.filter((detail) => detail.status === 'generated');
+        setCustomPromptPreviewDocs(generatedDocs);
+        setCustomPromptPreviewOpen(generatedDocs.length > 0);
+        await loadBackgroundJobs();
+      }
+      setCustomProjectPickerOpen(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '导入自定义项目失败';
+      if (generatingPromptDocs) {
+        setCustomProjectPromptDocError(message);
+      } else {
+        setCustomProjectImportError(message);
+      }
+    } finally {
+      setCustomProjectImporting(false);
+      setCustomProjectPromptDocGenerating(false);
+    }
+  }, [projectId, reloadQuestionBankItems, handleNormalize, loadBackgroundJobs]);
+
+  const createTasksFromPromptDocPaths = useCallback(async (documentPaths: string[]) => {
+    const paths = documentPaths.filter((path) => path.trim().length > 0);
+    if (!projectId || paths.length === 0) return;
+    setCustomPromptTaskCreating(true);
+    setCustomPromptTaskError('');
+    try {
+      const job = await submitCustomPromptTaskCreateJob({
+        projectId,
+        documentPaths: paths,
+      });
+      await loadBackgroundJobs();
+      const result = await waitForJobOutput<CreateTasksFromCustomPromptDocumentsResult>(
+        job.id,
+        '从提示词文档创建任务失败',
+      );
+      setCustomPromptTaskResult(result);
+      await loadTasks();
+    } catch (error) {
+      setCustomPromptTaskError(error instanceof Error ? error.message : '从提示词文档创建任务失败');
+    } finally {
+      setCustomPromptTaskCreating(false);
+    }
+  }, [projectId, loadTasks, loadBackgroundJobs]);
+
+  const handleCreateTasksFromGeneratedPromptDocs = useCallback(async () => {
+    const paths = customProjectPromptDocResult?.details
+      .filter((detail) => detail.status === 'generated' && detail.outputPath)
+      .map((detail) => detail.outputPath) ?? [];
+    await createTasksFromPromptDocPaths(paths);
+  }, [customProjectPromptDocResult, createTasksFromPromptDocPaths]);
+
+  const handleCreateTasksFromPickedPromptDocs = useCallback(async () => {
+    setCustomPromptTaskError('');
+    let paths: string[] = [];
+    try {
+      paths = await pickCustomPromptDocuments();
+    } catch (error) {
+      setCustomPromptTaskError(error instanceof Error ? error.message : '选择提示词文档失败');
+      return;
+    }
+    if (paths.length === 0) return;
+    try {
+      const docs = await Promise.all(paths.map((path) => readCustomProjectPromptDocument(path)));
+      setCustomPromptPreviewDocs(docs);
+      setCustomPromptPreviewOpen(docs.length > 0);
+    } catch (error) {
+      setCustomPromptTaskError(error instanceof Error ? error.message : '读取提示词文档失败');
+    }
+  }, []);
+
+  const closeCustomPromptPreview = useCallback(() => {
+    if (customPromptPreviewSaving || customPromptTaskCreating || customProjectPromptDocGenerating) return;
+    setCustomPromptPreviewOpen(false);
+  }, [customPromptPreviewSaving, customPromptTaskCreating, customProjectPromptDocGenerating]);
+
+  const handleSaveCustomPromptDocument = useCallback(async (path: string, content: string) => {
+    setCustomPromptPreviewSaving(true);
+    setCustomPromptPreviewError('');
+    setCustomPromptPreviewStatus('');
+    try {
+      const saved = await saveCustomProjectPromptDocument(path, content);
+      setCustomPromptPreviewDocs((docs) =>
+        docs.map((doc) =>
+          doc.outputPath === path
+            ? { ...doc, content: saved.content, status: saved.status, message: saved.message }
+            : doc,
+        ),
+      );
+      setCustomPromptPreviewStatus('已保存');
+    } catch (error) {
+      setCustomPromptPreviewError(error instanceof Error ? error.message : '保存提示词文档失败');
+    } finally {
+      setCustomPromptPreviewSaving(false);
+    }
+  }, []);
+
+  const handleRegenerateCustomPromptDocument = useCallback(async (projectName: string) => {
+    if (!projectId || !projectName) return;
+    setCustomProjectPromptDocGenerating(true);
+    setCustomPromptPreviewError('');
+    setCustomPromptPreviewStatus('');
+    try {
+      const job = await submitCustomPromptDocumentGenerateJob({
+        projectId,
+        projectNames: [projectName],
+      });
+      await loadBackgroundJobs();
+      const result = await waitForJobOutput<GenerateCustomProjectPromptDocumentsResult>(
+        job.id,
+        '重新生成提示词文档失败',
+      );
+      setCustomProjectPromptDocResult(result);
+      const generated = result.details.find((detail) => detail.status === 'generated');
+      if (!generated) {
+        throw new Error(result.details[0]?.message || '重新生成提示词文档失败');
+      }
+      setCustomPromptPreviewDocs((docs) =>
+        docs.map((doc) => (doc.projectName === projectName ? generated : doc)),
+      );
+      setCustomPromptPreviewStatus('已重新生成');
+    } catch (error) {
+      setCustomPromptPreviewError(error instanceof Error ? error.message : '重新生成提示词文档失败');
+    } finally {
+      setCustomProjectPromptDocGenerating(false);
+    }
+  }, [projectId, loadBackgroundJobs]);
+
+  const handleConfirmCustomPromptPreview = useCallback(async (drafts: Record<string, string> = {}) => {
+    if (Object.keys(drafts).length > 0) {
+      setCustomPromptPreviewSaving(true);
+      setCustomPromptPreviewError('');
+      try {
+        const savedDocs = await Promise.all(
+          customPromptPreviewDocs.map(async (doc) => {
+            const draft = drafts[doc.outputPath];
+            if (draft === undefined || draft.trim() === (doc.content ?? '').trim()) {
+              return doc;
+            }
+            return saveCustomProjectPromptDocument(doc.outputPath, draft);
+          }),
+        );
+        setCustomPromptPreviewDocs(savedDocs);
+      } catch (error) {
+        setCustomPromptPreviewError(error instanceof Error ? error.message : '保存提示词文档失败');
+        return;
+      } finally {
+        setCustomPromptPreviewSaving(false);
+      }
+    }
+    const docsForCreate = Object.keys(drafts).length > 0
+      ? customPromptPreviewDocs.map((doc) => ({
+          ...doc,
+          content: drafts[doc.outputPath] ?? doc.content,
+        }))
+      : customPromptPreviewDocs;
+    const paths = docsForCreate
+      .filter((doc) => doc.outputPath && doc.status !== 'error')
+      .map((doc) => doc.outputPath);
+    await createTasksFromPromptDocPaths(paths);
+    setCustomPromptPreviewOpen(false);
+  }, [customPromptPreviewDocs, createTasksFromPromptDocPaths]);
 
   const handleImportArchivesViaPicker = useCallback(async () => {
     setLocalImportError('');
@@ -350,6 +657,32 @@ export function useQuestionBank(projectId: string, questionBankProjectIdsRaw: st
     localImportError,
     localImportResult,
     handleScanLocalQuestionBank,
+    customProjectImporting,
+    customProjectImportError,
+    customProjectImportResult,
+    customProjectPromptDocGenerating,
+    customProjectPromptDocError,
+    customProjectPromptDocResult,
+    customPromptTaskCreating,
+    customPromptTaskError,
+    customPromptTaskResult,
+    customPromptPreviewOpen,
+    customPromptPreviewDocs,
+    customPromptPreviewSaving,
+    customPromptPreviewError,
+    customPromptPreviewStatus,
+    customProjectScanResult,
+    customProjectScanLoading,
+    customProjectPickerOpen,
+    closeCustomProjectPicker,
+    handleScanCustomProjects,
+    handleImportSelectedCustomProjects,
+    handleCreateTasksFromGeneratedPromptDocs,
+    handleCreateTasksFromPickedPromptDocs,
+    closeCustomPromptPreview,
+    handleSaveCustomPromptDocument,
+    handleRegenerateCustomPromptDocument,
+    handleConfirmCustomPromptPreview,
     handleImportArchivesViaPicker,
     questionBankSyncing,
     questionBankSyncError,

@@ -18,6 +18,8 @@ const JOB_TYPE_LABELS: Record<string, string> = {
   prompt_generate: '提示词生成',
   session_sync: 'Session 同步',
   git_clone: '拉取代码',
+  custom_prompt_document_generate: '生成自定义提示词',
+  custom_prompt_task_create: '创建自定义任务',
   pr_submit: 'PR 提交',
   ai_review: 'AI 复审',
 };

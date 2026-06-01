@@ -1,5 +1,5 @@
 import { useQuestionBank } from '../hooks/useQuestionBank';
-import { SyncToolbar } from './QuestionBankSyncCards';
+import { CustomProjectPickerModal, CustomPromptPreviewModal, SyncToolbar } from './QuestionBankSyncCards';
 import QuestionBankList from './QuestionBankList';
 import BulkCreateSection from './BulkCreateSection';
 import GitLabProjectAdder from './GitLabProjectAdder';
@@ -32,6 +32,19 @@ export default function QuestionBankPanel({
         localImportError={qb.localImportError}
         localImportResult={qb.localImportResult}
         onScan={qb.handleScanLocalQuestionBank}
+        customProjectImporting={qb.customProjectImporting}
+        customProjectScanLoading={qb.customProjectScanLoading}
+        customProjectImportError={qb.customProjectImportError}
+        customProjectImportResult={qb.customProjectImportResult}
+        customProjectPromptDocGenerating={qb.customProjectPromptDocGenerating}
+        customProjectPromptDocError={qb.customProjectPromptDocError}
+        customProjectPromptDocResult={qb.customProjectPromptDocResult}
+        customPromptTaskCreating={qb.customPromptTaskCreating}
+        customPromptTaskError={qb.customPromptTaskError}
+        customPromptTaskResult={qb.customPromptTaskResult}
+        onScanCustomProjects={qb.handleScanCustomProjects}
+        onCreateTasksFromGeneratedPromptDocs={qb.handleCreateTasksFromGeneratedPromptDocs}
+        onCreateTasksFromPickedPromptDocs={qb.handleCreateTasksFromPickedPromptDocs}
         onImportArchives={qb.handleImportArchivesViaPicker}
         syncing={qb.questionBankSyncing}
         syncError={qb.questionBankSyncError}
@@ -42,6 +55,31 @@ export default function QuestionBankPanel({
         normalizeError={qb.normalizeError}
         normalizeResult={qb.normalizeResult}
         onNormalize={qb.handleNormalize}
+      />
+
+      <CustomProjectPickerModal
+        open={qb.customProjectPickerOpen}
+        scanResult={qb.customProjectScanResult}
+        importing={qb.customProjectImporting}
+        promptDocGenerating={qb.customProjectPromptDocGenerating}
+        error={qb.customProjectImportError}
+        promptDocError={qb.customProjectPromptDocError}
+        onClose={qb.closeCustomProjectPicker}
+        onImport={qb.handleImportSelectedCustomProjects}
+      />
+
+      <CustomPromptPreviewModal
+        open={qb.customPromptPreviewOpen}
+        docs={qb.customPromptPreviewDocs}
+        generating={qb.customProjectPromptDocGenerating}
+        saving={qb.customPromptPreviewSaving}
+        creating={qb.customPromptTaskCreating}
+        error={qb.customPromptPreviewError || qb.customPromptTaskError}
+        status={qb.customPromptPreviewStatus}
+        onClose={qb.closeCustomPromptPreview}
+        onSave={qb.handleSaveCustomPromptDocument}
+        onRegenerate={qb.handleRegenerateCustomPromptDocument}
+        onConfirm={qb.handleConfirmCustomPromptPreview}
       />
 
       <GitLabProjectAdder

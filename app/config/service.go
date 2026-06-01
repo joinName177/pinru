@@ -12,6 +12,7 @@ import (
 	"github.com/blueship581/pinru/internal/gitlab"
 	"github.com/blueship581/pinru/internal/store"
 	"github.com/blueship581/pinru/internal/util"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // TraeSettings holds Trae IDE path configuration returned to the frontend.
@@ -20,6 +21,12 @@ type TraeSettings struct {
 	LogsPath                    string `json:"logsPath"`
 	DefaultWorkspaceStoragePath string `json:"defaultWorkspaceStoragePath"`
 	DefaultLogsPath             string `json:"defaultLogsPath"`
+}
+
+// CustomProjectSettings stores the root folder used for importing user-managed
+// local projects into the question bank.
+type CustomProjectSettings struct {
+	RootPath string `json:"rootPath"`
 }
 
 // Service manages application configuration, projects, LLM providers, and
@@ -133,6 +140,36 @@ func (s *ConfigService) SaveGitLabSettings(url, username, token string, skipTLSV
 		}
 	}
 	return nil
+}
+
+func (s *ConfigService) GetCustomProjectSettings() (*CustomProjectSettings, error) {
+	rootPath, err := s.store.GetConfig("custom_project_root_path")
+	if err != nil {
+		rootPath = ""
+	}
+	return &CustomProjectSettings{RootPath: util.NormalizePath(rootPath)}, nil
+}
+
+func (s *ConfigService) SaveCustomProjectSettings(rootPath string) error {
+	return s.store.SetConfig("custom_project_root_path", util.NormalizePath(rootPath))
+}
+
+func (s *ConfigService) PickCustomProjectRootDirectory() (string, error) {
+	app := application.Get()
+	if app == nil {
+		return "", errors.New("wails 运行时未就绪")
+	}
+	path, err := app.Dialog.OpenFile().
+		SetTitle("选择自定义项目根目录").
+		CanChooseFiles(false).
+		CanChooseDirectories(true).
+		CanCreateDirectories(true).
+		ResolvesAliases(true).
+		PromptForSingleSelection()
+	if err != nil {
+		return "", err
+	}
+	return util.NormalizePath(path), nil
 }
 
 func (s *ConfigService) getGitLabSkipTLSVerify() (bool, error) {

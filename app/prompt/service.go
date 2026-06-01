@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -21,11 +22,12 @@ import (
 
 // Service handles prompt generation and storage for tasks.
 type PromptService struct {
-	store           *store.Store
-	cliSvc          *appcli.CliService
-	promptGenerator func(context.Context, string, string, string) (generatedPromptResult, error)
-	promptHumanizer func(context.Context, string, string, string) (string, error)
-	duplicateJudge  func(context.Context, string, string, string) (semanticDuplicateDecision, error)
+	store                   *store.Store
+	cliSvc                  *appcli.CliService
+	promptGenerator         func(context.Context, string, string, string) (generatedPromptResult, error)
+	promptHumanizer         func(context.Context, string, string, string) (string, error)
+	duplicateJudge          func(context.Context, string, string, string) (semanticDuplicateDecision, error)
+	requirementDocGenerator func(context.Context, string, string, string) (string, error)
 }
 
 // NewService creates a new prompt service.
@@ -51,6 +53,36 @@ type PromptGenerationResult struct {
 	ProviderName     string `json:"providerName"`
 	Model            string `json:"model"`
 	Status           string `json:"status"`
+}
+
+type GenerateCustomProjectPromptDocumentsRequest struct {
+	ProjectID    string   `json:"projectId"`
+	ProjectNames []string `json:"projectNames"`
+	ProviderID   *string  `json:"providerId"`
+}
+
+type CustomProjectPromptDocumentDetail struct {
+	ProjectName string `json:"projectName"`
+	SourcePath  string `json:"sourcePath"`
+	OutputPath  string `json:"outputPath"`
+	Content     string `json:"content"`
+	Status      string `json:"status"`
+	Message     string `json:"message"`
+}
+
+type GenerateCustomProjectPromptDocumentsResult struct {
+	ProjectID      string                              `json:"projectId"`
+	RootPath       string                              `json:"rootPath"`
+	ProviderName   string                              `json:"providerName"`
+	Model          string                              `json:"model"`
+	GeneratedCount int                                 `json:"generatedCount"`
+	ErrorCount     int                                 `json:"errorCount"`
+	Details        []CustomProjectPromptDocumentDetail `json:"details"`
+}
+
+type CustomProjectPromptDocumentRequest struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
 }
 
 const defaultPromptGenerationModel = "claude-sonnet-4-6"
@@ -256,6 +288,149 @@ func (s *PromptService) SaveTaskPrompt(taskID, promptText string) error {
 	return nil
 }
 
+func (s *PromptService) GenerateCustomProjectPromptDocuments(req GenerateCustomProjectPromptDocumentsRequest) (*GenerateCustomProjectPromptDocumentsResult, error) {
+	return s.GenerateCustomProjectPromptDocumentsWithContext(context.Background(), req)
+}
+
+func (s *PromptService) GenerateCustomProjectPromptDocumentsWithContext(ctx context.Context, req GenerateCustomProjectPromptDocumentsRequest) (*GenerateCustomProjectPromptDocumentsResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	projectID := strings.TrimSpace(req.ProjectID)
+	if projectID == "" {
+		return nil, errors.New(errs.MsgProjectRequired)
+	}
+	projectNames := normalizeCustomProjectDocumentNames(req.ProjectNames)
+	if len(projectNames) == 0 {
+		return nil, errors.New("未选择任何自定义项目")
+	}
+	if _, err := s.cliSvc.CheckCLI(); err != nil {
+		return nil, errors.New(errs.MsgClaudeCodeCliNotInstalledInstallGuide)
+	}
+	selection, err := resolveProviderForPromptGeneration(s.store, req.ProviderID)
+	if err != nil {
+		return nil, err
+	}
+
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return nil, err
+	}
+	if project == nil {
+		return nil, fmt.Errorf(errs.FmtStoreProjectNotFound, projectID)
+	}
+
+	rootPath, err := s.store.GetConfig("custom_project_root_path")
+	if err != nil {
+		rootPath = ""
+	}
+	rootPath = util.NormalizePath(rootPath)
+	if rootPath == "" {
+		return nil, errors.New("请先在设置中配置自定义项目根目录")
+	}
+	if err := os.MkdirAll(util.ExpandTilde(rootPath), 0o755); err != nil {
+		return nil, err
+	}
+
+	items, err := s.store.ListQuestionBankItems(projectID)
+	if err != nil {
+		return nil, err
+	}
+	itemByName := make(map[string]store.QuestionBankItem, len(items))
+	for _, item := range items {
+		if !isCustomQuestionBankItem(item) {
+			continue
+		}
+		itemByName[strings.ToLower(strings.TrimSpace(item.DisplayName))] = item
+	}
+
+	result := &GenerateCustomProjectPromptDocumentsResult{
+		ProjectID:    project.ID,
+		RootPath:     rootPath,
+		ProviderName: selection.Name,
+		Model:        selection.Model,
+		Details:      make([]CustomProjectPromptDocumentDetail, 0, len(projectNames)),
+	}
+
+	for _, projectName := range projectNames {
+		detail := CustomProjectPromptDocumentDetail{
+			ProjectName: projectName,
+			Status:      "error",
+		}
+		item, ok := itemByName[strings.ToLower(projectName)]
+		if !ok {
+			detail.Message = "未找到已导入的自定义项目题库记录"
+			result.Details = append(result.Details, detail)
+			result.ErrorCount++
+			continue
+		}
+		sourcePath := util.NormalizePath(item.SourcePath)
+		detail.SourcePath = sourcePath
+		outputPath := buildCustomProjectPromptDocumentPath(rootPath, item.DisplayName, time.Now())
+		detail.OutputPath = outputPath
+
+		content, genErr := s.generateCustomProjectPromptDocument(ctx, sourcePath, item.DisplayName, selection.Model)
+		if genErr != nil {
+			detail.Message = genErr.Error()
+			result.Details = append(result.Details, detail)
+			result.ErrorCount++
+			continue
+		}
+		if err := os.WriteFile(util.ExpandTilde(outputPath), []byte(strings.TrimSpace(content)+"\n"), 0o644); err != nil {
+			detail.Message = err.Error()
+			result.Details = append(result.Details, detail)
+			result.ErrorCount++
+			continue
+		}
+		detail.Content = strings.TrimSpace(content)
+		detail.Status = "generated"
+		detail.Message = "已生成提示词文档"
+		result.Details = append(result.Details, detail)
+		result.GeneratedCount++
+	}
+
+	return result, nil
+}
+
+func (s *PromptService) ReadCustomProjectPromptDocument(path string) (*CustomProjectPromptDocumentDetail, error) {
+	documentPath := util.NormalizePath(path)
+	if strings.TrimSpace(documentPath) == "" {
+		return nil, errors.New("提示词文档路径不能为空")
+	}
+	content, err := os.ReadFile(util.ExpandTilde(documentPath))
+	if err != nil {
+		return nil, err
+	}
+	return &CustomProjectPromptDocumentDetail{
+		ProjectName: inferCustomProjectNameFromPromptDocumentPath(documentPath),
+		OutputPath:  documentPath,
+		Content:     strings.TrimSpace(string(content)),
+		Status:      "loaded",
+		Message:     "已读取提示词文档",
+	}, nil
+}
+
+func (s *PromptService) SaveCustomProjectPromptDocument(req CustomProjectPromptDocumentRequest) (*CustomProjectPromptDocumentDetail, error) {
+	documentPath := util.NormalizePath(req.Path)
+	if strings.TrimSpace(documentPath) == "" {
+		return nil, errors.New("提示词文档路径不能为空")
+	}
+	content := strings.TrimSpace(req.Content)
+	if content == "" {
+		return nil, errors.New("提示词文档内容不能为空")
+	}
+	if err := os.WriteFile(util.ExpandTilde(documentPath), []byte(content+"\n"), 0o644); err != nil {
+		return nil, err
+	}
+	return &CustomProjectPromptDocumentDetail{
+		ProjectName: inferCustomProjectNameFromPromptDocumentPath(documentPath),
+		OutputPath:  documentPath,
+		Content:     content,
+		Status:      "saved",
+		Message:     "已保存提示词文档",
+	}, nil
+}
+
 // ── CLI Agent 执行 ──────────────────────────────────────────────────────────
 
 type generatedPromptResult struct {
@@ -275,6 +450,30 @@ func (s *PromptService) runPromptHumanizer(ctx context.Context, workDir, prompt,
 		return s.promptHumanizer(ctx, workDir, prompt, model)
 	}
 	return "", nil
+}
+
+func (s *PromptService) generateCustomProjectPromptDocument(ctx context.Context, workDir, projectName, model string) (string, error) {
+	if s.requirementDocGenerator != nil {
+		return s.requirementDocGenerator(ctx, workDir, projectName, model)
+	}
+
+	projectProfile, err := s.resolveProjectProfile(ctx, workDir)
+	if err != nil {
+		slog.Warn("custom project profile cache unavailable, falling back to live repository reading",
+			"project", projectName,
+			"error", err,
+		)
+	}
+	prompt := buildCustomProjectPromptDocumentPrompt(projectName, projectProfile)
+	output, err := s.executeCliRaw(ctx, workDir, prompt, model)
+	if err != nil {
+		return "", err
+	}
+	content := cleanCustomProjectPromptDocument(output)
+	if strings.TrimSpace(content) == "" {
+		return "", errors.New("模型未返回可写入的提示词文档")
+	}
+	return content, nil
 }
 
 func (s *PromptService) bestEffortPolishPrompt(ctx context.Context, workDir, promptText string, selection promptProviderSelection) string {
@@ -500,7 +699,7 @@ func buildSkillPrompt(req GeneratePromptRequest, siblingPrompts []siblingPrompt,
 
 func appendProjectRequirementGenerationRules(sb *strings.Builder, req GeneratePromptRequest) {
 	normalizedTaskType := internalprompt.NormalizeTaskType(req.TaskType)
-	sb.WriteString("\n通用出题规则：必须先基于当前仓库的真实项目结构、已有功能、主要用户路径、状态流和工程约束生成提示词，不要写泛泛产品想法。提示词要像真实项目排期里的研发任务，包含业务背景、触发场景、用户可感知行为、影响范围和验收方向，但不要出现代码片段、文件路径、类名、方法名、接口名、变量名或具体实现步骤。\n")
+	sb.WriteString("\n通用出题规则：必须先基于当前仓库的真实项目结构、已有功能、主要用户路径、状态流和工程约束生成提示词，不要写泛泛产品想法。提示词要像真实项目排期里的研发任务，包含业务背景、触发场景、用户可感知行为、影响范围和交付边界，但不要出现代码片段、文件路径、类名、方法名、接口名、变量名或具体实现步骤；不要在末尾固定追加“验收时...”“验证时...”这类模板句。\n")
 	sb.WriteString("任务类型边界：0-1代码生成必须是此前不存在的完整模块、新子系统或新主流程；Feature迭代必须是在已有功能基础上的规则增强、流程延展或能力补齐；Bug修复必须是当前项目中真实存在或由代码迹象支撑的缺陷，写清触发条件、异常表现和业务后果；代码理解聚焦梳理链路和风险；代码重构强调业务结果不变；工程化聚焦构建、依赖、发布或协作稳定性；代码测试围绕高风险流程、边界和回归风险补验证。\n")
 	sb.WriteString("质量自检：最终提示词不能只写“优化体验”“完善逻辑”“增强稳定性”这类空话；如果任务涉及导出、统计、预约、状态流转、权限、缓存、异步或跨页面流程，要优先体现数据一致性、异常恢复、边界值、前后端契约或验证链路。难度按理解成本、决策成本和约束复杂度判断，不按文件数量机械判断。\n")
 
@@ -540,6 +739,62 @@ func appendProjectProfilePrompt(sb *strings.Builder, projectProfile *promptProje
 	sb.WriteString(strings.TrimSpace(projectProfile.ProfileText))
 	sb.WriteString("\n\n")
 	sb.WriteString("项目分析方式：请优先基于上面的项目画像、任务类型和已有提示词生成任务。只有画像信息不足以支撑真实业务判断时，才补充读取少量相关源码；不要每次从零开始全量扫描项目。\n")
+}
+
+func buildCustomProjectPromptDocumentPrompt(projectName string, projectProfile *promptProjectProfile) string {
+	var sb strings.Builder
+	sb.WriteString("/project-requirement-generator\n\n")
+	fmt.Fprintf(&sb, "项目名称：%s\n", strings.TrimSpace(projectName))
+	sb.WriteString("角色要求：请以有实际研发排期经验的资深产品经理视角生成提示词，同时理解工程实现约束、前后端协作、数据一致性、异常恢复和测试成本。输出要像真实业务交付任务，不要写成概念 PRD、营销文案、课堂作业或代码实现清单。\n")
+	sb.WriteString("请基于当前项目一次性生成提示词需求文档，不要逐条调用单题出题逻辑。\n")
+	sb.WriteString("数量要求：只生成 21 条，其中 0-1代码生成 10 条，Feature迭代 10 条，代码理解 1 条；不要生成 Bug修复、代码重构、工程化、代码测试或其他分类。\n")
+	sb.WriteString("难度要求：每条必须带任务难度标签，只允许 简单、一般、困难、地狱；按真实实现难度动态分配，不要全部一般、全部困难或全部地狱。单文件或沿既有模式机械修改通常为简单；跨模块少量文件和少量约束通常为一般；跨模块/跨系统多文件、多状态、多约束且需要联动验证才是困难；地狱只用于高耦合、高不确定、验证成本极高的极少数任务。\n")
+	sb.WriteString("去重要求：21 条提示词之间不得重复或换皮，不得只替换对象名、页面名、状态名后复用同一类需求。每条必须在业务目标、用户路径、状态链路、数据对象、交付边界中至少有两个维度明显不同。输出前必须自检整批内容，如发现重复或相似度过高，必须删除并补充新的不同角度。\n")
+	sb.WriteString("内容要求：提示词必须像真实项目排期里的研发任务，包含背景、触发场景、用户可感知行为、影响范围和交付边界；不要出现代码片段、文件路径、类名、方法名、接口名、变量名、命令或具体实现步骤。\n")
+	sb.WriteString("文风要求：参考 PINRU 历史提示词的自然写法，每条像真实领题描述的一段中文。不要固定写成“小标题：正文”，不要每条都用冒号切分，也不要先起一个功能名再解释；可以自然使用“当前...”“现在...”“希望...”“新增...”“需要...”等开头，但整批不要同一种句式。不要在每条末尾固定追加“验收时...”“验证时...”“需要确保...”这类验收句；如果必须表达交付结果，要自然融入业务描述里。\n")
+	sb.WriteString("0-1代码生成要求：必须是此前不存在的完整模块、新子系统或新主流程，并体现目标用户、关键闭环、状态变化和与现有系统的衔接。\n")
+	sb.WriteString("Feature迭代要求：必须是在已有功能基础上的规则增强、流程延展或能力补齐，说明现有流程哪里不够、扩展后解决什么摩擦，并体现旧行为兼容、上下游影响或多角色协作。\n")
+	sb.WriteString("代码理解要求：只输出 1 条，聚焦梳理某条核心链路、状态流或风险边界，明确最终需要回答的问题。\n")
+	sb.WriteString("输出格式：只返回 Markdown 正文，不要包裹代码块，不要解释生成过程。分类标题固定为 **0-1代码生成**、**Feature迭代**、**代码理解**。每条格式只保留序号、难度标签和自然正文，例如：1. 【一般】当前会员预约后到场情况完全黑盒，管理员无法知道实际到课率。需要补签到核销能力，把预约、到场、缺席和统计串起来，方便后续复盘课程运营。不要输出成“会员签到核销子系统：...”这类固定标题格式。\n")
+
+	if projectProfile == nil || strings.TrimSpace(projectProfile.ProfileText) == "" {
+		sb.WriteString("\n项目分析方式：当前没有可用项目画像缓存，请先快速阅读项目结构和关键文件，再生成文档；只在必要时读取源码，不要无目的全量扫描。\n")
+		return sb.String()
+	}
+
+	sb.WriteString("\n---\n")
+	sb.WriteString("项目画像缓存（优先使用）：\n")
+	sb.WriteString(strings.TrimSpace(projectProfile.ProfileText))
+	sb.WriteString("\n\n项目分析方式：优先基于上面的项目画像生成文档。只有画像信息不足以支撑真实业务判断时，才补充读取少量相关源码。\n")
+	return sb.String()
+}
+
+func cleanCustomProjectPromptDocument(output string) string {
+	trimmed := strings.TrimSpace(output)
+	if trimmed == "" {
+		return ""
+	}
+	trimmed = stripMarkdownFence(trimmed)
+	if idx := strings.Index(trimmed, "**0-1代码生成**"); idx >= 0 {
+		trimmed = trimmed[idx:]
+	}
+	return strings.TrimSpace(trimmed)
+}
+
+func stripMarkdownFence(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, "```") {
+		return trimmed
+	}
+	lines := strings.Split(trimmed, "\n")
+	if len(lines) >= 2 && strings.HasPrefix(strings.TrimSpace(lines[0]), "```") {
+		lines = lines[1:]
+		if len(lines) > 0 && strings.HasPrefix(strings.TrimSpace(lines[len(lines)-1]), "```") {
+			lines = lines[:len(lines)-1]
+		}
+		return strings.TrimSpace(strings.Join(lines, "\n"))
+	}
+	return trimmed
 }
 
 type siblingPrompt struct {
@@ -1109,6 +1364,66 @@ func cliAdditionalDirs() []string {
 		return nil
 	}
 	return []string{dir}
+}
+
+func isCustomQuestionBankItem(item store.QuestionBankItem) bool {
+	return strings.EqualFold(strings.TrimSpace(item.SourceKind), "local_directory") &&
+		strings.HasPrefix(strings.ToLower(strings.TrimSpace(item.OriginRef)), "custom:")
+}
+
+func normalizeCustomProjectDocumentNames(projectNames []string) []string {
+	seen := make(map[string]struct{}, len(projectNames))
+	result := make([]string, 0, len(projectNames))
+	for _, name := range projectNames {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" {
+			continue
+		}
+		key := strings.ToLower(trimmed)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, trimmed)
+	}
+	return result
+}
+
+func buildCustomProjectPromptDocumentPath(rootPath, projectName string, now time.Time) string {
+	fileName := fmt.Sprintf("%s_提示词_%s.md", sanitizePromptDocumentFileName(projectName), now.Format("0102"))
+	return util.NormalizePath(filepath.Join(rootPath, fileName))
+}
+
+func inferCustomProjectNameFromPromptDocumentPath(path string) string {
+	base := strings.TrimSuffix(filepath.Base(strings.TrimSpace(path)), filepath.Ext(path))
+	if idx := strings.LastIndex(base, "_提示词_"); idx > 0 {
+		return strings.TrimSpace(base[:idx])
+	}
+	return strings.TrimSpace(base)
+}
+
+func sanitizePromptDocumentFileName(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "custom_project"
+	}
+	replacer := strings.NewReplacer(
+		"/", "-",
+		"\\", "-",
+		":", "-",
+		"*", "-",
+		"?", "-",
+		"\"", "",
+		"<", "-",
+		">", "-",
+		"|", "-",
+	)
+	cleaned := strings.TrimSpace(replacer.Replace(trimmed))
+	cleaned = strings.Join(strings.Fields(cleaned), "")
+	if cleaned == "" || cleaned == "." || cleaned == ".." {
+		return "custom_project"
+	}
+	return cleaned
 }
 
 func (s *PromptService) resolveProviderForTest(provider store.LLMProvider) (store.LLMProvider, error) {

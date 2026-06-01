@@ -393,6 +393,10 @@ func (s *JobService) executeJob(id string, req SubmitJobRequest) {
 		execResult, execErr = s.executeGitClone(ctx, id, req)
 	case "question_bank_materialize":
 		execResult, execErr = s.executeQuestionBankMaterialize(ctx, id, req)
+	case "custom_prompt_document_generate":
+		execResult, execErr = s.executeCustomPromptDocumentGenerate(ctx, id, req)
+	case "custom_prompt_task_create":
+		execResult, execErr = s.executeCustomPromptTaskCreate(ctx, id, req)
 	case "pr_submit":
 		execResult, execErr = s.executePrSubmit(ctx, id, req)
 	case "ai_review":
@@ -521,6 +525,72 @@ func (s *JobService) executePromptGenerate(
 	return jobExecutionResult{
 		outputPayload: &outputStr,
 		finalMessage:  strPtr(fmt.Sprintf("[%s] 提示词已生成", projectLabel)),
+	}, nil
+}
+
+func (s *JobService) executeCustomPromptDocumentGenerate(
+	ctx context.Context,
+	jobID string,
+	req SubmitJobRequest,
+) (jobExecutionResult, error) {
+	if s.promptSvc == nil {
+		return jobExecutionResult{}, errors.New("提示词服务未初始化")
+	}
+
+	var promptReq appprompt.GenerateCustomProjectPromptDocumentsRequest
+	if err := json.Unmarshal([]byte(req.InputPayload), &promptReq); err != nil {
+		return jobExecutionResult{}, fmt.Errorf("解析自定义项目提示词生成参数失败：%w", err)
+	}
+	projectCount := len(promptReq.ProjectNames)
+	s.emitProgress(jobID, req.JobType, req.TaskID, "running", 10, strPtr(fmt.Sprintf("准备生成 %d 个项目的提示词文档…", projectCount)), nil)
+	s.emitProgress(jobID, req.JobType, req.TaskID, "running", 20, strPtr("正在生成提示词文档…"), nil)
+
+	res, err := s.promptSvc.GenerateCustomProjectPromptDocumentsWithContext(ctx, promptReq)
+	if err != nil {
+		return jobExecutionResult{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return jobExecutionResult{}, err
+	}
+
+	outputJSON, _ := json.Marshal(res)
+	outputStr := string(outputJSON)
+	return jobExecutionResult{
+		outputPayload: &outputStr,
+		finalMessage:  strPtr(fmt.Sprintf("提示词文档生成完成：成功 %d，失败 %d", res.GeneratedCount, res.ErrorCount)),
+	}, nil
+}
+
+func (s *JobService) executeCustomPromptTaskCreate(
+	ctx context.Context,
+	jobID string,
+	req SubmitJobRequest,
+) (jobExecutionResult, error) {
+	if s.taskSvc == nil {
+		return jobExecutionResult{}, errors.New("任务服务未初始化")
+	}
+
+	var taskReq apptask.CreateTasksFromCustomPromptDocumentsRequest
+	if err := json.Unmarshal([]byte(req.InputPayload), &taskReq); err != nil {
+		return jobExecutionResult{}, fmt.Errorf("解析自定义提示词创建任务参数失败：%w", err)
+	}
+	docCount := len(taskReq.DocumentPaths)
+	s.emitProgress(jobID, req.JobType, req.TaskID, "running", 10, strPtr(fmt.Sprintf("准备从 %d 个提示词文档创建任务…", docCount)), nil)
+	s.emitProgress(jobID, req.JobType, req.TaskID, "running", 25, strPtr("正在复制源码并写入提示词…"), nil)
+
+	res, err := s.taskSvc.CreateTasksFromCustomPromptDocumentsWithContext(ctx, taskReq)
+	if err != nil {
+		return jobExecutionResult{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return jobExecutionResult{}, err
+	}
+
+	outputJSON, _ := json.Marshal(res)
+	outputStr := string(outputJSON)
+	return jobExecutionResult{
+		outputPayload: &outputStr,
+		finalMessage:  strPtr(fmt.Sprintf("自定义任务创建完成：成功 %d，失败 %d", res.CreatedCount-res.ErrorCount, res.ErrorCount)),
 	}, nil
 }
 

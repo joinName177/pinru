@@ -13,6 +13,99 @@ import (
 	"github.com/blueship581/pinru/internal/store"
 )
 
+func TestGenerateCustomProjectPromptDocumentsWritesMarkdownToCustomRoot(t *testing.T) {
+	testStore := testutil.OpenTestStore(t)
+	defer testStore.Close()
+
+	customRoot := t.TempDir()
+	if err := testStore.SetConfig("custom_project_root_path", customRoot); err != nil {
+		t.Fatalf("SetConfig(custom_project_root_path) error = %v", err)
+	}
+	if err := testStore.CreateProject(store.Project{
+		ID:            "project-custom-doc",
+		Name:          "Demo",
+		CloneBasePath: t.TempDir(),
+	}); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	sourcePath := filepath.Join(t.TempDir(), "zw-001")
+	if err := os.MkdirAll(sourcePath, 0o755); err != nil {
+		t.Fatalf("MkdirAll(sourcePath) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourcePath, "README.md"), []byte("# demo"), 0o644); err != nil {
+		t.Fatalf("WriteFile(README) error = %v", err)
+	}
+	if err := testStore.UpsertQuestionBankItem(store.QuestionBankItem{
+		ProjectConfigID: "project-custom-doc",
+		QuestionID:      801,
+		DisplayName:     "zw-001",
+		SourceKind:      "local_directory",
+		SourcePath:      sourcePath,
+		OriginRef:       "custom:zw-001",
+		Status:          "ready",
+	}); err != nil {
+		t.Fatalf("UpsertQuestionBankItem() error = %v", err)
+	}
+
+	expectedDoc := strings.Join([]string{
+		"**0-1代码生成**",
+		"",
+		"1. 【一般】新增完整地址簿能力，让用户能维护常用地址并在发布流程中复用。",
+		"",
+		"**Feature迭代**",
+		"",
+		"1. 【简单】在已有列表里补充状态筛选，方便快速定位异常数据。",
+		"",
+		"**代码理解**",
+		"",
+		"1. 【一般】梳理发布流程从填写到提交完成的关键状态流和失败分支。",
+	}, "\n")
+	svc := &PromptService{
+		store:  testStore,
+		cliSvc: appcli.NewWithResolver(func(string) (string, error) { return "/tmp/fake-claude", nil }),
+		requirementDocGenerator: func(ctx context.Context, workDir, projectName, model string) (string, error) {
+			if workDir != sourcePath {
+				t.Fatalf("requirementDocGenerator workDir = %q, want %q", workDir, sourcePath)
+			}
+			if projectName != "zw-001" {
+				t.Fatalf("requirementDocGenerator projectName = %q, want zw-001", projectName)
+			}
+			return expectedDoc, nil
+		},
+	}
+
+	result, err := svc.GenerateCustomProjectPromptDocuments(GenerateCustomProjectPromptDocumentsRequest{
+		ProjectID:    "project-custom-doc",
+		ProjectNames: []string{"zw-001"},
+	})
+	if err != nil {
+		t.Fatalf("GenerateCustomProjectPromptDocuments() error = %v", err)
+	}
+	if result.GeneratedCount != 1 || result.ErrorCount != 0 {
+		t.Fatalf("unexpected result summary: %+v", result)
+	}
+	if len(result.Details) != 1 {
+		t.Fatalf("details len = %d, want 1", len(result.Details))
+	}
+	if result.Details[0].Status != "generated" {
+		t.Fatalf("detail status = %q, want generated", result.Details[0].Status)
+	}
+	if !strings.HasPrefix(result.Details[0].OutputPath, customRoot) {
+		t.Fatalf("output path = %q, want under %q", result.Details[0].OutputPath, customRoot)
+	}
+	if !strings.Contains(filepath.Base(result.Details[0].OutputPath), "zw-001_提示词_") {
+		t.Fatalf("output filename = %q, want project prompt filename", filepath.Base(result.Details[0].OutputPath))
+	}
+
+	content, err := os.ReadFile(result.Details[0].OutputPath)
+	if err != nil {
+		t.Fatalf("ReadFile(output) error = %v", err)
+	}
+	if strings.TrimSpace(string(content)) != expectedDoc {
+		t.Fatalf("output content = %q, want %q", strings.TrimSpace(string(content)), expectedDoc)
+	}
+}
+
 func TestSaveTaskPromptSyncsExistingArtifact(t *testing.T) {
 	testStore := testutil.OpenTestStore(t)
 	defer testStore.Close()

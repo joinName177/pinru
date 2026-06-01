@@ -1,4 +1,6 @@
 import { callService } from './wails';
+import type { GenerateCustomProjectPromptDocumentsRequest } from './llm';
+import type { CreateTasksFromCustomPromptDocumentsRequest } from './task';
 
 export interface BackgroundJob {
   id: string;
@@ -120,6 +122,30 @@ export async function submitAiReviewJob(
     inputPayload: JSON.stringify(payload),
     maxRetries: 1,
     timeoutSeconds: 600,
+  });
+}
+
+export async function submitCustomPromptDocumentGenerateJob(
+  payload: GenerateCustomProjectPromptDocumentsRequest,
+): Promise<BackgroundJob> {
+  return submitJob({
+    jobType: 'custom_prompt_document_generate',
+    taskId: '',
+    inputPayload: JSON.stringify(payload),
+    maxRetries: 1,
+    timeoutSeconds: 1800,
+  });
+}
+
+export async function submitCustomPromptTaskCreateJob(
+  payload: CreateTasksFromCustomPromptDocumentsRequest,
+): Promise<BackgroundJob> {
+  return submitJob({
+    jobType: 'custom_prompt_task_create',
+    taskId: '',
+    inputPayload: JSON.stringify(payload),
+    maxRetries: 1,
+    timeoutSeconds: 1800,
   });
 }
 

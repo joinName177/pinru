@@ -28,16 +28,32 @@ type QuestionBankSyncDetail struct {
 }
 
 type QuestionBankSyncResult struct {
-	ProjectID    string                    `json:"projectId"`
-	ProjectName  string                    `json:"projectName"`
-	SyncedCount  int                       `json:"syncedCount"`
-	SkippedCount int                       `json:"skippedCount"`
-	ErrorCount   int                       `json:"errorCount"`
-	Details      []QuestionBankSyncDetail  `json:"details"`
+	ProjectID    string                   `json:"projectId"`
+	ProjectName  string                   `json:"projectName"`
+	SyncedCount  int                      `json:"syncedCount"`
+	SkippedCount int                      `json:"skippedCount"`
+	ErrorCount   int                      `json:"errorCount"`
+	Details      []QuestionBankSyncDetail `json:"details"`
+}
+
+type CustomProjectCandidate struct {
+	Name       string `json:"name"`
+	Path       string `json:"path"`
+	QuestionID int64  `json:"questionId"`
+	TargetPath string `json:"targetPath"`
+}
+
+type CustomProjectCandidateScanResult struct {
+	ProjectID    string                   `json:"projectId"`
+	ProjectName  string                   `json:"projectName"`
+	RootPath     string                   `json:"rootPath"`
+	TotalCount   int                      `json:"totalCount"`
+	SkippedCount int                      `json:"skippedCount"`
+	Candidates   []CustomProjectCandidate `json:"candidates"`
 }
 
 type localQuestionBankTrackedState struct {
-	paths              map[string]struct{}
+	paths               map[string]struct{}
 	existingQuestionIDs map[int64]store.QuestionBankItem
 }
 
@@ -223,6 +239,272 @@ func (s *GitService) ScanLocalQuestionBank(projectID string) (*ImportLocalSource
 
 func (s *GitService) ImportLocalSources(projectID string) (*ImportLocalSourcesResult, error) {
 	return s.ScanLocalQuestionBank(projectID)
+}
+
+func (s *GitService) ScanCustomProjectCandidates(projectID string) (*CustomProjectCandidateScanResult, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return nil, errors.New(errs.MsgProjectRequired)
+	}
+
+	project, rootPath, err := s.loadCustomProjectContext(projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	trackedState, err := s.collectLocalQuestionBankTrackedState(project.ID)
+	if err != nil {
+		return nil, err
+	}
+	candidates, err := discoverCustomProjectCandidates(rootPath)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &CustomProjectCandidateScanResult{
+		ProjectID:   project.ID,
+		ProjectName: project.Name,
+		RootPath:    rootPath,
+		TotalCount:  len(candidates),
+		Candidates:  make([]CustomProjectCandidate, 0, len(candidates)),
+	}
+
+	for _, candidate := range candidates {
+		if s.customProjectCandidateExists(*project, trackedState, candidate) {
+			result.SkippedCount++
+			continue
+		}
+		result.Candidates = append(result.Candidates, CustomProjectCandidate{
+			Name:       candidate.Name,
+			Path:       candidate.Path,
+			QuestionID: candidate.SyntheticProject,
+			TargetPath: util.NormalizePath(util.BuildQuestionBankSourcePath(project.CloneBasePath, candidate.SyntheticProject)),
+		})
+	}
+
+	return result, nil
+}
+
+func (s *GitService) ImportSelectedCustomProjects(projectID string, projectNames []string) (*ImportLocalSourcesResult, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return nil, errors.New(errs.MsgProjectRequired)
+	}
+	selectedNames := normalizeSelectedCustomProjectNames(projectNames)
+	if len(selectedNames) == 0 {
+		return nil, errors.New("未选择任何自定义项目")
+	}
+
+	project, rootPath, err := s.loadCustomProjectContext(projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	trackedState, err := s.collectLocalQuestionBankTrackedState(project.ID)
+	if err != nil {
+		return nil, err
+	}
+	allCandidates, err := discoverCustomProjectCandidates(rootPath)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &ImportLocalSourcesResult{
+		ProjectID:   project.ID,
+		ProjectName: project.Name,
+		Details:     make([]ImportLocalSourceDetail, 0, len(selectedNames)),
+	}
+	candidatesByName := make(map[string]localSourceCandidate, len(allCandidates))
+	for _, candidate := range allCandidates {
+		candidatesByName[strings.ToLower(candidate.Name)] = candidate
+	}
+
+	for _, selectedName := range selectedNames {
+		candidate, ok := candidatesByName[strings.ToLower(selectedName)]
+		if !ok {
+			result.Details = append(result.Details, ImportLocalSourceDetail{
+				Name:    selectedName,
+				Kind:    "custom_directory",
+				Status:  "error",
+				Message: "自定义项目不存在，或不是根目录第一层的 zw* 文件夹",
+			})
+			result.ErrorCount++
+			continue
+		}
+
+		if existingItem, ok := trackedState.existingQuestionIDs[candidate.SyntheticProject]; ok {
+			result.Details = append(result.Details, ImportLocalSourceDetail{
+				Name:    candidate.Name,
+				Kind:    "custom_directory",
+				Path:    candidate.Path,
+				Status:  "skipped",
+				Message: fmt.Sprintf("题库已存在题目 %s（%d），跳过重复入库", existingItem.DisplayName, existingItem.QuestionID),
+			})
+			result.SkippedCount++
+			continue
+		}
+		if s.customProjectCandidateExists(*project, trackedState, candidate) {
+			result.Details = append(result.Details, ImportLocalSourceDetail{
+				Name:    candidate.Name,
+				Kind:    "custom_directory",
+				Path:    candidate.Path,
+				Status:  "skipped",
+				Message: "当前项目目录已存在该自定义项目，跳过重复导入",
+			})
+			result.SkippedCount++
+			continue
+		}
+
+		detail, item, scanErr := s.copyCustomProjectCandidateToQuestionBank(*project, candidate)
+		if scanErr != nil {
+			result.Details = append(result.Details, ImportLocalSourceDetail{
+				Name:    candidate.Name,
+				Kind:    "custom_directory",
+				Path:    candidate.Path,
+				Status:  "error",
+				Message: scanErr.Error(),
+			})
+			result.ErrorCount++
+			continue
+		}
+
+		trackedState.existingQuestionIDs[candidate.SyntheticProject] = item
+		trackedState.paths[util.NormalizePath(candidate.Path)] = struct{}{}
+		result.Details = append(result.Details, detail)
+		result.ImportedCount++
+	}
+
+	sort.SliceStable(result.Details, func(i, j int) bool {
+		leftName := strings.ToLower(result.Details[i].Name)
+		rightName := strings.ToLower(result.Details[j].Name)
+		if leftName != rightName {
+			return leftName < rightName
+		}
+		return result.Details[i].Path < result.Details[j].Path
+	})
+
+	return result, nil
+}
+
+func (s *GitService) ScanCustomProjects(projectID string) (*ImportLocalSourcesResult, error) {
+	scanResult, err := s.ScanCustomProjectCandidates(projectID)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(scanResult.Candidates))
+	for _, candidate := range scanResult.Candidates {
+		names = append(names, candidate.Name)
+	}
+	if len(names) == 0 {
+		return &ImportLocalSourcesResult{
+			ProjectID:    scanResult.ProjectID,
+			ProjectName:  scanResult.ProjectName,
+			SkippedCount: scanResult.SkippedCount,
+			Details:      []ImportLocalSourceDetail{},
+		}, nil
+	}
+	return s.ImportSelectedCustomProjects(projectID, names)
+}
+
+func (s *GitService) loadCustomProjectContext(projectID string) (*store.Project, string, error) {
+	if s.store == nil {
+		return nil, "", errors.New("存储服务未初始化")
+	}
+
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return nil, "", err
+	}
+	if project == nil {
+		return nil, "", fmt.Errorf(errs.FmtStoreProjectNotFound, projectID)
+	}
+
+	rootPath, err := s.store.GetConfig("custom_project_root_path")
+	if err != nil {
+		rootPath = ""
+	}
+	rootPath = util.NormalizePath(rootPath)
+	if rootPath == "" {
+		return nil, "", errors.New("请先在设置中配置自定义项目根目录")
+	}
+	return project, rootPath, nil
+}
+
+func (s *GitService) customProjectCandidateExists(
+	project store.Project,
+	trackedState *localQuestionBankTrackedState,
+	candidate localSourceCandidate,
+) bool {
+	if trackedState == nil {
+		return false
+	}
+	if _, ok := trackedState.existingQuestionIDs[candidate.SyntheticProject]; ok {
+		return true
+	}
+	finalSourcePath := util.NormalizePath(util.BuildQuestionBankSourcePath(project.CloneBasePath, candidate.SyntheticProject))
+	if managedDirectoryExists(finalSourcePath) {
+		return true
+	}
+	if _, tracked := trackedState.paths[util.NormalizePath(candidate.Path)]; tracked {
+		return true
+	}
+	if _, tracked := trackedState.paths[finalSourcePath]; tracked {
+		return true
+	}
+	return false
+}
+
+func normalizeSelectedCustomProjectNames(projectNames []string) []string {
+	seen := make(map[string]struct{}, len(projectNames))
+	result := make([]string, 0, len(projectNames))
+	for _, name := range projectNames {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" {
+			continue
+		}
+		key := strings.ToLower(trimmed)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, trimmed)
+	}
+	return result
+}
+
+func discoverCustomProjectCandidates(rootPath string) ([]localSourceCandidate, error) {
+	entries, err := os.ReadDir(util.ExpandTilde(rootPath))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []localSourceCandidate{}, nil
+		}
+		return nil, err
+	}
+
+	candidates := make([]localSourceCandidate, 0)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := strings.TrimSpace(entry.Name())
+		if name == "" || strings.HasPrefix(name, ".") || !strings.HasPrefix(strings.ToLower(name), "zw") {
+			continue
+		}
+		normalizedPath := util.NormalizePath(filepath.Join(rootPath, name))
+		candidates = append(candidates, localSourceCandidate{
+			Name:             name,
+			DisplayName:      name,
+			Stem:             strings.ToLower(name),
+			Path:             normalizedPath,
+			Kind:             "directory",
+			SyntheticProject: BuildQuestionBankLocalSyntheticProjectID("custom:" + name),
+		})
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return strings.ToLower(candidates[i].Name) < strings.ToLower(candidates[j].Name)
+	})
+	return candidates, nil
 }
 
 // PickQuestionBankArchives opens a native file picker for selecting
@@ -861,6 +1143,67 @@ func (s *GitService) scanLocalSourceCandidateToQuestionBank(
 		Path:    candidate.Path,
 		Status:  "imported",
 		Message: message,
+	}, item, nil
+}
+
+func (s *GitService) copyCustomProjectCandidateToQuestionBank(
+	project store.Project,
+	candidate localSourceCandidate,
+) (ImportLocalSourceDetail, store.QuestionBankItem, error) {
+	finalSourcePath := util.NormalizePath(util.BuildQuestionBankSourcePath(project.CloneBasePath, candidate.SyntheticProject))
+	stagingSourcePath := finalSourcePath + "._pinru_tmp"
+	finalized := false
+
+	if managedDirectoryExists(finalSourcePath) {
+		return ImportLocalSourceDetail{}, store.QuestionBankItem{}, fmt.Errorf(errs.FmtTargetDirExists, filepath.Base(finalSourcePath))
+	}
+	if err := os.MkdirAll(filepath.Dir(util.ExpandTilde(stagingSourcePath)), 0o755); err != nil {
+		return ImportLocalSourceDetail{}, store.QuestionBankItem{}, err
+	}
+	if err := os.RemoveAll(util.ExpandTilde(stagingSourcePath)); err != nil {
+		return ImportLocalSourceDetail{}, store.QuestionBankItem{}, err
+	}
+	defer func() {
+		if finalized {
+			return
+		}
+		_ = os.RemoveAll(util.ExpandTilde(stagingSourcePath))
+		_ = os.RemoveAll(util.ExpandTilde(finalSourcePath))
+	}()
+
+	if err := gitops.CopyProjectDirectory(context.Background(), candidate.Path, stagingSourcePath); err != nil {
+		return ImportLocalSourceDetail{}, store.QuestionBankItem{}, err
+	}
+	if err := ensureLocalImportSourceReady(stagingSourcePath); err != nil {
+		return ImportLocalSourceDetail{}, store.QuestionBankItem{}, err
+	}
+	if _, err := gitops.EnsureSnapshotRepository(context.Background(), stagingSourcePath, stagingSourcePath); err != nil {
+		return ImportLocalSourceDetail{}, store.QuestionBankItem{}, err
+	}
+	if err := os.Rename(util.ExpandTilde(stagingSourcePath), util.ExpandTilde(finalSourcePath)); err != nil {
+		return ImportLocalSourceDetail{}, store.QuestionBankItem{}, err
+	}
+
+	item := store.QuestionBankItem{
+		ProjectConfigID: project.ID,
+		QuestionID:      candidate.SyntheticProject,
+		DisplayName:     candidate.DisplayName,
+		SourceKind:      "local_directory",
+		SourcePath:      finalSourcePath,
+		OriginRef:       fmt.Sprintf("custom:%s", strings.ToLower(candidate.DisplayName)),
+		Status:          "ready",
+	}
+	if err := s.store.UpsertQuestionBankItem(item); err != nil {
+		return ImportLocalSourceDetail{}, store.QuestionBankItem{}, err
+	}
+
+	finalized = true
+	return ImportLocalSourceDetail{
+		Name:    candidate.Name,
+		Kind:    "custom_directory",
+		Path:    candidate.Path,
+		Status:  "imported",
+		Message: "已复制自定义项目并写入 question_bank",
 	}, item, nil
 }
 

@@ -184,6 +184,42 @@ export interface CreateTaskRequest {
   projectConfigId?: string | null;
 }
 
+export interface CreateTasksFromCustomPromptDocumentsRequest {
+  projectId: string;
+  documentPaths: string[];
+}
+
+export interface CustomPromptDocumentTaskDetail {
+  projectName: string;
+  taskId: string;
+  questionId: number;
+  taskType: string;
+  promptDifficulty: PromptDifficulty;
+  claimSequence: number;
+  localPath: string;
+  status: string;
+  message: string;
+}
+
+export interface CustomPromptDocumentCreateDetail {
+  documentPath: string;
+  projectName: string;
+  parsedCount: number;
+  createdCount: number;
+  errorCount: number;
+  status: string;
+  message: string;
+  tasks: CustomPromptDocumentTaskDetail[];
+}
+
+export interface CreateTasksFromCustomPromptDocumentsResult {
+  projectId: string;
+  createdCount: number;
+  errorCount: number;
+  documentCount: number;
+  details: CustomPromptDocumentCreateDetail[];
+}
+
 export interface UpdateModelRunRequest {
   taskId: string;
   modelName: string;
@@ -237,6 +273,17 @@ export async function getTaskReadme(taskId: string): Promise<TaskReadme | null> 
 
 export async function createTask(task: CreateTaskRequest): Promise<TaskFromDB> {
   return callService('TaskService', 'CreateTask', task);
+}
+
+export async function pickCustomPromptDocuments(): Promise<string[]> {
+  const result = (await callService('TaskService', 'PickCustomPromptDocuments')) as string[] | null;
+  return result ?? [];
+}
+
+export async function createTasksFromCustomPromptDocuments(
+  request: CreateTasksFromCustomPromptDocumentsRequest,
+): Promise<CreateTasksFromCustomPromptDocumentsResult> {
+  return callService('TaskService', 'CreateTasksFromCustomPromptDocuments', request);
 }
 
 export async function updateTaskStatus(id: string, status: string): Promise<void> {

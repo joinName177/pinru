@@ -9,11 +9,13 @@ import type { PollOutputResponse, SkillItem, StartClaudeRequest, StartClaudeResp
 import type {
   GitHubAccountConfig,
   GitLabSettings,
+  CustomProjectSettings,
   ProjectConfig,
   TraeSettings,
 } from './config';
 import type {
   DirectoryInspectionResult,
+  CustomProjectCandidateScanResult,
   GitLabProject,
   GitLabProjectLookupResult,
   ImportLocalSourcesResult,
@@ -29,6 +31,9 @@ import type {
 } from './job';
 import type {
   GeneratePromptRequest,
+  GenerateCustomProjectPromptDocumentsRequest,
+  GenerateCustomProjectPromptDocumentsResult,
+  CustomProjectPromptDocumentDetail,
   LlmProviderConfig,
   PolishTextRequest,
   PolishTextResult,
@@ -48,6 +53,8 @@ import type {
   AddModelRunRequest,
   BatchUpdateResult,
   BatchUpdateTasksRequest,
+  CreateTasksFromCustomPromptDocumentsRequest,
+  CreateTasksFromCustomPromptDocumentsResult,
   CreateTaskRequest,
   ExtractTaskSessionsResult,
   ModelRunFromDB,
@@ -94,6 +101,9 @@ export type WailsServiceContract = {
     >;
     GetGitLabSettings: ServiceMethod<[], GitLabSettings>;
     SaveGitLabSettings: ServiceMethod<[url: string, username: string, token: string, skipTlsVerify: boolean], void>;
+    GetCustomProjectSettings: ServiceMethod<[], CustomProjectSettings>;
+    SaveCustomProjectSettings: ServiceMethod<[rootPath: string], void>;
+    PickCustomProjectRootDirectory: ServiceMethod<[], string>;
     ListProjects: ServiceMethod<[], ProjectConfig[]>;
     CreateProject: ServiceMethod<[project: ProjectConfig], void>;
     CreateProjectBatch: ServiceMethod<[sourceProjectId: string, project: ProjectConfig], void>;
@@ -150,6 +160,12 @@ export type WailsServiceContract = {
     >;
     ListQuestionBankItems: ServiceMethod<[projectId: string], QuestionBankItem[]>;
     ScanLocalQuestionBank: ServiceMethod<[projectId: string], ImportLocalSourcesResult>;
+    ScanCustomProjects: ServiceMethod<[projectId: string], ImportLocalSourcesResult>;
+    ScanCustomProjectCandidates: ServiceMethod<[projectId: string], CustomProjectCandidateScanResult>;
+    ImportSelectedCustomProjects: ServiceMethod<
+      [projectId: string, projectNames: string[]],
+      ImportLocalSourcesResult
+    >;
     SyncGitLabQuestionBank: ServiceMethod<
       [projectId: string, questionIds: number[]],
       QuestionBankSyncResult
@@ -170,6 +186,18 @@ export type WailsServiceContract = {
     TestLLMProvider: ServiceMethod<[provider: LlmProviderConfig], boolean>;
     GenerateTaskPrompt: ServiceMethod<[request: GeneratePromptRequest], PromptGenerationResult>;
     SaveTaskPrompt: ServiceMethod<[taskId: string, promptText: string], void>;
+    GenerateCustomProjectPromptDocuments: ServiceMethod<
+      [request: GenerateCustomProjectPromptDocumentsRequest],
+      GenerateCustomProjectPromptDocumentsResult
+    >;
+    ReadCustomProjectPromptDocument: ServiceMethod<
+      [path: string],
+      CustomProjectPromptDocumentDetail
+    >;
+    SaveCustomProjectPromptDocument: ServiceMethod<
+      [request: { path: string; content: string }],
+      CustomProjectPromptDocumentDetail
+    >;
     PolishText: ServiceMethod<[request: PolishTextRequest], PolishTextResult>;
   };
   SubmitService: {
@@ -195,6 +223,11 @@ export type WailsServiceContract = {
     ListTaskChildDirectories: ServiceMethod<[taskId: string], TaskChildDirectory[]>;
     GetTaskReadme: ServiceMethod<[taskId: string], TaskReadme | null>;
     CreateTask: ServiceMethod<[task: CreateTaskRequest], TaskFromDB>;
+    PickCustomPromptDocuments: ServiceMethod<[], string[]>;
+    CreateTasksFromCustomPromptDocuments: ServiceMethod<
+      [request: CreateTasksFromCustomPromptDocumentsRequest],
+      CreateTasksFromCustomPromptDocumentsResult
+    >;
     UpdateTaskStatus: ServiceMethod<[id: string, status: string], void>;
     UpdateTaskType: ServiceMethod<[id: string, taskType: string], void>;
     UpdateTaskSessionList: ServiceMethod<[request: UpdateTaskSessionListRequest], void>;

@@ -106,6 +106,10 @@ export interface TraeSettings {
   defaultLogsPath: string;
 }
 
+export interface CustomProjectSettings {
+  rootPath: string;
+}
+
 export async function getConfig(key: string): Promise<string> {
   return callService('ConfigService', 'GetConfig', key);
 }
@@ -153,6 +157,18 @@ export async function getTraeSettings(): Promise<TraeSettings> {
 
 export async function saveTraeSettings(workspaceStoragePath: string, logsPath: string): Promise<void> {
   return callService('ConfigService', 'SaveTraeSettings', workspaceStoragePath, logsPath);
+}
+
+export async function getCustomProjectSettings(): Promise<CustomProjectSettings> {
+  return callService('ConfigService', 'GetCustomProjectSettings');
+}
+
+export async function saveCustomProjectSettings(rootPath: string): Promise<void> {
+  return callService('ConfigService', 'SaveCustomProjectSettings', rootPath);
+}
+
+export async function pickCustomProjectRootDirectory(): Promise<string> {
+  return callService('ConfigService', 'PickCustomProjectRootDirectory');
 }
 
 // Project CRUD — now backed by dedicated DB table

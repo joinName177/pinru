@@ -4,6 +4,7 @@ import {
   Check,
   ChevronRight,
   Edit2,
+  FolderOpen,
   Github,
   Link2,
   Loader2,
@@ -686,9 +687,14 @@ export function GeneralSettingsPanel({
   traeDefaultWorkspaceStoragePath,
   traeDefaultLogsPath,
   traePathSaveStatus,
+  customProjectRootPath,
+  customProjectPathSaveStatus,
   onTraeWorkspaceStoragePathChange,
   onTraeLogsPathChange,
   onTraePathsSave,
+  onCustomProjectRootPathChange,
+  onCustomProjectRootPathPick,
+  onCustomProjectPathSave,
 }: {
   theme: 'light' | 'dark';
   onThemeChange: (theme: 'light' | 'dark') => void;
@@ -697,9 +703,14 @@ export function GeneralSettingsPanel({
   traeDefaultWorkspaceStoragePath: string;
   traeDefaultLogsPath: string;
   traePathSaveStatus: 'idle' | 'saved' | 'error';
+  customProjectRootPath: string;
+  customProjectPathSaveStatus: 'idle' | 'saved' | 'error';
   onTraeWorkspaceStoragePathChange: (value: string) => void;
   onTraeLogsPathChange: (value: string) => void;
   onTraePathsSave: () => void;
+  onCustomProjectRootPathChange: (value: string) => void;
+  onCustomProjectRootPathPick: () => void;
+  onCustomProjectPathSave: () => void;
 }) {
   return (
     <section className="max-w-lg animate-in fade-in duration-150">
@@ -724,6 +735,46 @@ export function GeneralSettingsPanel({
             ))}
           </div>
         </Field>
+
+        <div className="pt-4 border-t border-stone-100 dark:border-stone-800">
+          <p className="text-sm font-semibold text-stone-800 dark:text-stone-200 mb-1">
+            自定义项目目录
+          </p>
+          <p className="text-xs text-stone-500 dark:text-stone-400 mb-4">
+            题库刷新会扫描该目录第一层中以 zw 开头的文件夹，并复制入本地题库。
+          </p>
+
+          <div className="space-y-4">
+            <Field label="项目根目录">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={customProjectRootPath}
+                  onChange={(event) => onCustomProjectRootPathChange(event.target.value)}
+                  placeholder="/Users/tory/Projects/custom"
+                  className={inputCls}
+                />
+                <button
+                  type="button"
+                  onClick={onCustomProjectRootPathPick}
+                  className="shrink-0 px-4 py-2.5 bg-stone-100 dark:bg-stone-800 hover:bg-stone-200 dark:hover:bg-stone-700 text-stone-700 dark:text-stone-300 rounded-2xl text-sm font-semibold transition-colors flex items-center gap-2 cursor-default"
+                  title="选择目录"
+                >
+                  <FolderOpen className="w-4 h-4" />
+                  选择
+                </button>
+              </div>
+            </Field>
+
+            <div className="flex items-center justify-end gap-3">
+              {customProjectPathSaveStatus === 'saved' && <StatusBadge ok>已保存</StatusBadge>}
+              {customProjectPathSaveStatus === 'error' && <StatusBadge>保存失败</StatusBadge>}
+              <button onClick={onCustomProjectPathSave} className={btnPrimary}>
+                保存目录
+              </button>
+            </div>
+          </div>
+        </div>
 
         <div className="pt-4 border-t border-stone-100 dark:border-stone-800">
           <p className="text-sm font-semibold text-stone-800 dark:text-stone-200 mb-1">

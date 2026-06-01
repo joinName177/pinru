@@ -46,6 +46,31 @@ export interface PromptGenerationResult {
   status: string;
 }
 
+export interface GenerateCustomProjectPromptDocumentsRequest {
+  projectId: string;
+  projectNames: string[];
+  providerId?: string | null;
+}
+
+export interface CustomProjectPromptDocumentDetail {
+  projectName: string;
+  sourcePath: string;
+  outputPath: string;
+  content: string;
+  status: string;
+  message: string;
+}
+
+export interface GenerateCustomProjectPromptDocumentsResult {
+  projectId: string;
+  rootPath: string;
+  providerName: string;
+  model: string;
+  generatedCount: number;
+  errorCount: number;
+  details: CustomProjectPromptDocumentDetail[];
+}
+
 export async function testLlmProvider(provider: LlmProviderConfig): Promise<boolean> {
   return callService('PromptService', 'TestLLMProvider', provider);
 }
@@ -58,6 +83,25 @@ export async function generateTaskPrompt(
 
 export async function saveTaskPrompt(taskId: string, promptText: string): Promise<void> {
   return callService('PromptService', 'SaveTaskPrompt', taskId, promptText);
+}
+
+export async function generateCustomProjectPromptDocuments(
+  request: GenerateCustomProjectPromptDocumentsRequest,
+): Promise<GenerateCustomProjectPromptDocumentsResult> {
+  return callService('PromptService', 'GenerateCustomProjectPromptDocuments', request);
+}
+
+export async function readCustomProjectPromptDocument(
+  path: string,
+): Promise<CustomProjectPromptDocumentDetail> {
+  return callService('PromptService', 'ReadCustomProjectPromptDocument', path);
+}
+
+export async function saveCustomProjectPromptDocument(
+  path: string,
+  content: string,
+): Promise<CustomProjectPromptDocumentDetail> {
+  return callService('PromptService', 'SaveCustomProjectPromptDocument', { path, content });
 }
 
 export interface PolishTextRequest {

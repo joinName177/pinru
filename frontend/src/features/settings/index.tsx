@@ -11,6 +11,8 @@ import {
   getGitHubAccounts,
   getGitLabSettings,
   getLlmProviders,
+  getCustomProjectSettings,
+  pickCustomProjectRootDirectory,
   createGitHubAccount,
   updateGitHubAccount,
   deleteGitHubAccount as deleteGitHubAccountApi,
@@ -18,6 +20,7 @@ import {
   updateLlmProvider,
   deleteLlmProvider as deleteLlmProviderApi,
   saveGitLabSettings,
+  saveCustomProjectSettings,
   testGitHubAccountConnection,
   testGitLabConnection,
   getTraeSettings,
@@ -90,6 +93,8 @@ export default function Settings() {
   const [traeDefaultWorkspaceStoragePath, setTraeDefaultWorkspaceStoragePath] = useState('');
   const [traeDefaultLogsPath, setTraeDefaultLogsPath] = useState('');
   const [traePathSaveStatus, setTraePathSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle');
+  const [customProjectRootPath, setCustomProjectRootPath] = useState('');
+  const [customProjectPathSaveStatus, setCustomProjectPathSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle');
 
   const [showGithubModal, setShowGithubModal] = useState(false);
   const [githubForm, setGithubForm] = useState<GitHubAccountFormState>(EMPTY_GITHUB_FORM);
@@ -163,11 +168,22 @@ export default function Settings() {
       }
     };
 
+    const loadCustomProjectSettings = async () => {
+      try {
+        const settings = await getCustomProjectSettings();
+        if (cancelled) return;
+        setCustomProjectRootPath(settings.rootPath ?? '');
+      } catch {
+        // non-critical; silently ignore
+      }
+    };
+
     Promise.allSettled([
       loadGitLabSettings(),
       loadGitHubSettings(),
       loadLLMSettings(),
       loadTraeSettings(),
+      loadCustomProjectSettings(),
     ]).finally(() => {
       if (!cancelled) {
         setLoading(false);
@@ -540,6 +556,28 @@ export default function Settings() {
     }
   }, [traeWorkspaceStoragePath, traeLogsPath]);
 
+  const handleSaveCustomProjectPath = useCallback(async () => {
+    try {
+      await saveCustomProjectSettings(customProjectRootPath.trim());
+      flashStatus(setCustomProjectPathSaveStatus, 'saved');
+    } catch (error) {
+      console.error('Save custom project path failed:', error);
+      flashStatus(setCustomProjectPathSaveStatus, 'error', 3000);
+    }
+  }, [customProjectRootPath]);
+
+  const handlePickCustomProjectPath = useCallback(async () => {
+    try {
+      const selectedPath = await pickCustomProjectRootDirectory();
+      if (selectedPath) {
+        setCustomProjectRootPath(selectedPath);
+      }
+    } catch (error) {
+      console.error('Pick custom project path failed:', error);
+      flashStatus(setCustomProjectPathSaveStatus, 'error', 3000);
+    }
+  }, []);
+
   const handleTestProvider = async (provider: LlmProviderConfig) => {
     setTestingProviderId(provider.id);
     try {
@@ -713,9 +751,14 @@ export default function Settings() {
                 traeDefaultWorkspaceStoragePath={traeDefaultWorkspaceStoragePath}
                 traeDefaultLogsPath={traeDefaultLogsPath}
                 traePathSaveStatus={traePathSaveStatus}
+                customProjectRootPath={customProjectRootPath}
+                customProjectPathSaveStatus={customProjectPathSaveStatus}
                 onTraeWorkspaceStoragePathChange={setTraeWorkspaceStoragePath}
                 onTraeLogsPathChange={setTraeLogsPath}
                 onTraePathsSave={handleSaveTraePaths}
+                onCustomProjectRootPathChange={setCustomProjectRootPath}
+                onCustomProjectRootPathPick={handlePickCustomProjectPath}
+                onCustomProjectPathSave={handleSaveCustomProjectPath}
               />
             )}
 
