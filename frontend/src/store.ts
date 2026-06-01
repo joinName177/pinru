@@ -38,6 +38,7 @@ export interface Task {
   status: TaskStatus;
   taskType: TaskType;
   sessionList: TaskSession[];
+  promptDifficulty: TaskFromDB['promptDifficulty'];
   promptGenerationStatus: PromptGenerationStatus;
   promptGenerationError: string | null;
   createdAt: number;
@@ -116,6 +117,7 @@ function mapDbTaskToTask(dbTask: TaskFromDB, modelRuns: ModelRunFromDB[]): Task 
     status: dbTask.status as TaskStatus,
     taskType: normalizeTaskTypeName(dbTask.taskType) || DEFAULT_TASK_TYPE,
     sessionList: persistedSessionList,
+    promptDifficulty: dbTask.promptDifficulty ?? '一般',
     promptGenerationStatus: dbTask.promptGenerationStatus,
     promptGenerationError: dbTask.promptGenerationError,
     createdAt: dbTask.createdAt,

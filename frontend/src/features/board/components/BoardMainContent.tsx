@@ -15,7 +15,7 @@ import type { Task, TaskStatus, TaskType } from '../../../store';
 import { getTaskTypePresentation } from '../../../api/config';
 import type { TaskTypeOverviewSummary } from '../../../shared/lib/taskTypeOverview';
 import { type CardSize, STATUS, TaskCard } from './BoardPresentation';
-import type { BoardSortOption } from '../utils/boardTaskView';
+import type { BoardSortOption, BoardTaskGroup } from '../utils/boardTaskView';
 
 const CARD_SIZE_OPTIONS: Array<{
   size: CardSize;
@@ -79,7 +79,7 @@ export function BoardMainContent({
   tasksForStageCount: Task[];
   tasksForRoundCount: Task[];
   sortedTasks: Task[];
-  groupedTasks: Array<{ taskType: string; tasks: Task[] }>;
+  groupedTasks: BoardTaskGroup[];
   visibleProjectTaskSummaries: TaskTypeOverviewSummary[];
   gridClass: string;
   collapsedGroups: Set<string>;
@@ -93,7 +93,7 @@ export function BoardMainContent({
   onToggleStage: (status: TaskStatus) => void;
   onToggleRound: (round: number) => void;
   onClearFilters: () => void;
-  onToggleGroupCollapse: (taskType: string) => void;
+  onToggleGroupCollapse: (groupKey: string) => void;
   onSelectTask: (task: Task) => void;
   onOpenTaskContextMenu: (event: MouseEvent, task: Task) => void;
   onDeleteTask: (task: Task) => void;
@@ -134,6 +134,7 @@ export function BoardMainContent({
               onChange={(event) => onSortChange(event.target.value as BoardSortOption)}
               className="bg-transparent py-2 text-sm font-medium text-stone-600 dark:text-stone-300 outline-none cursor-default"
             >
+              <option value="project-desc">项目名从高到低</option>
               <option value="created-desc">最新创建</option>
               <option value="created-asc">最早创建</option>
               <option value="round-desc">轮次从高到低</option>
@@ -323,16 +324,17 @@ export function BoardMainContent({
           </div>
         ) : (
           <div className="space-y-6">
-            {groupedTasks.map(({ taskType, tasks: tasksInGroup }) => {
+            {groupedTasks.map(({ groupKey, groupLabel, tasks: tasksInGroup, labelGroups }) => {
               const hideHeader = activeTypes.size > 0 && groupedTasks.length === 1;
 
               return (
-                <Fragment key={taskType}>
+                <Fragment key={groupKey}>
                   <TaskGroupSection
-                    taskType={taskType}
+                    groupLabel={groupLabel}
                     tasks={tasksInGroup}
-                    isCollapsed={hideHeader ? false : collapsedGroups.has(taskType)}
-                    onToggleCollapse={() => onToggleGroupCollapse(taskType)}
+                    taskGroups={labelGroups}
+                    isCollapsed={hideHeader ? false : collapsedGroups.has(groupKey)}
+                    onToggleCollapse={() => onToggleGroupCollapse(groupKey)}
                     gridClass={gridClass}
                     hideHeader={hideHeader}
                     renderTaskCard={(task) => (

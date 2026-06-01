@@ -11,7 +11,11 @@ export function formatProjectName(value: string) {
 }
 
 export function buildProjectRef(value: string) {
-  return `prompt2repo/${formatProjectName(value)}`;
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) {
+    return `prompt2repo/${formatProjectName(trimmed)}`;
+  }
+  return trimmed;
 }
 
 export function buildProjectBasePath(
@@ -80,11 +84,46 @@ export function parseProjectIds(value: string): string[] {
   const seen = new Set<string>();
   const ids: string[] = [];
   for (const token of tokens) {
-    if (!/^\d+$/.test(token) || seen.has(token)) continue;
-    seen.add(token);
-    ids.push(token);
+    const normalized = normalizeProjectLookupToken(token);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    ids.push(normalized);
   }
   return ids;
+}
+
+export function normalizeProjectLookupToken(value: string): string {
+  const trimmed = value.trim().replace(/^\/+|\/+$/g, '');
+  if (!trimmed) return '';
+  if (/^\d+$/.test(trimmed)) {
+    return String(Number.parseInt(trimmed, 10));
+  }
+  if (!/^[A-Za-z0-9._/-]+$/.test(trimmed)) {
+    return '';
+  }
+  if (trimmed.includes('/')) {
+    return trimmed;
+  }
+  if (/^label-\d+$/i.test(trimmed)) {
+    return trimmed.toLowerCase();
+  }
+  if (/^[A-Za-z]+-\d+$/i.test(trimmed)) {
+    return trimmed.toLowerCase();
+  }
+  return '';
+}
+
+export function gitLabProjectNumericId(project: { id?: number | string } | null | undefined): number | null {
+  const value = Number(project?.id);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+export function displayProjectLookupToken(value: string): string {
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) {
+    return trimmed;
+  }
+  return trimmed;
 }
 
 export function isOriginModel(value: string): boolean {

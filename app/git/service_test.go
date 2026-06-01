@@ -2,8 +2,11 @@ package git
 
 import (
 	"archive/zip"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -74,6 +77,52 @@ func TestSanitizeInspectPathStripsQuotesAndTrailingSeparators(t *testing.T) {
 				t.Fatalf("sanitizeInspectPath(%q) = %q, want %q", c.in, got, c.want)
 			}
 		})
+	}
+}
+
+func TestFetchGitLabProjectFallsBackToSearchForNamedProject(t *testing.T) {
+	var directRequested bool
+	var searchRequested bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v4/projects/zw-001" {
+			directRequested = true
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Path == "/api/v4/projects" && r.URL.Query().Get("search") == "zw-001" {
+			searchRequested = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{
+					"id":                  2512,
+					"name":                "zw-001-deletion_scheduled-2512",
+					"path":                "zw-001-deletion_scheduled-2512",
+					"path_with_namespace": "prompt2repo/zw/zw-001-deletion_scheduled-2512",
+				},
+				{
+					"id":                  2521,
+					"name":                "zw-001",
+					"path":                "zw-001",
+					"path_with_namespace": "prompt2repo/zw/zw-001",
+					"http_url_to_repo":    "https://gitlab.example.com/prompt2repo/zw/zw-001.git",
+				},
+			})
+			return
+		}
+		t.Fatalf("unexpected request: %s?%s", r.URL.Path, r.URL.RawQuery)
+	}))
+	defer server.Close()
+
+	s := &GitService{}
+	project, err := s.FetchGitLabProject("zw-001", server.URL, "token")
+	if err != nil {
+		t.Fatalf("FetchGitLabProject() error = %v", err)
+	}
+	if !directRequested || !searchRequested {
+		t.Fatalf("directRequested=%v searchRequested=%v, want both true", directRequested, searchRequested)
+	}
+	if project.ID != 2521 || project.Name != "zw-001" {
+		t.Fatalf("project = %+v, want zw-001 id 2521", project)
 	}
 }
 

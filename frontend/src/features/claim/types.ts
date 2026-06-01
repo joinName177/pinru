@@ -9,6 +9,7 @@ export type ModelEntry = {
 
 export type ProjectLookup = {
   id: string;
+  inputRef?: string;
   project?: GitLabProject;
   error?: string;
 };

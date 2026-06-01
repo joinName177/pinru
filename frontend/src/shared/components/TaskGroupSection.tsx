@@ -5,23 +5,29 @@ import { type Task } from '../../store';
 import { getTaskTypePresentation } from '../lib/taskTypes';
 
 export default function TaskGroupSection({
-  taskType,
+  groupLabel,
   tasks,
+  taskGroups,
   isCollapsed,
   onToggleCollapse,
   gridClass,
   hideHeader = false,
   renderTaskCard,
 }: {
-  taskType: string;
+  groupLabel: string;
   tasks: Task[];
+  taskGroups?: Array<{ groupKey: string; tasks: Task[] }>;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   gridClass: string;
   hideHeader?: boolean;
   renderTaskCard: (task: Task) => ReactNode;
 }) {
-  const presentation = getTaskTypePresentation(taskType);
+  const presentation = getTaskTypePresentation(groupLabel);
+  const visibleGroups =
+    taskGroups && taskGroups.length > 0
+      ? taskGroups
+      : [{ groupKey: '__all__', tasks }];
 
   return (
     <section className="space-y-3">
@@ -33,7 +39,7 @@ export default function TaskGroupSection({
           <div className="flex min-w-0 items-center gap-3">
             <span className={`h-2.5 w-2.5 rounded-full ${presentation.dot}`} />
             <span className="truncate text-sm font-semibold text-stone-900 dark:text-stone-100">
-              {presentation.label}
+              {groupLabel}
             </span>
             <span className="rounded-full border border-stone-200 bg-stone-100 px-2.5 py-1 text-[11px] font-semibold text-stone-500 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-400">
               {tasks.length}
@@ -57,10 +63,14 @@ export default function TaskGroupSection({
             transition={{ duration: 0.2, ease: 'easeInOut' }}
             className="overflow-hidden"
           >
-            <motion.div layout className={`grid gap-3 ${gridClass}`}>
-              <AnimatePresence mode="popLayout">
-                {tasks.map((task) => renderTaskCard(task))}
-              </AnimatePresence>
+            <motion.div layout className="space-y-3">
+              {visibleGroups.map((group) => (
+                <motion.div key={group.groupKey} layout className={`grid gap-3 ${gridClass}`}>
+                  <AnimatePresence mode="popLayout">
+                    {group.tasks.map((task) => renderTaskCard(task))}
+                  </AnimatePresence>
+                </motion.div>
+              ))}
             </motion.div>
           </motion.div>
         )}

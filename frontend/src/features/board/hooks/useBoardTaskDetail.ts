@@ -27,6 +27,7 @@ import {
   getTaskReadme,
   listAiReviewRounds,
   listModelRuns,
+  resetTaskAiReview,
   updateTaskSessionList,
   updateTaskStatus,
   updateTaskType,
@@ -190,6 +191,7 @@ export function useBoardTaskDetail({
   const [openSessionEditors, setOpenSessionEditors] = useState<Set<string>>(new Set());
   const [copiedSessionId, setCopiedSessionId] = useState<string | null>(null);
   const [taskTypeChanging, setTaskTypeChanging] = useState(false);
+  const [aiReviewResetting, setAiReviewResetting] = useState(false);
   const [activeDrawerTab, setActiveDrawerTab] =
     useState<TaskDetailDrawerTab>('prompt');
   const sessionDraftVersionRef = useRef(0);
@@ -528,6 +530,32 @@ export function useBoardTaskDetail({
 
     if (event.status === 'cancelled') {
       setSessionExtracting(false);
+    }
+  };
+
+  const handleResetAiReview = async () => {
+    if (!selected?.id || aiReviewResetting) {
+      return;
+    }
+    const confirmed = window.confirm('确认重置当前题卡的全部 AI 复审记录？提示词、Session 和代码目录不会被删除。');
+    if (!confirmed) {
+      return;
+    }
+
+    setAiReviewResetting(true);
+    setDrawerError('');
+    try {
+      await resetTaskAiReview(selected.id);
+      await Promise.all([
+        loadTasks(),
+        useAppStore.getState().loadBackgroundJobs(),
+      ]);
+      await refreshTaskSessionSyncState(selected.id);
+      setActiveDrawerTab('ai-review');
+    } catch (error) {
+      setDrawerError(error instanceof Error ? error.message : '重置复审失败');
+    } finally {
+      setAiReviewResetting(false);
     }
   };
 
@@ -1289,6 +1317,7 @@ export function useBoardTaskDetail({
     drawerError,
     statusChanging,
     taskTypeChanging,
+    aiReviewResetting,
     sessionListDraft,
     sessionListSaving,
     sessionSaveState,
@@ -1313,6 +1342,7 @@ export function useBoardTaskDetail({
     handleSessionSyncEvent,
     handleStatusChange,
     handleTaskTypeChange,
+    handleResetAiReview,
     handleAddSession,
     handleAutoExtractSessions,
     handleSessionChange,

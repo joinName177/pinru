@@ -518,7 +518,7 @@ func TestUpdateTaskSessionListAdjustsProjectQuota(t *testing.T) {
 	wantQuotas := map[string]int{
 		"Feature迭代": 1,
 		"Bug修复":     0,
-		"代码生成":      3,
+		"0-1代码生成":   3,
 	}
 	if len(gotQuotas) != len(wantQuotas) {
 		t.Fatalf("TaskTypeQuotas length = %d, want %d", len(gotQuotas), len(wantQuotas))
@@ -535,7 +535,7 @@ func TestUpdateTaskSessionListAdjustsProjectQuota(t *testing.T) {
 	wantTotals := map[string]int{
 		"Feature迭代": 2,
 		"Bug修复":     1,
-		"代码生成":      3,
+		"0-1代码生成":   3,
 	}
 	for taskType, want := range wantTotals {
 		if gotTotals[taskType] != want {
@@ -1055,6 +1055,131 @@ func TestTaskPromptGenerationLifecycle(t *testing.T) {
 	}
 }
 
+func TestResetTaskAiReviewClearsReviewStateOnly(t *testing.T) {
+	store := openTestStore(t)
+	defer store.Close()
+
+	promptText := "保留提示词"
+	task := Task{
+		ID:              "task-reset-review",
+		GitLabProjectID: 1001,
+		ProjectName:     "Demo Task",
+		TaskType:        "Feature迭代",
+		PromptText:      &promptText,
+	}
+	if err := store.CreateTaskWithModelRuns(task, []ModelRun{
+		{ID: "run-reset-review", TaskID: task.ID, ModelName: "ORIGIN"},
+	}); err != nil {
+		t.Fatalf("CreateTaskWithModelRuns() error = %v", err)
+	}
+	if err := store.UpdateTaskPrompt(task.ID, promptText); err != nil {
+		t.Fatalf("UpdateTaskPrompt() error = %v", err)
+	}
+	reviewNotes := "不满意"
+	if err := store.UpdateModelRunReview("run-reset-review", "warning", 1, &reviewNotes); err != nil {
+		t.Fatalf("UpdateModelRunReview() error = %v", err)
+	}
+	modelRunID := "run-reset-review"
+	if err := store.CreateAiReviewRound(AiReviewRound{
+		ID:             "round-reset-review",
+		TaskID:         task.ID,
+		ModelRunID:     &modelRunID,
+		LocalPath:      "/tmp/demo",
+		ModelName:      "ORIGIN",
+		RoundNumber:    1,
+		OriginalPrompt: promptText,
+		PromptText:     promptText,
+		Status:         "warning",
+		ReviewNotes:    "不满意",
+	}); err != nil {
+		t.Fatalf("CreateAiReviewRound() error = %v", err)
+	}
+	taskID := task.ID
+	if err := store.CreateBackgroundJob(BackgroundJob{
+		ID:             "job-reset-review",
+		JobType:        "ai_review",
+		TaskID:         &taskID,
+		Status:         "done",
+		Progress:       100,
+		InputPayload:   "{}",
+		MaxRetries:     1,
+		TimeoutSeconds: 600,
+		CreatedAt:      1,
+	}); err != nil {
+		t.Fatalf("CreateBackgroundJob() error = %v", err)
+	}
+
+	if err := store.ResetTaskAiReview(task.ID); err != nil {
+		t.Fatalf("ResetTaskAiReview() error = %v", err)
+	}
+
+	run, err := store.GetModelRunByID("run-reset-review")
+	if err != nil {
+		t.Fatalf("GetModelRunByID() error = %v", err)
+	}
+	if run == nil {
+		t.Fatalf("GetModelRunByID() = nil")
+	}
+	if run.ReviewStatus != "none" || run.ReviewRound != 0 || run.ReviewNotes != nil {
+		t.Fatalf("review state = %q/%d/%v, want none/0/nil", run.ReviewStatus, run.ReviewRound, run.ReviewNotes)
+	}
+	rounds, err := store.ListAiReviewRoundsByTask(task.ID)
+	if err != nil {
+		t.Fatalf("ListAiReviewRoundsByTask() error = %v", err)
+	}
+	if len(rounds) != 0 {
+		t.Fatalf("round count = %d, want 0", len(rounds))
+	}
+	jobs, err := store.ListBackgroundJobs(&JobFilter{TaskID: &taskID})
+	if err != nil {
+		t.Fatalf("ListBackgroundJobs() error = %v", err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("job count = %d, want 0", len(jobs))
+	}
+	savedTask, err := store.GetTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	if savedTask == nil || savedTask.PromptText == nil || *savedTask.PromptText != promptText {
+		t.Fatalf("prompt after reset = %v, want %q", savedTask, promptText)
+	}
+}
+
+func TestResetTaskAiReviewRejectsRunningReview(t *testing.T) {
+	store := openTestStore(t)
+	defer store.Close()
+
+	task := Task{
+		ID:              "task-reset-running-review",
+		GitLabProjectID: 1001,
+		ProjectName:     "Demo Task",
+		TaskType:        "Feature迭代",
+	}
+	if err := store.CreateTaskWithModelRuns(task, []ModelRun{
+		{ID: "run-reset-running-review", TaskID: task.ID, ModelName: "ORIGIN"},
+	}); err != nil {
+		t.Fatalf("CreateTaskWithModelRuns() error = %v", err)
+	}
+	taskID := task.ID
+	if err := store.CreateBackgroundJob(BackgroundJob{
+		ID:             "job-reset-running-review",
+		JobType:        "ai_review",
+		TaskID:         &taskID,
+		Status:         "running",
+		InputPayload:   "{}",
+		MaxRetries:     1,
+		TimeoutSeconds: 600,
+		CreatedAt:      1,
+	}); err != nil {
+		t.Fatalf("CreateBackgroundJob() error = %v", err)
+	}
+
+	if err := store.ResetTaskAiReview(task.ID); err == nil {
+		t.Fatalf("ResetTaskAiReview() error = nil, want running review rejection")
+	}
+}
+
 func TestSyncTaskPromptFromArtifactPreservesSubmittedStatus(t *testing.T) {
 	store := openTestStore(t)
 	defer store.Close()
@@ -1107,22 +1232,7 @@ func openTestStore(t *testing.T) *Store {
 	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), "pinru.db")
-	migrations := []string{
-		readMigrationFile(t, "001_init.sql"),
-		readMigrationFile(t, "002_model_runs_extend.sql"),
-		readMigrationFile(t, "003_submit_results.sql"),
-		readMigrationFile(t, "004_task_type.sql"),
-		readMigrationFile(t, "005_project_task_quotas.sql"),
-		readMigrationFile(t, "006_project_submit_defaults.sql"),
-		readMigrationFile(t, "007_project_task_types.sql"),
-		readMigrationFile(t, "008_task_session_list.sql"),
-		readMigrationFile(t, "009_task_prompt_generation_status.sql"),
-		readMigrationFile(t, "010_project_task_type_totals.sql"),
-		readMigrationFile(t, "011_project_overview_markdown.sql"),
-		readMigrationFile(t, "012_model_run_session_list.sql"),
-	}
-
-	store, err := Open(dbPath, migrations...)
+	store, err := Open(dbPath, migrations.All()...)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}

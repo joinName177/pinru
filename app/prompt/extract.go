@@ -14,13 +14,16 @@ import (
 
 // GeneratedPromptPayload 是 CLI 输出中 JSON 格式提示词的结构。
 type GeneratedPromptPayload struct {
-	Version         int    `json:"version"`
-	Prompt          string `json:"prompt"`
-	PromptText      string `json:"promptText"`
-	ArtifactPath    string `json:"artifactPath"`
-	ArtifactPathAlt string `json:"artifact_path"`
-	FileWritten     *bool  `json:"fileWritten"`
-	FileWrittenAlt  *bool  `json:"file_written"`
+	Version             int    `json:"version"`
+	Prompt              string `json:"prompt"`
+	PromptText          string `json:"promptText"`
+	PromptDifficulty    string `json:"promptDifficulty"`
+	PromptDifficultyAlt string `json:"prompt_difficulty"`
+	Difficulty          string `json:"difficulty"`
+	ArtifactPath        string `json:"artifactPath"`
+	ArtifactPathAlt     string `json:"artifact_path"`
+	FileWritten         *bool  `json:"fileWritten"`
+	FileWrittenAlt      *bool  `json:"file_written"`
 }
 
 const (
@@ -33,6 +36,21 @@ func (p GeneratedPromptPayload) PromptValue() string {
 		return strings.TrimSpace(p.Prompt)
 	}
 	return strings.TrimSpace(p.PromptText)
+}
+
+func (p GeneratedPromptPayload) PromptDifficultyValue() string {
+	for _, value := range []string{p.PromptDifficulty, p.PromptDifficultyAlt, p.Difficulty} {
+		normalized := NormalizePromptDifficultyLabel(value)
+		if normalized != "" {
+			return normalized
+		}
+	}
+	return ""
+}
+
+type ExtractedPromptResult struct {
+	PromptText       string
+	PromptDifficulty string
 }
 
 // ExtractPromptFromCLIOutput 从 CLI 输出中提取提示词文本。
@@ -51,30 +69,41 @@ func (p GeneratedPromptPayload) PromptValue() string {
 //  4. 分块最优选择：将输出按空行切块，取得分最高的块；
 //     兜底处理模型在提示词前后掺杂大量说明文字的情况。
 func ExtractPromptFromCLIOutput(output string) (string, error) {
+	result, err := ExtractPromptResultFromCLIOutput(output)
+	if err != nil {
+		return "", err
+	}
+	return result.PromptText, nil
+}
+
+func ExtractPromptResultFromCLIOutput(output string) (ExtractedPromptResult, error) {
 	normalized := strings.TrimSpace(strings.ReplaceAll(output, "\r\n", "\n"))
 	if normalized == "" {
-		return "", errors.New(errs.MsgModelOutputEmpty)
+		return ExtractedPromptResult{}, errors.New(errs.MsgModelOutputEmpty)
 	}
 
 	// 第一层：JSON payload 提取（最可靠，skill 正常输出时命中）
 	if payload, ok, err := ExtractPromptJSONPayload(normalized); ok {
 		if err != nil {
-			return "", err
+			return ExtractedPromptResult{}, err
 		}
-		return payload.PromptValue(), nil
+		return ExtractedPromptResult{
+			PromptText:       payload.PromptValue(),
+			PromptDifficulty: payload.PromptDifficultyValue(),
+		}, nil
 	}
 
 	// 第二层：标记区间提取（模型遵守了标记协议但未输出 JSON 时命中）
 	if candidate, ok := ExtractPromptBetweenMarkers(normalized); ok {
 		if cleaned := CleanPromptCandidate(candidate); PromptCandidateScore(cleaned) >= 4 {
-			return cleaned, nil
+			return ExtractedPromptResult{PromptText: cleaned}, nil
 		}
 	}
 
 	// 第三层：整体候选评分（模型纯文本输出、无标记时命中）
 	candidate := CleanPromptCandidate(normalized)
 	if PromptCandidateScore(candidate) >= 4 {
-		return candidate, nil
+		return ExtractedPromptResult{PromptText: candidate}, nil
 	}
 
 	// 第四层：分块最优选择（模型输出夹杂大量说明文字时兜底）
@@ -89,10 +118,10 @@ func ExtractPromptFromCLIOutput(output string) (string, error) {
 		}
 	}
 	if bestScore >= 4 {
-		return best, nil
+		return ExtractedPromptResult{PromptText: best}, nil
 	}
 
-	return "", errors.New(errs.MsgPromptNotDetected)
+	return ExtractedPromptResult{}, errors.New(errs.MsgPromptNotDetected)
 }
 
 func ExtractPromptJSONPayload(output string) (GeneratedPromptPayload, bool, error) {

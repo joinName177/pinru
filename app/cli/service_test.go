@@ -33,6 +33,13 @@ func TestHelperProcess(t *testing.T) {
 		fmt.Fprintln(os.Stderr, "ERROR: invalid schema")
 		fmt.Fprintln(os.Stderr, "ERROR: additionalProperties must be false")
 		os.Exit(1)
+	case "python_error":
+		fmt.Fprintln(os.Stderr, "traceback: collect context failed")
+		fmt.Fprintln(os.Stderr, "details: missing dependency")
+		os.Exit(1)
+	case "python_context_ok":
+		fmt.Fprintln(os.Stdout, `{"base_dir":"/tmp","projects":[{"resolved_path":"/tmp/demo","exists":true,"git":{"in_git":true,"changed_files":["main.go"]},"recent_files":[]}]}`)
+		os.Exit(0)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown GO_TEST_SUBPROCESS_MODE: %s\n", os.Getenv("GO_TEST_SUBPROCESS_MODE"))
 		os.Exit(1)
@@ -62,6 +69,35 @@ func createMockCodexExecutable(t *testing.T, mode string) string {
 		return path
 	}
 	path := filepath.Join(dir, "codex")
+	content := fmt.Sprintf(
+		"#!/bin/sh\nGO_TEST_SUBPROCESS=1 GO_TEST_SUBPROCESS_MODE=%s exec %q -test.run=TestHelperProcess -- \"$@\"\n",
+		mode, exe,
+	)
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatalf("os.WriteFile(%s) error = %v", path, err)
+	}
+	return path
+}
+
+func createMockPythonExecutable(t *testing.T, mode string) string {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() error = %v", err)
+	}
+	dir := t.TempDir()
+	if runtime.GOOS == "windows" {
+		path := filepath.Join(dir, "python3.bat")
+		content := fmt.Sprintf(
+			"@echo off\r\nset GO_TEST_SUBPROCESS=1\r\nset GO_TEST_SUBPROCESS_MODE=%s\r\n\"%s\" -test.run=TestHelperProcess -- %%*\r\nexit /b %%errorlevel%%\r\n",
+			mode, exe,
+		)
+		if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+			t.Fatalf("os.WriteFile(%s) error = %v", path, err)
+		}
+		return path
+	}
+	path := filepath.Join(dir, "python3")
 	content := fmt.Sprintf(
 		"#!/bin/sh\nGO_TEST_SUBPROCESS=1 GO_TEST_SUBPROCESS_MODE=%s exec %q -test.run=TestHelperProcess -- \"$@\"\n",
 		mode, exe,
@@ -232,6 +268,75 @@ func TestPgCodeReviewSchemaDisallowsAdditionalProperties(t *testing.T) {
 	}
 }
 
+func TestPgCodeReviewSchemaDescriptionsEnforcePromptScopedReview(t *testing.T) {
+	var schema map[string]interface{}
+	if err := json.Unmarshal(pgCodeReviewSchema, &schema); err != nil {
+		t.Fatalf("json.Unmarshal(pgCodeReviewSchema) error = %v", err)
+	}
+
+	properties, ok := schema["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("schema properties = %#v, want object", schema["properties"])
+	}
+
+	reviewNotes, ok := properties["reviewNotes"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("reviewNotes schema = %#v, want object", properties["reviewNotes"])
+	}
+	reviewNotesDesc, _ := reviewNotes["description"].(string)
+	if !strings.Contains(reviewNotesDesc, "必须回指 original_prompt/current_prompt") {
+		t.Fatalf("reviewNotes description = %q, want prompt back-reference rule", reviewNotesDesc)
+	}
+	if !strings.Contains(reviewNotesDesc, "不能用未写明的扩展点作为主缺口") {
+		t.Fatalf("reviewNotes description = %q, want no-expansion rule", reviewNotesDesc)
+	}
+
+	nextPrompt, ok := properties["nextPrompt"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("nextPrompt schema = %#v, want object", properties["nextPrompt"])
+	}
+	nextPromptDesc, _ := nextPrompt["description"].(string)
+	if !strings.Contains(nextPromptDesc, "只允许围绕 reviewNotes 已回指的主缺口") {
+		t.Fatalf("nextPrompt description = %q, want focused-fix rule", nextPromptDesc)
+	}
+
+	issues, ok := properties["issues"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("issues schema = %#v, want object", properties["issues"])
+	}
+	issuesDesc, _ := issues["description"].(string)
+	if !strings.Contains(issuesDesc, "只能对应 prompt 中明确写出的要求") {
+		t.Fatalf("issues description = %q, want prompt-only rule", issuesDesc)
+	}
+
+	items, ok := issues["items"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("issues.items = %#v, want object", issues["items"])
+	}
+	itemProps, ok := items["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("issues.items.properties = %#v, want object", items["properties"])
+	}
+
+	issueReviewNotes, ok := itemProps["reviewNotes"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("issues.items.reviewNotes = %#v, want object", itemProps["reviewNotes"])
+	}
+	issueReviewNotesDesc, _ := issueReviewNotes["description"].(string)
+	if !strings.Contains(issueReviewNotesDesc, "必须回指 original_prompt/current_prompt") {
+		t.Fatalf("issues.items.reviewNotes description = %q, want prompt back-reference rule", issueReviewNotesDesc)
+	}
+
+	issueNextPrompt, ok := itemProps["nextPrompt"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("issues.items.nextPrompt = %#v, want object", itemProps["nextPrompt"])
+	}
+	issueNextPromptDesc, _ := issueNextPrompt["description"].(string)
+	if !strings.Contains(issueNextPromptDesc, "只修复当前子问题对应的主缺口") {
+		t.Fatalf("issues.items.nextPrompt description = %q, want focused-fix rule", issueNextPromptDesc)
+	}
+}
+
 func TestRunCodexReviewIncludesRecentCliOutputInError(t *testing.T) {
 	repoDir := t.TempDir()
 	mockPath := createMockCodexExecutable(t, "codex_error")
@@ -242,6 +347,7 @@ func TestRunCodexReviewIncludesRecentCliOutputInError(t *testing.T) {
 		}
 		return mockPath, nil
 	})
+	svc.reviewContextPath = filepath.Join(t.TempDir(), "missing_collect_project_context.py")
 
 	_, err := svc.RunCodexReview(context.Background(), CodexReviewRequest{
 		LocalPath:      repoDir,
@@ -255,6 +361,93 @@ func TestRunCodexReviewIncludesRecentCliOutputInError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "additionalProperties must be false") {
 		t.Fatalf("RunCodexReview() error = %q, want stderr tail", err.Error())
+	}
+}
+
+func TestReviewContextScriptPathFallsBackToClaudeSkillsDir(t *testing.T) {
+	home := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	t.Setenv("HOME", home)
+	if originalHome != "" {
+		defer os.Setenv("HOME", originalHome)
+	}
+
+	scriptPath := filepath.Join(home, ".claude", "skills", "pg-code", "scripts", "collect_project_context.py")
+	if err := os.MkdirAll(filepath.Dir(scriptPath), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(scriptPath, []byte("print('ok')\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	svc := New()
+	if got := svc.reviewContextScriptPath(); got != scriptPath {
+		t.Fatalf("reviewContextScriptPath() = %q, want %q", got, scriptPath)
+	}
+}
+
+func TestCollectPgCodeReviewContextFallsBackWhenPythonFails(t *testing.T) {
+	repoDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoDir, "deploy.sh"), []byte("#!/bin/sh\necho deploy\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(deploy.sh) error = %v", err)
+	}
+	scriptPath := filepath.Join(t.TempDir(), "collect_project_context.py")
+	if err := os.WriteFile(scriptPath, []byte("print('ignored')\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(scriptPath) error = %v", err)
+	}
+	pythonPath := createMockPythonExecutable(t, "python_error")
+
+	svc := NewWithResolver(func(name string) (string, error) {
+		if name != "python3" {
+			t.Fatalf("unexpected CLI lookup: %s", name)
+		}
+		return pythonPath, nil
+	})
+	svc.reviewContextPath = scriptPath
+
+	project, err := svc.collectPgCodeReviewContext(context.Background(), repoDir)
+	if err != nil {
+		t.Fatalf("collectPgCodeReviewContext() error = %v", err)
+	}
+	if project == nil {
+		t.Fatalf("collectPgCodeReviewContext() = nil, want fallback project")
+	}
+	if !project.Exists {
+		t.Fatalf("project.Exists = false, want true")
+	}
+	if len(project.RecentFiles) == 0 || project.RecentFiles[0].RelativePath != "deploy.sh" {
+		t.Fatalf("project.RecentFiles = %#v, want deploy.sh from native fallback", project.RecentFiles)
+	}
+}
+
+func TestCollectPgCodeReviewContextUsesResolvedPythonPath(t *testing.T) {
+	repoDir := t.TempDir()
+	scriptPath := filepath.Join(t.TempDir(), "collect_project_context.py")
+	if err := os.WriteFile(scriptPath, []byte("print('ignored')\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(scriptPath) error = %v", err)
+	}
+	pythonPath := createMockPythonExecutable(t, "python_context_ok")
+
+	svc := NewWithResolver(func(name string) (string, error) {
+		if name != "python3" {
+			t.Fatalf("unexpected CLI lookup: %s", name)
+		}
+		return pythonPath, nil
+	})
+	svc.reviewContextPath = scriptPath
+
+	project, err := svc.collectPgCodeReviewContext(context.Background(), repoDir)
+	if err != nil {
+		t.Fatalf("collectPgCodeReviewContext() error = %v", err)
+	}
+	if project == nil {
+		t.Fatalf("collectPgCodeReviewContext() = nil, want project")
+	}
+	if !project.Git.InGit {
+		t.Fatalf("project.Git.InGit = false, want true")
+	}
+	if len(project.Git.ChangedFiles) != 1 || project.Git.ChangedFiles[0] != "main.go" {
+		t.Fatalf("project.Git.ChangedFiles = %#v, want [main.go]", project.Git.ChangedFiles)
 	}
 }
 
@@ -283,6 +476,21 @@ func TestBuildCodexReviewPromptIncludesEvidenceGuardrails(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "original_prompt/current_prompt 为唯一来源") {
 		t.Fatalf("prompt missing db-only prompt guidance: %q", prompt)
+	}
+	if !strings.Contains(prompt, "只把其中明确写出的要求作为验收标准") {
+		t.Fatalf("prompt missing strict prompt-only acceptance rule: %q", prompt)
+	}
+	if !strings.Contains(prompt, "不要把未写明的扩展点") {
+		t.Fatalf("prompt missing no-expansion rule: %q", prompt)
+	}
+	if !strings.Contains(prompt, "reviewNotes 必须回指 original_prompt/current_prompt") {
+		t.Fatalf("prompt missing prompt back-reference rule: %q", prompt)
+	}
+	if !strings.Contains(prompt, "回指不到的内容不能作为主缺口") {
+		t.Fatalf("prompt missing main-gap restriction: %q", prompt)
+	}
+	if !strings.Contains(prompt, "nextPrompt 只能围绕主缺口补充最小修复指令") {
+		t.Fatalf("prompt missing focused nextPrompt rule: %q", prompt)
 	}
 	if strings.Contains(prompt, "prompt_sources") || strings.Contains(prompt, "prompt_candidates") {
 		t.Fatalf("prompt should not reference local prompt sources: %q", prompt)
@@ -337,7 +545,7 @@ func TestApplyCodexReviewEvidenceGuardsDowngradesInvalidKeyLocations(t *testing.
 	result := CodexReviewResult{
 		IsCompleted:  true,
 		IsSatisfied:  true,
-		ReviewNotes:  "无",
+		ReviewNotes:  "已核验 main.go 的核心改动，主流程要求已覆盖。",
 		NextPrompt:   "无",
 		KeyLocations: "missing.go:8",
 	}
@@ -356,5 +564,39 @@ func TestApplyCodexReviewEvidenceGuardsDowngradesInvalidKeyLocations(t *testing.
 	}
 	if !strings.Contains(result.ReviewNotes, "关键代码位置格式无效") {
 		t.Fatalf("ReviewNotes = %q, want invalid key location note", result.ReviewNotes)
+	}
+}
+
+func TestApplyCodexReviewEvidenceGuardsRejectsEmptyPassingReviewNotes(t *testing.T) {
+	repoDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(main.go) error = %v", err)
+	}
+
+	result := CodexReviewResult{
+		IsCompleted:        true,
+		IsSatisfied:        true,
+		ReviewNotes:        "无",
+		NextPrompt:         "无",
+		NextPromptTaskType: "未归类",
+		KeyLocations:       "main.go:1",
+	}
+
+	applyCodexReviewEvidenceGuards(repoDir, &pgCodeProjectContext{
+		Exists: true,
+		Git: pgCodeGitContext{
+			InGit:        true,
+			ChangedFiles: []string{"main.go"},
+		},
+	}, &result)
+
+	if !result.IsCompleted {
+		t.Fatalf("IsCompleted = false, want preserved true")
+	}
+	if result.IsSatisfied {
+		t.Fatalf("IsSatisfied = true, want downgraded false for empty pass note")
+	}
+	if !strings.Contains(result.ReviewNotes, "通过依据不足") {
+		t.Fatalf("ReviewNotes = %q, want pass evidence guard note", result.ReviewNotes)
 	}
 }

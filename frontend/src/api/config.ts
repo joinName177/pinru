@@ -164,6 +164,10 @@ export async function createProject(p: ProjectConfig): Promise<void> {
   return callService('ConfigService', 'CreateProject', p);
 }
 
+export async function createProjectBatch(sourceProjectId: string, p: ProjectConfig): Promise<void> {
+  return callService('ConfigService', 'CreateProjectBatch', sourceProjectId, p);
+}
+
 export async function updateProject(p: ProjectConfig): Promise<void> {
   return callService('ConfigService', 'UpdateProject', p);
 }

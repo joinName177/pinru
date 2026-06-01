@@ -96,6 +96,7 @@ export type WailsServiceContract = {
     SaveGitLabSettings: ServiceMethod<[url: string, username: string, token: string, skipTlsVerify: boolean], void>;
     ListProjects: ServiceMethod<[], ProjectConfig[]>;
     CreateProject: ServiceMethod<[project: ProjectConfig], void>;
+    CreateProjectBatch: ServiceMethod<[sourceProjectId: string, project: ProjectConfig], void>;
     UpdateProject: ServiceMethod<[project: ProjectConfig], void>;
     DeleteProject: ServiceMethod<[id: string], void>;
     ConsumeProjectQuota: ServiceMethod<[projectId: string, taskType: string], void>;
@@ -190,6 +191,7 @@ export type WailsServiceContract = {
     ListModelRuns: ServiceMethod<[taskId: string], ModelRunFromDB[]>;
     ListAiReviewNodes: ServiceMethod<[taskId: string], AiReviewNodeFromDB[]>;
     ListAiReviewRounds: ServiceMethod<[taskId: string], AiReviewRoundFromDB[]>;
+    ResetTaskAiReview: ServiceMethod<[taskId: string], void>;
     ListTaskChildDirectories: ServiceMethod<[taskId: string], TaskChildDirectory[]>;
     GetTaskReadme: ServiceMethod<[taskId: string], TaskReadme | null>;
     CreateTask: ServiceMethod<[task: CreateTaskRequest], TaskFromDB>;
@@ -206,6 +208,9 @@ export type WailsServiceContract = {
     UpdateTaskReportFields: ServiceMethod<[request: UpdateTaskReportFieldsRequest], void>;
     BatchUpdateTasks: ServiceMethod<[request: BatchUpdateTasksRequest], BatchUpdateResult>;
     BatchDeleteTasks: ServiceMethod<[taskIds: string[]], BatchUpdateResult>;
-    SaveAiReviewRoundNotes: ServiceMethod<[roundID: string, reviewNotes: string, nextPrompt: string], void>;
+    SaveAiReviewRoundNotes: ServiceMethod<
+      [roundID: string, reviewNotes: string, nextPrompt: string, nextPromptTaskType: string],
+      void
+    >;
   };
 };

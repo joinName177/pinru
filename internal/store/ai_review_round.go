@@ -8,31 +8,33 @@ import (
 )
 
 type AiReviewRound struct {
-	ID             string  `json:"id"`
-	TaskID         string  `json:"taskId"`
-	ModelRunID     *string `json:"modelRunId"`
-	LocalPath      string  `json:"localPath"`
-	ModelName      string  `json:"modelName"`
-	RoundNumber    int     `json:"roundNumber"`
-	OriginalPrompt string  `json:"originalPrompt"`
-	PromptText     string  `json:"promptText"`
-	Status         string  `json:"status"`
-	IsCompleted    *bool   `json:"isCompleted"`
-	IsSatisfied    *bool   `json:"isSatisfied"`
-	ReviewNotes    string  `json:"reviewNotes"`
-	NextPrompt     string  `json:"nextPrompt"`
-	ProjectType    string  `json:"projectType"`
-	ChangeScope    string  `json:"changeScope"`
-	KeyLocations   string  `json:"keyLocations"`
-	JobID          *string `json:"jobId"`
-	CreatedAt      int64   `json:"createdAt"`
-	UpdatedAt      int64   `json:"updatedAt"`
+	ID                 string  `json:"id"`
+	TaskID             string  `json:"taskId"`
+	ModelRunID         *string `json:"modelRunId"`
+	LocalPath          string  `json:"localPath"`
+	ModelName          string  `json:"modelName"`
+	RoundNumber        int     `json:"roundNumber"`
+	OriginalPrompt     string  `json:"originalPrompt"`
+	PromptText         string  `json:"promptText"`
+	PromptDifficulty   string  `json:"promptDifficulty"`
+	Status             string  `json:"status"`
+	IsCompleted        *bool   `json:"isCompleted"`
+	IsSatisfied        *bool   `json:"isSatisfied"`
+	ReviewNotes        string  `json:"reviewNotes"`
+	NextPrompt         string  `json:"nextPrompt"`
+	NextPromptTaskType string  `json:"nextPromptTaskType"`
+	ProjectType        string  `json:"projectType"`
+	ChangeScope        string  `json:"changeScope"`
+	KeyLocations       string  `json:"keyLocations"`
+	JobID              *string `json:"jobId"`
+	CreatedAt          int64   `json:"createdAt"`
+	UpdatedAt          int64   `json:"updatedAt"`
 }
 
 const aiReviewRoundColumns = `id, task_id, model_run_id, local_path, model_name,
 	round_number, original_prompt, prompt_text,
-	status, is_completed, is_satisfied, review_notes, next_prompt,
-	project_type, change_scope, key_locations, job_id,
+	prompt_difficulty, status, is_completed, is_satisfied, review_notes, next_prompt,
+	next_prompt_task_type, project_type, change_scope, key_locations, job_id,
 	created_at, updated_at`
 
 func (s *Store) CreateAiReviewRound(round AiReviewRound) error {
@@ -40,28 +42,31 @@ func (s *Store) CreateAiReviewRound(round AiReviewRound) error {
 		`INSERT INTO ai_review_rounds (
 			id, task_id, model_run_id, local_path, model_name,
 			round_number, original_prompt, prompt_text,
-			status, is_completed, is_satisfied, review_notes, next_prompt,
-			project_type, change_scope, key_locations, job_id
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			prompt_difficulty, status, is_completed, is_satisfied, review_notes, next_prompt,
+			next_prompt_task_type, project_type, change_scope, key_locations, job_id
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		round.ID, round.TaskID, round.ModelRunID, round.LocalPath, round.ModelName,
 		round.RoundNumber, round.OriginalPrompt, round.PromptText,
+		normalizePromptDifficulty(round.PromptDifficulty),
 		round.Status, boolPtrToNullableInt(round.IsCompleted), boolPtrToNullableInt(round.IsSatisfied),
 		round.ReviewNotes, round.NextPrompt,
+		normalizeAiReviewTaskType(round.NextPromptTaskType),
 		round.ProjectType, round.ChangeScope, round.KeyLocations, round.JobID,
 	)
 	return err
 }
 
-func (s *Store) FinalizeAiReviewRound(id, status string, isCompleted, isSatisfied *bool, reviewNotes, nextPrompt, projectType, changeScope, keyLocations string) error {
+func (s *Store) FinalizeAiReviewRound(id, status string, isCompleted, isSatisfied *bool, reviewNotes, nextPrompt, nextPromptTaskType, projectType, changeScope, keyLocations string) error {
 	res, err := s.DB.Exec(
 		`UPDATE ai_review_rounds
 		    SET status = ?, is_completed = ?, is_satisfied = ?,
-		        review_notes = ?, next_prompt = ?,
+		        review_notes = ?, next_prompt = ?, next_prompt_task_type = ?,
 		        project_type = ?, change_scope = ?, key_locations = ?,
 		        updated_at = strftime('%s','now')
 		  WHERE id = ?`,
 		status, boolPtrToNullableInt(isCompleted), boolPtrToNullableInt(isSatisfied),
 		reviewNotes, nextPrompt,
+		normalizeAiReviewTaskType(nextPromptTaskType),
 		projectType, changeScope, keyLocations,
 		id,
 	)
@@ -76,10 +81,10 @@ func (s *Store) UpdateAiReviewRoundStatus(id, status string, jobID *string) erro
 	return ensureRowsAffected(res, err, errs.FmtStoreReviewRoundNotFound, id)
 }
 
-func (s *Store) UpdateAiReviewRoundNotes(id, reviewNotes, nextPrompt string) error {
+func (s *Store) UpdateAiReviewRoundNotes(id, reviewNotes, nextPrompt, nextPromptTaskType string) error {
 	res, err := s.DB.Exec(
-		`UPDATE ai_review_rounds SET review_notes = ?, next_prompt = ?, updated_at = strftime('%s','now') WHERE id = ?`,
-		reviewNotes, nextPrompt, id,
+		`UPDATE ai_review_rounds SET review_notes = ?, next_prompt = ?, next_prompt_task_type = ?, updated_at = strftime('%s','now') WHERE id = ?`,
+		reviewNotes, nextPrompt, normalizeAiReviewTaskType(nextPromptTaskType), id,
 	)
 	return ensureRowsAffected(res, err, errs.FmtStoreReviewRoundNotFound, id)
 }
@@ -227,14 +232,44 @@ func scanAiReviewRound(scanner interface {
 	err := scanner.Scan(
 		&round.ID, &round.TaskID, &round.ModelRunID, &round.LocalPath, &round.ModelName,
 		&round.RoundNumber, &round.OriginalPrompt, &round.PromptText,
-		&round.Status, &isCompletedRaw, &isSatisfiedRaw, &round.ReviewNotes, &round.NextPrompt,
+		&round.PromptDifficulty, &round.Status, &isCompletedRaw, &isSatisfiedRaw, &round.ReviewNotes, &round.NextPrompt,
+		&round.NextPromptTaskType,
 		&round.ProjectType, &round.ChangeScope, &round.KeyLocations, &round.JobID,
 		&round.CreatedAt, &round.UpdatedAt,
 	)
 	if err != nil {
 		return AiReviewRound{}, err
 	}
+	round.PromptDifficulty = normalizePromptDifficulty(round.PromptDifficulty)
+	round.NextPromptTaskType = normalizeAiReviewTaskType(round.NextPromptTaskType)
 	round.IsCompleted = nullableIntToBoolPtr(isCompletedRaw)
 	round.IsSatisfied = nullableIntToBoolPtr(isSatisfiedRaw)
 	return round, nil
+}
+
+func normalizeAiReviewTaskType(taskType string) string {
+	trimmed := strings.TrimSpace(taskType)
+	if trimmed == "" {
+		return defaultTaskType
+	}
+	switch strings.ToLower(strings.ReplaceAll(trimmed, " ", "")) {
+	case "bugfix", "bug修复", "缺陷修复":
+		return "Bug修复"
+	case "feature", "feature迭代", "功能开发":
+		return "Feature迭代"
+	case "代码生成", "0-1代码生成", "0-1", "0到1", "从0到1", "从零到一":
+		return "0-1代码生成"
+	case "代码理解":
+		return "代码理解"
+	case "refactor", "代码重构":
+		return "代码重构"
+	case "工程化":
+		return "工程化"
+	case "test", "测试", "测试补全", "代码测试":
+		return "代码测试"
+	case "未分类", "未归类", "uncategorized", "unclassified":
+		return defaultTaskType
+	default:
+		return trimmed
+	}
 }

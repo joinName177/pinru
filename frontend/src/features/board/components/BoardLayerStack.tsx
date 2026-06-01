@@ -179,6 +179,7 @@ export function BoardLayerStack({
           drawerError={detail.drawerError}
           statusChanging={detail.statusChanging}
           taskTypeChanging={detail.taskTypeChanging}
+          aiReviewResetting={detail.aiReviewResetting}
           sessionListDraft={detail.sessionListDraft}
           sessionListSaving={detail.sessionListSaving}
           sessionSaveState={detail.sessionSaveState}
@@ -213,6 +214,7 @@ export function BoardLayerStack({
           onCopySessionId={detail.handleCopySessionId}
           onRemoveSession={detail.handleRemoveSession}
           onResetSessions={detail.handleResetSessions}
+          onResetAiReview={detail.handleResetAiReview}
           onSaveSessionList={() => void detail.handleSessionListSave()}
           onPromptDraftChange={detail.handlePromptDraftChange}
           onPromptCopy={detail.handlePromptCopy}

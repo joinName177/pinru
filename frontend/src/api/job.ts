@@ -97,10 +97,12 @@ export interface AiReviewResult {
   reviewRoundId: string;
   modelRunId: string;
   modelName: string;
+  promptDifficulty?: string;
   reviewStatus: 'pass' | 'warning';
   reviewRound: number;
   reviewNotes: string;
   nextPrompt: string;
+  nextPromptTaskType?: string;
   isCompleted?: boolean;
   isSatisfied?: boolean;
   projectType?: string;

@@ -32,6 +32,7 @@ import { saveAiReviewRoundNotes } from '../../api/task';
 import type { GeneratePromptRequest, LlmProviderConfig } from '../../api/llm';
 import { polishText as polishTextApi } from '../../api/llm';
 import {
+  DEFAULT_TASK_TYPES,
   getTaskTypePresentation,
   normalizeTaskTypeName,
   supportsQuickAiReviewTaskType,
@@ -115,6 +116,7 @@ interface TaskDetailDrawerProps {
   taskTypeChanging: boolean;
   sessionListDraft: EditableTaskSession[];
   sessionListSaving: boolean;
+  aiReviewResetting?: boolean;
   sessionSaveState: 'idle' | 'saved';
   hasUnsavedSessionChanges: boolean;
   sessionExtracting: boolean;
@@ -147,6 +149,7 @@ interface TaskDetailDrawerProps {
   onCopySessionId: (localId: string, sessionId: string) => void | Promise<void>;
   onRemoveSession: (localId: string) => void;
   onResetSessions: () => void;
+  onResetAiReview?: () => void | Promise<void>;
   onSaveSessionList: () => void | Promise<void>;
   onPromptDraftChange: (value: string) => void;
   onPromptCopy: () => void | Promise<void>;
@@ -159,7 +162,7 @@ interface TaskDetailDrawerProps {
   onGeneratePrompt: (config: Omit<GeneratePromptRequest, 'taskId'>) => void | Promise<void>;
   onAiReview?: (run: ModelRunFromDB) => void;
   onDeleteAiReviewRecord?: (jobId: string) => void | Promise<void>;
-  onSubmitNextAiReviewRound?: (modelRunId: string, modelName: string, localPath: string, nextPromptOverride?: string) => void | Promise<void>;
+  onSubmitNextAiReviewRound?: (modelRunId: string, modelName: string, localPath: string, nextPromptOverride?: string, reviewRoundId?: string) => void | Promise<void>;
 }
 
 const TAB_ITEMS: Array<{ id: TaskDetailDrawerTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
@@ -181,6 +184,7 @@ export default function TaskDetailDrawer({
   taskTypeChanging,
   sessionListDraft,
   sessionListSaving,
+  aiReviewResetting = false,
   sessionSaveState,
   hasUnsavedSessionChanges,
   sessionExtracting,
@@ -213,6 +217,7 @@ export default function TaskDetailDrawer({
   onCopySessionId,
   onRemoveSession,
   onResetSessions,
+  onResetAiReview,
   onSaveSessionList,
   onPromptDraftChange,
   onPromptCopy,
@@ -259,6 +264,7 @@ export default function TaskDetailDrawer({
   const [deletingAiReviewJobId, setDeletingAiReviewJobId] = useState<string | null>(null);
   const [deleteAiReviewError, setDeleteAiReviewError] = useState('');
   const [nextRoundPromptDrafts, setNextRoundPromptDrafts] = useState<Record<string, string>>({});
+  const [nextRoundTaskTypeDrafts, setNextRoundTaskTypeDrafts] = useState<Record<string, string>>({});
   const [expandedRoundPrompts, setExpandedRoundPrompts] = useState<Set<string>>(new Set());
   const [polishingKeys, setPolishingKeys] = useState<Set<string>>(new Set());
   const [polishedNotes, setPolishedNotes] = useState<Record<string, string>>({});
@@ -371,13 +377,18 @@ export default function TaskDetailDrawer({
     groupKey: string,
     originalNotes: string,
     originalNextPrompt: string,
+    originalNextPromptTaskType: string,
   ) => {
     if (savingRoundNotes.has(roundId)) return;
     setSavingRoundNotes((prev) => new Set(prev).add(roundId));
     try {
       const notes = polishedNotes[roundId] ?? originalNotes;
       const nextPrompt = nextRoundPromptDrafts[groupKey] ?? originalNextPrompt;
-      await saveAiReviewRoundNotes(roundId, notes, nextPrompt);
+      const nextPromptTaskType =
+        nextRoundTaskTypeDrafts[groupKey] ??
+        originalNextPromptTaskType ??
+        inferNextPromptTaskType(nextPrompt);
+      await saveAiReviewRoundNotes(roundId, notes, nextPrompt, nextPromptTaskType);
       // After saving, clear polished state so it shows the saved version
       setPolishedNotes((prev) => {
         const next = { ...prev };
@@ -1354,6 +1365,7 @@ export default function TaskDetailDrawer({
               description="最终可提交的提示词内容，支持手动修订和回写"
               badge={
                 <div className="flex items-center gap-2">
+                  <PromptDifficultyBadge difficulty={selectedTaskDetail?.promptDifficulty ?? selected.promptDifficulty} />
                   <WorkspaceBadge tone={promptSaveState === 'saved' ? 'success' : 'neutral'}>
                     {promptSaveState === 'saved' ? '已保存' : '未保存'}
                   </WorkspaceBadge>
@@ -1663,11 +1675,31 @@ export default function TaskDetailDrawer({
           )}
 
           {/* 统计概况 */}
-          <div className="grid gap-3 md:grid-cols-4">
-            <InfoTile label="复审轮次">{String(allRounds.length)}</InfoTile>
-            <InfoTile label="复审通过">{String(roundPassCount)}</InfoTile>
-            <InfoTile label="复审未过">{String(roundWarningCount)}</InfoTile>
-            <InfoTile label="复审中">{String(roundRunningCount)}</InfoTile>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="grid flex-1 gap-3 md:grid-cols-4">
+              <InfoTile label="复审轮次">{String(allRounds.length)}</InfoTile>
+              <InfoTile label="复审通过">{String(roundPassCount)}</InfoTile>
+              <InfoTile label="复审未过">{String(roundWarningCount)}</InfoTile>
+              <InfoTile label="复审中">{String(roundRunningCount)}</InfoTile>
+            </div>
+            {onResetAiReview && (
+              <button
+                type="button"
+                disabled={aiReviewResetting || roundRunningCount > 0}
+                onClick={() => {
+                  void onResetAiReview();
+                }}
+                title={roundRunningCount > 0 ? '复审任务运行中，完成或取消后才能重置' : undefined}
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-red-500/25 bg-red-500/10 px-3 text-xs font-medium text-red-200 transition hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                {aiReviewResetting ? (
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="h-3.5 w-3.5" />
+                )}
+                {aiReviewResetting ? '重置中…' : '重置复审'}
+              </button>
+            )}
           </div>
 
           {/* 每个模型执行的复审轮次列表 */}
@@ -1697,6 +1729,14 @@ export default function TaskDetailDrawer({
                 nextRoundPromptDrafts[draftKey] !== undefined
                   ? nextRoundPromptDrafts[draftKey]
                   : (group.latestRound?.nextPrompt ?? '');
+              const nextPromptTaskTypeDraft =
+                nextRoundTaskTypeDrafts[draftKey] ??
+                normalizeNextPromptTaskType(group.latestRound?.nextPromptTaskType, nextPromptDraft);
+              const latestReviewFailed =
+                latestStatus === 'warning' &&
+                group.latestRound?.isCompleted === false &&
+                group.latestRound?.isSatisfied === false &&
+                group.latestRound?.reviewNotes.trim().startsWith('复审执行失败');
 
               // Find matching ModelRunFromDB for the "启动首轮复审" fallback button
               const matchingModelRun = safeSelectedModelRuns.find(
@@ -1765,6 +1805,7 @@ export default function TaskDetailDrawer({
                               ) : (
                                 <WorkspaceBadge tone="neutral">进行中</WorkspaceBadge>
                               )}
+                              <PromptDifficultyBadge difficulty={round.promptDifficulty} />
                               {round.isCompleted !== null && (
                                 <AiReviewDecisionBadge label="是否完成" value={round.isCompleted} />
                               )}
@@ -1850,6 +1891,7 @@ export default function TaskDetailDrawer({
                                         group.groupKey,
                                         round.reviewNotes,
                                         round.nextPrompt ?? '',
+                                        normalizeNextPromptTaskType(round.nextPromptTaskType, round.nextPrompt),
                                       )
                                     }
                                     title="保存"
@@ -1993,14 +2035,15 @@ export default function TaskDetailDrawer({
                         <button
                           type="button"
                           disabled={savingRoundNotes.has(group.latestRound.id)}
-                          onClick={() =>
-                            void handleSaveRoundNotes(
-                              group.latestRound!.id,
-                              group.groupKey,
-                              group.latestRound!.reviewNotes ?? '',
-                              group.latestRound!.nextPrompt ?? '',
-                            )
-                          }
+                        onClick={() =>
+                          void handleSaveRoundNotes(
+                            group.latestRound!.id,
+                            group.groupKey,
+                            group.latestRound!.reviewNotes ?? '',
+                            group.latestRound!.nextPrompt ?? '',
+                            normalizeNextPromptTaskType(group.latestRound!.nextPromptTaskType, group.latestRound!.nextPrompt),
+                          )
+                        }
                           title="保存下一轮提示词"
                           className="rounded p-0.5 text-zinc-500 transition hover:bg-zinc-800/40 hover:text-zinc-300 disabled:opacity-40"
                         >
@@ -2012,15 +2055,41 @@ export default function TaskDetailDrawer({
                         </button>
                       )}
                     </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] font-medium text-zinc-500">提示词类型</span>
+                      <select
+                        value={nextPromptTaskTypeDraft}
+                        onChange={(e) =>
+                          setNextRoundTaskTypeDrafts((prev) => ({
+                            ...prev,
+                            [draftKey]: e.target.value,
+                          }))
+                        }
+                        className="rounded-lg border border-zinc-700/60 bg-black/20 px-2 py-1 text-xs text-zinc-200 outline-none transition focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/30"
+                      >
+                        {DEFAULT_TASK_TYPES.map((taskType) => (
+                          <option key={taskType} value={taskType}>
+                            {getTaskTypePresentation(taskType).label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                     <textarea
                       rows={3}
                       value={nextPromptDraft}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const value = e.target.value;
                         setNextRoundPromptDrafts((prev) => ({
                           ...prev,
-                          [draftKey]: e.target.value,
-                        }))
-                      }
+                          [draftKey]: value,
+                        }));
+                        if (nextRoundTaskTypeDrafts[draftKey] === undefined) {
+                          setNextRoundTaskTypeDrafts((prev) => ({
+                            ...prev,
+                            [draftKey]: inferNextPromptTaskType(value),
+                          }));
+                        }
+                      }}
                       placeholder={
                         group.rounds.length === 0
                           ? '填写首轮复审提示词（留空则使用默认提示词）'
@@ -2057,7 +2126,8 @@ export default function TaskDetailDrawer({
                             group.modelRunId,
                             group.modelName,
                             group.localPath,
-                            nextPromptDraft.trim() || undefined,
+                            latestReviewFailed ? undefined : nextPromptDraft.trim() || undefined,
+                            latestReviewFailed ? group.latestRound?.id : undefined,
                           );
                         }}
                         className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-violet-500/25 bg-violet-500/10 px-3 py-1.5 text-xs font-medium text-violet-200 transition hover:bg-violet-500/15 disabled:cursor-not-allowed disabled:opacity-40"
@@ -2073,6 +2143,8 @@ export default function TaskDetailDrawer({
                           ? '复审中…'
                           : group.rounds.length === 0
                           ? '启动首轮复审'
+                          : latestReviewFailed
+                          ? '重试复审'
                           : '启动下一轮复审'}
                       </button>
                     )}
@@ -2331,6 +2403,32 @@ function WorkspaceBadge({
       {children}
     </span>
   );
+}
+
+function PromptDifficultyBadge({
+  difficulty,
+}: {
+  difficulty: string | null | undefined;
+}) {
+  const normalized = normalizePromptDifficultyLabel(difficulty);
+  const tone =
+    normalized === '简单'
+      ? 'success'
+      : normalized === '困难'
+        ? 'warning'
+        : normalized === '地狱'
+          ? 'danger'
+          : 'blue';
+
+  return <WorkspaceBadge tone={tone}>难度：{normalized}</WorkspaceBadge>;
+}
+
+function normalizePromptDifficultyLabel(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  if (trimmed === '简单' || trimmed === '困难' || trimmed === '地狱') {
+    return trimmed;
+  }
+  return '一般';
 }
 
 function SectionBlock({
@@ -2656,6 +2754,39 @@ function trimToNull(value: string | null | undefined) {
   return trimmed ? trimmed : null;
 }
 
+function inferNextPromptTaskType(prompt: string | null | undefined): string {
+  const text = prompt?.trim().toLowerCase() ?? '';
+  if (!text || text === '无') return '未归类';
+  if (text.includes('测试') || text.includes('用例') || text.includes('覆盖率') || text.includes('断言')) {
+    return '代码测试';
+  }
+  if (text.includes('重构') || text.includes('拆分') || text.includes('抽取') || text.includes('简化结构')) {
+    return '代码重构';
+  }
+  if (text.includes('工程化') || text.includes('构建') || text.includes('脚手架') || text.includes('ci') || text.includes('配置')) {
+    return '工程化';
+  }
+  if (text.includes('理解') || text.includes('说明') || text.includes('梳理') || text.includes('文档')) {
+    return '代码理解';
+  }
+  if (text.includes('从零') || text.includes('0-1') || text.includes('全新') || text.includes('完整')) {
+    return '0-1代码生成';
+  }
+  if (text.includes('新增') || text.includes('增加') || text.includes('支持') || text.includes('补充') || text.includes('补齐')) {
+    return 'Feature迭代';
+  }
+  if (text.includes('修复') || text.includes('问题') || text.includes('错误') || text.includes('异常') || text.includes('不正确') || text.includes('失败')) {
+    return 'Bug修复';
+  }
+  return 'Bug修复';
+}
+
+function normalizeNextPromptTaskType(taskType: string | null | undefined, fallbackPrompt?: string | null): string {
+  const normalized = normalizeTaskTypeName(taskType ?? '');
+  if (normalized) return normalized;
+  return inferNextPromptTaskType(fallbackPrompt);
+}
+
 function basenameOrFallback(path: string | null, fallback: string) {
   if (!path) {
     return fallback;
@@ -2702,10 +2833,12 @@ function parseAiReviewResult(raw: string | null | undefined): AiReviewResult | n
       reviewRoundId: typeof anyResult.reviewRoundId === 'string' ? anyResult.reviewRoundId : (typeof anyResult.reviewNodeId === 'string' ? anyResult.reviewNodeId : ''),
       modelRunId: typeof parsed.modelRunId === 'string' ? parsed.modelRunId : '',
       modelName: parsed.modelName,
+      promptDifficulty: typeof parsed.promptDifficulty === 'string' ? parsed.promptDifficulty : undefined,
       reviewStatus: parsed.reviewStatus,
       reviewRound: typeof parsed.reviewRound === 'number' ? parsed.reviewRound : 0,
       reviewNotes: typeof parsed.reviewNotes === 'string' ? parsed.reviewNotes : '',
       nextPrompt: typeof parsed.nextPrompt === 'string' ? parsed.nextPrompt : '',
+      nextPromptTaskType: typeof parsed.nextPromptTaskType === 'string' ? parsed.nextPromptTaskType : undefined,
       isCompleted: typeof parsed.isCompleted === 'boolean' ? parsed.isCompleted : undefined,
       isSatisfied: typeof parsed.isSatisfied === 'boolean' ? parsed.isSatisfied : undefined,
       projectType: typeof parsed.projectType === 'string' ? parsed.projectType : undefined,
@@ -2754,10 +2887,12 @@ function parseAiReviewProgressDetails(
       reviewRoundId: typeof parsed.reviewRoundId === 'string' ? parsed.reviewRoundId : '',
       modelRunId: typeof parsed.modelRunId === 'string' ? parsed.modelRunId : '',
       modelName: typeof parsed.modelName === 'string' ? parsed.modelName : '',
+      promptDifficulty: typeof parsed.promptDifficulty === 'string' ? parsed.promptDifficulty : undefined,
       reviewStatus: parsed.reviewStatus === 'pass' || parsed.reviewStatus === 'warning' ? parsed.reviewStatus : 'warning',
       reviewRound: typeof parsed.reviewRound === 'number' ? parsed.reviewRound : 0,
       reviewNotes: typeof parsed.reviewNotes === 'string' ? parsed.reviewNotes : '',
       nextPrompt: typeof parsed.nextPrompt === 'string' ? parsed.nextPrompt : '',
+      nextPromptTaskType: typeof parsed.nextPromptTaskType === 'string' ? parsed.nextPromptTaskType : undefined,
       isCompleted: typeof parsed.isCompleted === 'boolean' ? parsed.isCompleted : undefined,
       isSatisfied: typeof parsed.isSatisfied === 'boolean' ? parsed.isSatisfied : undefined,
       projectType: typeof parsed.projectType === 'string' ? parsed.projectType : undefined,

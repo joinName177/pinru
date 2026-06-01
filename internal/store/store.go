@@ -398,18 +398,27 @@ func (s *Store) ensureIndexes() error {
 	}
 
 	requiredIndexes := []struct {
-		name string
-		stmt string
+		name  string
+		table string
+		stmt  string
 	}{
-		{name: "idx_tasks_project_config", stmt: "CREATE INDEX IF NOT EXISTS idx_tasks_project_config ON tasks(project_config_id)"},
-		{name: "idx_tasks_status", stmt: "CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)"},
-		{name: "idx_model_runs_task", stmt: "CREATE INDEX IF NOT EXISTS idx_model_runs_task ON model_runs(task_id)"},
-		{name: "idx_model_runs_task_model", stmt: "CREATE UNIQUE INDEX IF NOT EXISTS idx_model_runs_task_model ON model_runs(task_id, model_name)"},
-		{name: "idx_chat_sessions_task", stmt: "CREATE INDEX IF NOT EXISTS idx_chat_sessions_task ON chat_sessions(task_id)"},
-		{name: "idx_chat_messages_session", stmt: "CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id)"},
+		{name: "idx_tasks_project_config", table: "tasks", stmt: "CREATE INDEX IF NOT EXISTS idx_tasks_project_config ON tasks(project_config_id)"},
+		{name: "idx_tasks_status", table: "tasks", stmt: "CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)"},
+		{name: "idx_model_runs_task", table: "model_runs", stmt: "CREATE INDEX IF NOT EXISTS idx_model_runs_task ON model_runs(task_id)"},
+		{name: "idx_model_runs_task_model", table: "model_runs", stmt: "CREATE UNIQUE INDEX IF NOT EXISTS idx_model_runs_task_model ON model_runs(task_id, model_name)"},
+		{name: "idx_chat_sessions_task", table: "chat_sessions", stmt: "CREATE INDEX IF NOT EXISTS idx_chat_sessions_task ON chat_sessions(task_id)"},
+		{name: "idx_chat_messages_session", table: "chat_messages", stmt: "CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id)"},
+		{name: "idx_project_profiles_updated", table: "project_profiles", stmt: "CREATE INDEX IF NOT EXISTS idx_project_profiles_updated ON project_profiles(updated_at)"},
 	}
 
 	for _, index := range requiredIndexes {
+		tableExists, err := s.tableExists(index.table)
+		if err != nil {
+			return err
+		}
+		if !tableExists {
+			continue
+		}
 		exists, err := s.indexExists(index.name)
 		if err != nil {
 			return err

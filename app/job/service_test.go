@@ -70,6 +70,9 @@ func TestHelperProcess(t *testing.T) {
 			os.WriteFile(outPath, []byte(jsonOut), 0o644) //nolint:errcheck
 		}
 		os.Exit(0)
+	case "codex_fail":
+		fmt.Fprintln(os.Stderr, "ERROR: stream disconnected before completion")
+		os.Exit(1)
 	case "git_clone_fail_after_mkdir":
 		cloneDest := strings.TrimSpace(os.Getenv("GO_TEST_CLONE_DEST"))
 		if cloneDest != "" {
@@ -236,16 +239,36 @@ GO_TEST_SUBPROCESS=1 GO_TEST_SUBPROCESS_MODE=git_clone_create_dir_then_sleep exe
 	return dir
 }
 
+func TestAcquirePromptGenerateSlotWaitsForExistingGeneration(t *testing.T) {
+	jobSvc := &JobService{
+		promptGenerateSem: make(chan struct{}, promptGenerateConcurrencyLimit),
+		running:           make(map[string]context.CancelFunc),
+	}
+	jobSvc.promptGenerateSem <- struct{}{}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	err := jobSvc.acquirePromptGenerateSlot(ctx, "job-prompt-wait", "task-prompt-wait", "label-02068")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("acquirePromptGenerateSlot() error = %v, want deadline exceeded", err)
+	}
+	if len(jobSvc.promptGenerateSem) != 1 {
+		t.Fatalf("promptGenerateSem len = %d, want existing generation to keep the only slot", len(jobSvc.promptGenerateSem))
+	}
+}
+
 func TestExecuteAiReviewRunsSingleRoundPerSubmission(t *testing.T) {
 	testStore := testutil.OpenTestStore(t)
 
 	taskID := "task-1"
 	workDir := t.TempDir()
 	task := store.Task{
-		ID:              taskID,
-		GitLabProjectID: 1849,
-		ProjectName:     "label-01849",
-		TaskType:        "Bug修复",
+		ID:               taskID,
+		GitLabProjectID:  1849,
+		ProjectName:      "label-01849",
+		TaskType:         "Bug修复",
+		PromptDifficulty: "困难",
 	}
 	modelRuns := []store.ModelRun{{
 		ID:        "run-task-1",
@@ -276,10 +299,15 @@ func TestExecuteAiReviewRunsSingleRoundPerSubmission(t *testing.T) {
 	})
 
 	cliSvc := appcli.NewWithResolver(func(name string) (string, error) {
-		if name != "codex" {
+		switch name {
+		case "codex":
+			return mockPath, nil
+		case "python3":
+			return "", errors.New("python3 unavailable in test")
+		default:
 			t.Fatalf("unexpected CLI lookup: %s", name)
+			return "", errors.New("unexpected CLI lookup")
 		}
-		return mockPath, nil
 	})
 	jobSvc := &JobService{store: testStore, cliSvc: cliSvc}
 
@@ -320,8 +348,104 @@ func TestExecuteAiReviewRunsSingleRoundPerSubmission(t *testing.T) {
 	if output.ReviewStatus != "warning" {
 		t.Fatalf("ReviewStatus = %q, want warning", output.ReviewStatus)
 	}
+	if output.IsCompleted {
+		t.Fatalf("IsCompleted = true, want false when review is not satisfied")
+	}
+	if output.IsSatisfied {
+		t.Fatalf("IsSatisfied = true, want false")
+	}
 	if output.ReviewRound != 1 {
 		t.Fatalf("ReviewRound = %d, want 1", output.ReviewRound)
+	}
+	round, err := testStore.GetAiReviewRound(output.ReviewRoundID)
+	if err != nil {
+		t.Fatalf("GetAiReviewRound() error = %v", err)
+	}
+	if round == nil {
+		t.Fatalf("GetAiReviewRound() = nil")
+	}
+	if round.IsCompleted == nil || *round.IsCompleted {
+		t.Fatalf("round IsCompleted = %v, want false when review is not satisfied", round.IsCompleted)
+	}
+	if round.IsSatisfied == nil || *round.IsSatisfied {
+		t.Fatalf("round IsSatisfied = %v, want false", round.IsSatisfied)
+	}
+}
+
+func TestExecuteAiReviewFailureMarksRoundNotCompletedOrSatisfied(t *testing.T) {
+	testStore := testutil.OpenTestStore(t)
+
+	taskID := "task-review-fail"
+	workDir := t.TempDir()
+	task := store.Task{
+		ID:               taskID,
+		GitLabProjectID:  1849,
+		ProjectName:      "label-01849",
+		TaskType:         "Bug修复",
+		PromptText:       strPtr("修复列表筛选异常"),
+		PromptDifficulty: "困难",
+	}
+	modelRuns := []store.ModelRun{{
+		ID:        "run-review-fail",
+		TaskID:    taskID,
+		ModelName: "cotv21-pro",
+		LocalPath: &workDir,
+	}}
+	if err := testStore.CreateTaskWithModelRuns(task, modelRuns); err != nil {
+		t.Fatalf("CreateTaskWithModelRuns() error = %v", err)
+	}
+
+	mockPath := createMockCodexExecutable(t, "codex_fail", nil)
+	cliSvc := appcli.NewWithResolver(func(name string) (string, error) {
+		switch name {
+		case "codex":
+			return mockPath, nil
+		case "python3":
+			return "", errors.New("python3 unavailable in test")
+		default:
+			t.Fatalf("unexpected CLI lookup: %s", name)
+			return "", errors.New("unexpected CLI lookup")
+		}
+	})
+	jobSvc := &JobService{store: testStore, cliSvc: cliSvc}
+
+	payloadJSON, err := json.Marshal(AiReviewPayload{
+		ModelRunID: strPtr("run-review-fail"),
+		ModelName:  "cotv21-pro",
+		LocalPath:  workDir,
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal(payload) error = %v", err)
+	}
+
+	_, err = jobSvc.executeAiReview(context.Background(), "job-review-fail", SubmitJobRequest{
+		JobType:      "ai_review",
+		TaskID:       taskID,
+		InputPayload: string(payloadJSON),
+	})
+	if err == nil {
+		t.Fatalf("executeAiReview() error = nil, want failure")
+	}
+
+	rounds, err := testStore.ListAiReviewRoundsByModelRun("run-review-fail")
+	if err != nil {
+		t.Fatalf("ListAiReviewRoundsByModelRun() error = %v", err)
+	}
+	if len(rounds) != 1 {
+		t.Fatalf("round count = %d, want 1", len(rounds))
+	}
+	round := rounds[0]
+	if round.Status != "warning" {
+		t.Fatalf("round status = %q, want warning", round.Status)
+	}
+	if round.IsCompleted == nil || *round.IsCompleted {
+		t.Fatalf("round IsCompleted = %v, want false", round.IsCompleted)
+	}
+	if round.IsSatisfied == nil || *round.IsSatisfied {
+		t.Fatalf("round IsSatisfied = %v, want false", round.IsSatisfied)
+	}
+	if !strings.Contains(round.ReviewNotes, "复审执行失败") {
+		t.Fatalf("round ReviewNotes = %q, want execution failure note", round.ReviewNotes)
 	}
 }
 
@@ -528,10 +652,11 @@ func TestExecuteAiReviewIncrementsReviewRoundAcrossSubmissions(t *testing.T) {
 	taskID := "task-review-round"
 	workDir := t.TempDir()
 	task := store.Task{
-		ID:              taskID,
-		GitLabProjectID: 1849,
-		ProjectName:     "label-01849",
-		TaskType:        "Bug修复",
+		ID:               taskID,
+		GitLabProjectID:  1849,
+		ProjectName:      "label-01849",
+		TaskType:         "Bug修复",
+		PromptDifficulty: "困难",
 	}
 	modelRuns := []store.ModelRun{{
 		ID:        "run-review-round",
@@ -586,10 +711,15 @@ func TestExecuteAiReviewIncrementsReviewRoundAcrossSubmissions(t *testing.T) {
 	})
 
 	cliSvc := appcli.NewWithResolver(func(name string) (string, error) {
-		if name != "codex" {
+		switch name {
+		case "codex":
+			return mockPath, nil
+		case "python3":
+			return "", errors.New("python3 unavailable in test")
+		default:
 			t.Fatalf("unexpected CLI lookup: %s", name)
+			return "", errors.New("unexpected CLI lookup")
 		}
-		return mockPath, nil
 	})
 	jobSvc := &JobService{store: testStore, cliSvc: cliSvc}
 
@@ -621,6 +751,17 @@ func TestExecuteAiReviewIncrementsReviewRoundAcrossSubmissions(t *testing.T) {
 	}
 	if output.ReviewRound != 3 {
 		t.Fatalf("ReviewRound = %d, want 3", output.ReviewRound)
+	}
+	if output.PromptDifficulty != "困难" {
+		t.Fatalf("PromptDifficulty = %q, want 困难", output.PromptDifficulty)
+	}
+
+	createdRound, err := testStore.GetAiReviewRound(output.ReviewRoundID)
+	if err != nil {
+		t.Fatalf("GetAiReviewRound() error = %v", err)
+	}
+	if createdRound == nil || createdRound.PromptDifficulty != "困难" {
+		t.Fatalf("created round PromptDifficulty = %v, want 困难", createdRound)
 	}
 
 	updatedRun, err := testStore.GetModelRunByID("run-review-round")

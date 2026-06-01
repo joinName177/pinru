@@ -8,9 +8,11 @@ import (
 	"time"
 
 	"github.com/blueship581/pinru/internal/errs"
+	internalprompt "github.com/blueship581/pinru/internal/prompt"
 )
 
 const defaultTaskType = "未归类"
+const DefaultPromptDifficulty = "一般"
 
 type Task struct {
 	ID                         string        `json:"id"`
@@ -25,6 +27,7 @@ type Task struct {
 	PromptGenerationError      *string       `json:"promptGenerationError"`
 	PromptGenerationStartedAt  *int64        `json:"promptGenerationStartedAt"`
 	PromptGenerationFinishedAt *int64        `json:"promptGenerationFinishedAt"`
+	PromptDifficulty           string        `json:"promptDifficulty"`
 	Notes                      *string       `json:"notes"`
 	ProjectConfigID            *string       `json:"projectConfigId"`
 	ProjectType                string        `json:"projectType"`
@@ -245,11 +248,24 @@ func applyTaskSessionQuotaDelta(quotas map[string]int, previousSessions, nextSes
 	return nil
 }
 
+func normalizePromptDifficulty(value string) string {
+	switch strings.TrimSpace(value) {
+	case "简单":
+		return "简单"
+	case "困难":
+		return "困难"
+	case "地狱":
+		return "地狱"
+	default:
+		return DefaultPromptDifficulty
+	}
+}
+
 func (s *Store) ListTasks(projectConfigID *string) ([]Task, error) {
 	selectSQL := fmt.Sprintf(
 		`SELECT id, gitlab_project_id, project_name, status, task_type, session_list, local_path, prompt_text,
 		        prompt_generation_status, prompt_generation_error, %s, %s,
-		        notes, project_config_id, project_type, change_scope, %s, %s FROM tasks`,
+		        prompt_difficulty, notes, project_config_id, project_type, change_scope, %s, %s FROM tasks`,
 		nullableUnixTimestampExpr("prompt_generation_started_at"),
 		nullableUnixTimestampExpr("prompt_generation_finished_at"),
 		unixTimestampExpr("created_at"),
@@ -277,10 +293,11 @@ func (s *Store) ListTasks(projectConfigID *string) ([]Task, error) {
 		if err := rows.Scan(
 			&t.ID, &t.GitLabProjectID, &t.ProjectName, &t.Status, &t.TaskType, &rawSessionList, &t.LocalPath, &t.PromptText,
 			&t.PromptGenerationStatus, &t.PromptGenerationError, &t.PromptGenerationStartedAt, &t.PromptGenerationFinishedAt,
-			&t.Notes, &t.ProjectConfigID, &t.ProjectType, &t.ChangeScope, &t.CreatedAt, &t.UpdatedAt,
+			&t.PromptDifficulty, &t.Notes, &t.ProjectConfigID, &t.ProjectType, &t.ChangeScope, &t.CreatedAt, &t.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
+		t.PromptDifficulty = normalizePromptDifficulty(t.PromptDifficulty)
 		t.SessionList, err = parseTaskSessionList(rawSessionList, t.TaskType)
 		if err != nil {
 			return nil, err
@@ -295,7 +312,7 @@ func (s *Store) GetTask(id string) (*Task, error) {
 	query := fmt.Sprintf(
 		`SELECT id, gitlab_project_id, project_name, status, task_type, session_list, local_path, prompt_text,
 		        prompt_generation_status, prompt_generation_error, %s, %s,
-		        notes, project_config_id, project_type, change_scope, %s, %s FROM tasks WHERE id = ?`,
+		        prompt_difficulty, notes, project_config_id, project_type, change_scope, %s, %s FROM tasks WHERE id = ?`,
 		nullableUnixTimestampExpr("prompt_generation_started_at"),
 		nullableUnixTimestampExpr("prompt_generation_finished_at"),
 		unixTimestampExpr("created_at"),
@@ -306,7 +323,7 @@ func (s *Store) GetTask(id string) (*Task, error) {
 		Scan(
 			&t.ID, &t.GitLabProjectID, &t.ProjectName, &t.Status, &t.TaskType, &rawSessionList, &t.LocalPath, &t.PromptText,
 			&t.PromptGenerationStatus, &t.PromptGenerationError, &t.PromptGenerationStartedAt, &t.PromptGenerationFinishedAt,
-			&t.Notes, &t.ProjectConfigID, &t.ProjectType, &t.ChangeScope, &t.CreatedAt, &t.UpdatedAt,
+			&t.PromptDifficulty, &t.Notes, &t.ProjectConfigID, &t.ProjectType, &t.ChangeScope, &t.CreatedAt, &t.UpdatedAt,
 		)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -314,6 +331,7 @@ func (s *Store) GetTask(id string) (*Task, error) {
 	if err != nil {
 		return nil, err
 	}
+	t.PromptDifficulty = normalizePromptDifficulty(t.PromptDifficulty)
 	t.SessionList, err = parseTaskSessionList(rawSessionList, t.TaskType)
 	if err != nil {
 		return nil, err
@@ -331,7 +349,7 @@ func (s *Store) FindTaskByProjectConfigAndGitLabProjectID(projectConfigID string
 	query := fmt.Sprintf(
 		`SELECT id, gitlab_project_id, project_name, status, task_type, session_list, local_path, prompt_text,
 		        prompt_generation_status, prompt_generation_error, %s, %s,
-		        notes, project_config_id, project_type, change_scope, %s, %s
+		        prompt_difficulty, notes, project_config_id, project_type, change_scope, %s, %s
 		   FROM tasks
 		  WHERE project_config_id = ? AND gitlab_project_id = ?
 		  ORDER BY created_at DESC
@@ -347,7 +365,7 @@ func (s *Store) FindTaskByProjectConfigAndGitLabProjectID(projectConfigID string
 		Scan(
 			&t.ID, &t.GitLabProjectID, &t.ProjectName, &t.Status, &t.TaskType, &rawSessionList, &t.LocalPath, &t.PromptText,
 			&t.PromptGenerationStatus, &t.PromptGenerationError, &t.PromptGenerationStartedAt, &t.PromptGenerationFinishedAt,
-			&t.Notes, &t.ProjectConfigID, &t.ProjectType, &t.ChangeScope, &t.CreatedAt, &t.UpdatedAt,
+			&t.PromptDifficulty, &t.Notes, &t.ProjectConfigID, &t.ProjectType, &t.ChangeScope, &t.CreatedAt, &t.UpdatedAt,
 		)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -355,6 +373,7 @@ func (s *Store) FindTaskByProjectConfigAndGitLabProjectID(projectConfigID string
 	if err != nil {
 		return nil, err
 	}
+	t.PromptDifficulty = normalizePromptDifficulty(t.PromptDifficulty)
 
 	t.SessionList, err = parseTaskSessionList(rawSessionList, t.TaskType)
 	if err != nil {
@@ -363,32 +382,29 @@ func (s *Store) FindTaskByProjectConfigAndGitLabProjectID(projectConfigID string
 	return &t, nil
 }
 
-// ListSiblingTasksWithPrompt 返回同题源（相同 project_config_id + gitlab_project_id）
-// 下、排除指定任务本身、且已生成非空提示词的兄弟任务，按创建时间升序返回。
+// ListSiblingTasksWithPrompt 返回同一 GitLab 项目下、排除指定任务本身、
+// 且已生成非空提示词的兄弟任务，当前 project_config_id 的任务优先返回。
 // 用于在生成提示词时把兄弟题的已有提示词作为"避免重复"的上下文传给大模型。
 func (s *Store) ListSiblingTasksWithPrompt(projectConfigID string, gitLabProjectID int64, excludeTaskID string) ([]Task, error) {
 	projectConfigID = strings.TrimSpace(projectConfigID)
 	excludeTaskID = strings.TrimSpace(excludeTaskID)
-	if projectConfigID == "" {
-		return nil, fmt.Errorf(errs.MsgProjectConfigIDReq)
-	}
 
 	query := fmt.Sprintf(
 		`SELECT id, gitlab_project_id, project_name, status, task_type, session_list, local_path, prompt_text,
 		        prompt_generation_status, prompt_generation_error, %s, %s,
-		        notes, project_config_id, project_type, change_scope, %s, %s
+		        prompt_difficulty, notes, project_config_id, project_type, change_scope, %s, %s
 		   FROM tasks
-		  WHERE project_config_id = ? AND gitlab_project_id = ?
+		  WHERE gitlab_project_id = ?
 		    AND id <> ?
 		    AND prompt_text IS NOT NULL AND TRIM(prompt_text) <> ''
-		  ORDER BY created_at ASC`,
+		  ORDER BY CASE WHEN project_config_id = ? THEN 0 ELSE 1 END, created_at ASC`,
 		nullableUnixTimestampExpr("prompt_generation_started_at"),
 		nullableUnixTimestampExpr("prompt_generation_finished_at"),
 		unixTimestampExpr("created_at"),
 		unixTimestampExpr("updated_at"),
 	)
 
-	rows, err := s.DB.Query(query, projectConfigID, gitLabProjectID, excludeTaskID)
+	rows, err := s.DB.Query(query, gitLabProjectID, excludeTaskID, projectConfigID)
 	if err != nil {
 		return nil, err
 	}
@@ -401,10 +417,11 @@ func (s *Store) ListSiblingTasksWithPrompt(projectConfigID string, gitLabProject
 		if err := rows.Scan(
 			&t.ID, &t.GitLabProjectID, &t.ProjectName, &t.Status, &t.TaskType, &rawSessionList, &t.LocalPath, &t.PromptText,
 			&t.PromptGenerationStatus, &t.PromptGenerationError, &t.PromptGenerationStartedAt, &t.PromptGenerationFinishedAt,
-			&t.Notes, &t.ProjectConfigID, &t.ProjectType, &t.ChangeScope, &t.CreatedAt, &t.UpdatedAt,
+			&t.PromptDifficulty, &t.Notes, &t.ProjectConfigID, &t.ProjectType, &t.ChangeScope, &t.CreatedAt, &t.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
+		t.PromptDifficulty = normalizePromptDifficulty(t.PromptDifficulty)
 		t.SessionList, err = parseTaskSessionList(rawSessionList, t.TaskType)
 		if err != nil {
 			return nil, err
@@ -420,13 +437,14 @@ func (s *Store) CreateTask(t Task) error {
 	if taskType == "" {
 		taskType = defaultTaskType
 	}
+	difficulty := normalizePromptDifficulty(t.PromptDifficulty)
 	sessionListJSON, _, err := marshalTaskSessionList(taskType, t.SessionList)
 	if err != nil {
 		return err
 	}
 	_, err = s.DB.Exec(
-		"INSERT INTO tasks (id, gitlab_project_id, project_name, status, task_type, session_list, local_path, notes, project_config_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-		t.ID, t.GitLabProjectID, t.ProjectName, "Claimed", taskType, sessionListJSON, t.LocalPath, t.Notes, t.ProjectConfigID, now, now)
+		"INSERT INTO tasks (id, gitlab_project_id, project_name, status, task_type, session_list, local_path, notes, project_config_id, prompt_difficulty, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+		t.ID, t.GitLabProjectID, t.ProjectName, "Claimed", taskType, sessionListJSON, t.LocalPath, t.Notes, t.ProjectConfigID, difficulty, now, now)
 	return err
 }
 
@@ -447,14 +465,15 @@ func (s *Store) CreateTaskWithModelRuns(t Task, runs []ModelRun) error {
 	if taskType == "" {
 		taskType = defaultTaskType
 	}
+	difficulty := normalizePromptDifficulty(t.PromptDifficulty)
 	sessionListJSON, _, err := marshalTaskSessionList(taskType, t.SessionList)
 	if err != nil {
 		return err
 	}
 
 	if _, err = tx.Exec(
-		"INSERT INTO tasks (id, gitlab_project_id, project_name, status, task_type, session_list, local_path, notes, project_config_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-		t.ID, t.GitLabProjectID, t.ProjectName, "Claimed", taskType, sessionListJSON, t.LocalPath, t.Notes, t.ProjectConfigID, now, now); err != nil {
+		"INSERT INTO tasks (id, gitlab_project_id, project_name, status, task_type, session_list, local_path, notes, project_config_id, prompt_difficulty, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+		t.ID, t.GitLabProjectID, t.ProjectName, "Claimed", taskType, sessionListJSON, t.LocalPath, t.Notes, t.ProjectConfigID, difficulty, now, now); err != nil {
 		return err
 	}
 
@@ -602,6 +621,22 @@ func (s *Store) UpdateTaskReportFields(id, projectType, changeScope string) erro
 	res, err := s.DB.Exec(
 		"UPDATE tasks SET project_type=?, change_scope=?, updated_at=? WHERE id=?",
 		strings.TrimSpace(projectType), strings.TrimSpace(changeScope), now, id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf(errs.FmtStoreTaskNotFound, id)
+	}
+	return nil
+}
+
+func (s *Store) UpdateTaskPromptDifficulty(id, promptDifficulty string) error {
+	now := time.Now().Unix()
+	res, err := s.DB.Exec(
+		"UPDATE tasks SET prompt_difficulty=?, updated_at=? WHERE id=?",
+		normalizePromptDifficulty(promptDifficulty), now, id,
 	)
 	if err != nil {
 		return err
@@ -852,7 +887,29 @@ func (s *Store) UpdateModelRunSessionList(taskID, modelRunID string, sessionList
 
 func (s *Store) UpdateTaskPrompt(id, promptText string) error {
 	now := time.Now().Unix()
-	return s.CompleteTaskPromptGeneration(id, promptText, now)
+	res, err := s.DB.Exec(
+		`UPDATE tasks
+		 SET prompt_text=?,
+		     status=CASE WHEN status IN ('Submitted', 'ExecutionCompleted') THEN status ELSE 'PromptReady' END,
+		     prompt_generation_status='done',
+		     prompt_generation_error=NULL,
+		     prompt_generation_started_at=COALESCE(prompt_generation_started_at, ?),
+		     prompt_generation_finished_at=?,
+		     updated_at=?
+		 WHERE id=?`,
+		strings.TrimSpace(promptText), now, now, now, id,
+	)
+	if err != nil {
+		return err
+	}
+	rowsAffected, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return rowsErr
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf(errs.FmtStoreTaskNotFound, id)
+	}
+	return nil
 }
 
 func (s *Store) SyncTaskPromptFromArtifact(id, promptText string) error {
@@ -913,10 +970,15 @@ func (s *Store) StartTaskPromptGeneration(id string, startedAt int64) error {
 }
 
 func (s *Store) CompleteTaskPromptGeneration(id, promptText string, startedAt int64) error {
+	return s.CompleteTaskPromptGenerationWithDifficulty(id, promptText, DefaultPromptDifficulty, startedAt)
+}
+
+func (s *Store) CompleteTaskPromptGenerationWithDifficulty(id, promptText, promptDifficulty string, startedAt int64) error {
 	now := time.Now().Unix()
 	res, err := s.DB.Exec(
 		`UPDATE tasks
 		 SET prompt_text=?,
+		     prompt_difficulty=?,
 		     status=CASE WHEN status IN ('Submitted', 'ExecutionCompleted') THEN status ELSE 'PromptReady' END,
 		     prompt_generation_status='done',
 		     prompt_generation_error=NULL,
@@ -924,7 +986,7 @@ func (s *Store) CompleteTaskPromptGeneration(id, promptText string, startedAt in
 		     prompt_generation_finished_at=?,
 		     updated_at=?
 		 WHERE id=?`,
-		promptText, startedAt, now, now, id,
+		promptText, normalizePromptDifficulty(promptDifficulty), startedAt, now, now, id,
 	)
 	if err != nil {
 		return err
@@ -979,15 +1041,15 @@ func (s *Store) UpdateTaskLocalPath(id string, localPath *string) error {
 
 func (s *Store) CountTasksByProjectConfigGitLabProjectAndTaskType(projectConfigID string, gitLabProjectID int64, taskType string) (int, error) {
 	projectConfigID = strings.TrimSpace(projectConfigID)
-	taskType = strings.TrimSpace(taskType)
+	taskType = internalprompt.NormalizeTaskType(taskType)
 	if projectConfigID == "" {
 		return 0, fmt.Errorf(errs.MsgProjectConfigIDReq)
 	}
 
 	var count int
 	err := s.DB.QueryRow(
-		`SELECT COUNT(*) FROM tasks WHERE project_config_id = ? AND gitlab_project_id = ? AND task_type = ?`,
-		projectConfigID, gitLabProjectID, taskType,
+		`SELECT COUNT(*) FROM tasks WHERE project_config_id = ? AND gitlab_project_id = ? AND task_type IN (?, ?, ?)`,
+		projectConfigID, gitLabProjectID, taskType, "代码生成", "0-1",
 	).Scan(&count)
 	return count, err
 }

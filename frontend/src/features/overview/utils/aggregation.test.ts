@@ -9,9 +9,10 @@ function makeTask(partial: Partial<TaskFromDB> & Pick<TaskFromDB, 'id' | 'gitlab
     projectName: partial.projectName ?? `repo-${partial.gitlabProjectId}`,
     status: partial.status ?? 'Claimed',
     taskType: partial.taskType ?? '未归类',
-    sessionList: [],
+    sessionList: partial.sessionList ?? [],
     localPath: null,
     promptText: partial.promptText ?? null,
+    promptDifficulty: partial.promptDifficulty ?? '一般',
     promptGenerationStatus: partial.promptGenerationStatus ?? 'idle',
     promptGenerationError: null,
     promptGenerationStartedAt: null,
@@ -49,14 +50,14 @@ describe('buildOverviewAggregates', () => {
     const tasks = [
       makeTask({ id: '1', gitlabProjectId: 42, taskType: 'Bug修复', createdAt: 100 }),
       makeTask({ id: '2', gitlabProjectId: 42, taskType: 'Bug修复', createdAt: 200 }),
-      makeTask({ id: '3', gitlabProjectId: 42, taskType: '代码生成', createdAt: 150 }),
+      makeTask({ id: '3', gitlabProjectId: 42, taskType: '0-1代码生成', createdAt: 150 }),
       makeTask({ id: '4', gitlabProjectId: 77, taskType: 'Feature迭代', createdAt: 50 }),
     ];
     const { rows } = buildOverviewAggregates(tasks);
     expect(rows).toHaveLength(2);
     expect(rows[0].repoId).toBe('42');
     expect(rows[0].total).toBe(3);
-    expect(rows[0].taskCounts).toEqual({ 'Bug修复': 2, '代码生成': 1 });
+    expect(rows[0].taskCounts).toEqual({ 'Bug修复': 2, '0-1代码生成': 1 });
     expect(rows[1].repoId).toBe('77');
   });
 
@@ -74,13 +75,13 @@ describe('buildOverviewAggregates', () => {
     const tasks = [
       makeTask({ id: '1', gitlabProjectId: 42, taskType: 'Bug修复' }),
       makeTask({ id: '2', gitlabProjectId: 42, taskType: 'Bug修复' }),
-      makeTask({ id: '3', gitlabProjectId: 77, taskType: '代码生成' }),
-      makeTask({ id: '4', gitlabProjectId: 77, taskType: '代码生成' }),
-      makeTask({ id: '5', gitlabProjectId: 77, taskType: '代码生成' }),
+      makeTask({ id: '3', gitlabProjectId: 77, taskType: '0-1代码生成' }),
+      makeTask({ id: '4', gitlabProjectId: 77, taskType: '0-1代码生成' }),
+      makeTask({ id: '5', gitlabProjectId: 77, taskType: '0-1代码生成' }),
       makeTask({ id: '6', gitlabProjectId: 88, taskType: 'Feature迭代' }),
     ];
     const { taskTypes } = buildOverviewAggregates(tasks);
-    expect(taskTypes).toEqual(['代码生成', 'Bug修复', 'Feature迭代']);
+    expect(taskTypes).toEqual(['0-1代码生成', 'Bug修复', 'Feature迭代']);
   });
 
   it('promptGroups list entries per repo sorted by createdAt desc and labelled by createdAt asc', () => {

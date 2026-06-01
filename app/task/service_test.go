@@ -205,9 +205,9 @@ func TestCreateTaskEnforcesPerProjectTaskTypeUpperLimitForLegacyLocalTasks(t *te
 		GitLabToken:    "glpat-demo",
 		CloneBasePath:  t.TempDir(),
 		Models:         "ORIGIN",
-		TaskTypes:      `["代码生成"]`,
-		TaskTypeQuotas: `{"代码生成":2}`,
-		TaskTypeTotals: `{"代码生成":10}`,
+		TaskTypes:      `["0-1代码生成"]`,
+		TaskTypeQuotas: `{"0-1代码生成":2}`,
+		TaskTypeTotals: `{"0-1代码生成":10}`,
 	}
 	if err := testStore.CreateProject(project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
@@ -221,7 +221,7 @@ func TestCreateTaskEnforcesPerProjectTaskTypeUpperLimitForLegacyLocalTasks(t *te
 	if _, err := s.CreateTask(CreateTaskRequest{
 		GitLabProjectID: legacyLocalID,
 		ProjectName:     projectName,
-		TaskType:        "代码生成",
+		TaskType:        "0-1代码生成",
 		ClaimSequence:   intPtr(1),
 		Models:          []string{"ORIGIN"},
 		ProjectConfigID: &project.ID,
@@ -232,7 +232,7 @@ func TestCreateTaskEnforcesPerProjectTaskTypeUpperLimitForLegacyLocalTasks(t *te
 	if _, err := s.CreateTask(CreateTaskRequest{
 		GitLabProjectID: newQuestionBankID,
 		ProjectName:     projectName,
-		TaskType:        "代码生成",
+		TaskType:        "0-1代码生成",
 		ClaimSequence:   intPtr(2),
 		Models:          []string{"ORIGIN"},
 		ProjectConfigID: &project.ID,
@@ -243,7 +243,7 @@ func TestCreateTaskEnforcesPerProjectTaskTypeUpperLimitForLegacyLocalTasks(t *te
 	_, err := s.CreateTask(CreateTaskRequest{
 		GitLabProjectID: newQuestionBankID,
 		ProjectName:     projectName,
-		TaskType:        "代码生成",
+		TaskType:        "0-1代码生成",
 		ClaimSequence:   intPtr(3),
 		Models:          []string{"ORIGIN"},
 		ProjectConfigID: &project.ID,
@@ -1153,8 +1153,8 @@ func TestGetTaskReadmeFallsBackToManagedSourceFolderNamedLikeParent(t *testing.T
 		t.Fatalf("CreateProject() error = %v", err)
 	}
 
-	taskPath := filepath.Join(project.CloneBasePath, "B-35-代码生成-1")
-	sourcePath := filepath.Join(taskPath, "B-35-代码生成-1")
+	taskPath := filepath.Join(project.CloneBasePath, "B-35-0-1代码生成-1")
+	sourcePath := filepath.Join(taskPath, "B-35-0-1代码生成-1")
 	if err := os.MkdirAll(sourcePath, 0o755); err != nil {
 		t.Fatalf("MkdirAll(sourcePath) error = %v", err)
 	}
@@ -1166,7 +1166,7 @@ func TestGetTaskReadmeFallsBackToManagedSourceFolderNamedLikeParent(t *testing.T
 		ID:              "task-readme-parent-source",
 		GitLabProjectID: 8_530_362_474_967_007,
 		ProjectName:     "B-35",
-		TaskType:        "代码生成",
+		TaskType:        "0-1代码生成",
 		LocalPath:       &taskPath,
 		ProjectConfigID: &project.ID,
 	}

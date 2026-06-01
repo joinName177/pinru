@@ -108,7 +108,7 @@ export default function GitLabProjectAdder({
               </span>
             </div>
             <p className="mt-0.5 text-[11px] leading-snug text-stone-500 dark:text-stone-400">
-              批量加入 GitLab 题目 ID，自动去重并校验可达性
+              批量加入 GitLab 题目 ID 或项目名，自动去重并校验可达性
             </p>
           </div>
         </div>
@@ -230,19 +230,19 @@ export default function GitLabProjectAdder({
                   <textarea
                     value={inputText}
                     onChange={(event) => setInputText(event.target.value)}
-                    placeholder={'每行一个 GitLab 项目 ID\n支持空格或逗号分隔，例：\n1849  2898, 3001'}
+                    placeholder={'每行一个 GitLab 项目 ID 或项目名\n支持空格或逗号分隔，例：\n1849  zw-001  prompt2repo/zw/zw-001'}
                     rows={4}
                     disabled={verifying || saving}
                     className="min-h-[88px] w-full resize-y rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 font-mono text-sm leading-6 text-stone-800 placeholder:text-stone-400 focus:outline-none focus:ring-2 focus:ring-slate-400/30 disabled:opacity-50 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200"
                   />
                   {hasInvalidChars && (
                     <p className="mt-1.5 text-[11px] text-orange-600 dark:text-orange-400">
-                      含非数字内容，将被自动忽略
+                      含不支持的字符，将被自动忽略
                     </p>
                   )}
                   {!hasInvalidChars && (
                     <p className="mt-1.5 text-[11px] text-stone-500 dark:text-stone-400">
-                      支持换行、空格或逗号分隔；已存在的 ID 会自动跳过
+                      支持数字 ID、项目名或完整路径；已存在的项目会自动跳过
                     </p>
                   )}
                   {verifyError && (

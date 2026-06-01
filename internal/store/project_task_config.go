@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/blueship581/pinru/internal/errs"
+	internalprompt "github.com/blueship581/pinru/internal/prompt"
 )
 
 type ProjectTaskConfig struct {
@@ -20,7 +21,7 @@ func normalizeTaskTypeList(taskTypes []string) []string {
 	normalized := make([]string, 0, len(taskTypes))
 
 	for _, taskType := range taskTypes {
-		trimmed := strings.TrimSpace(taskType)
+		trimmed := internalprompt.NormalizeTaskType(taskType)
 		if trimmed == "" {
 			continue
 		}
@@ -75,11 +76,11 @@ func cloneTaskTypeCountMap(source map[string]int) map[string]int {
 
 	cloned := make(map[string]int, len(source))
 	for taskType, count := range source {
-		trimmed := strings.TrimSpace(taskType)
+		trimmed := internalprompt.NormalizeTaskType(taskType)
 		if trimmed == "" {
 			continue
 		}
-		cloned[trimmed] = count
+		cloned[trimmed] += count
 	}
 	return cloned
 }
@@ -94,7 +95,7 @@ func mergeProjectTaskTypes(taskTypes []string, quotas, totals map[string]int) []
 	extras := make([]string, 0, len(quotas)+len(totals))
 	for _, counts := range []map[string]int{quotas, totals} {
 		for taskType := range counts {
-			trimmed := strings.TrimSpace(taskType)
+			trimmed := internalprompt.NormalizeTaskType(taskType)
 			if trimmed == "" {
 				continue
 			}

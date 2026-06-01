@@ -111,6 +111,7 @@ func (s *TaskService) GetTask(id string) (*store.Task, error) {
 
 func (s *TaskService) CreateTask(req CreateTaskRequest) (*store.Task, error) {
 	req = normalizeCreateTaskRequestPaths(req)
+	req.TaskType = internalprompt.NormalizeTaskType(req.TaskType)
 	taskID := buildTaskID(req)
 
 	if existing, err := s.findExistingTask(req); err != nil {
@@ -163,10 +164,11 @@ func (s *TaskService) UpdateTaskStatus(id, status string) error {
 }
 
 func (s *TaskService) UpdateTaskType(id, taskType string) error {
-	if _, err := s.ensureTaskTypeChangeWithinUpperLimit(id, taskType); err != nil {
+	normalizedTaskType := internalprompt.NormalizeTaskType(taskType)
+	if _, err := s.ensureTaskTypeChangeWithinUpperLimit(id, normalizedTaskType); err != nil {
 		return err
 	}
-	if err := s.store.UpdateTaskType(id, taskType); err != nil {
+	if err := s.store.UpdateTaskType(id, normalizedTaskType); err != nil {
 		return err
 	}
 	if s.gitSvc == nil {
@@ -244,6 +246,21 @@ func (s *TaskService) ListAiReviewRounds(taskID string) ([]store.AiReviewRound, 
 		return []store.AiReviewRound{}, nil
 	}
 	return rounds, nil
+}
+
+func (s *TaskService) ResetTaskAiReview(taskID string) error {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return errors.New(errs.MsgTaskRequired)
+	}
+	task, err := s.store.GetTask(taskID)
+	if err != nil {
+		return err
+	}
+	if task == nil {
+		return fmt.Errorf(errs.FmtTaskNotFound, taskID)
+	}
+	return s.store.ResetTaskAiReview(taskID)
 }
 
 func (s *TaskService) UpdateModelRunSessionInfo(req UpdateModelRunSessionRequest) error {
@@ -712,9 +729,17 @@ func (s *TaskService) enforceTaskTypeUpperLimit(req CreateTaskRequest) error {
 		return nil
 	}
 
-	var quotas map[string]int
-	if err := json.Unmarshal([]byte(quotasJSON), &quotas); err != nil {
+	var rawQuotas map[string]int
+	if err := json.Unmarshal([]byte(quotasJSON), &rawQuotas); err != nil {
 		return err
+	}
+	quotas := make(map[string]int, len(rawQuotas))
+	for quotaTaskType, quota := range rawQuotas {
+		normalizedQuotaTaskType := internalprompt.NormalizeTaskType(quotaTaskType)
+		if normalizedQuotaTaskType == "" {
+			continue
+		}
+		quotas[normalizedQuotaTaskType] += quota
 	}
 
 	limit, hasLimit := quotas[taskType]
@@ -871,6 +896,11 @@ func buildTaskTypeIDToken(taskType string) string {
 		"bug修复":     "bug",
 		"feature迭代": "feat",
 		"代码生成":      "gen",
+		"0-1代码生成":   "gen",
+		"0-1":       "gen",
+		"0到1":       "gen",
+		"从0到1":      "gen",
+		"从零到一":      "gen",
 		"代码理解":      "cmp",
 		"代码重构":      "ref",
 		"工程化":       "eng",
@@ -1017,10 +1047,10 @@ func (s *TaskService) BatchUpdateTasks(req BatchUpdateTasksRequest) (*BatchUpdat
 	return result, nil
 }
 
-// SaveAiReviewRoundNotes 保存复审轮次的结论和下一轮提示词。
-func (s *TaskService) SaveAiReviewRoundNotes(roundID, reviewNotes, nextPrompt string) error {
+// SaveAiReviewRoundNotes 保存复审轮次的结论、下一轮提示词和下一轮提示词类型。
+func (s *TaskService) SaveAiReviewRoundNotes(roundID, reviewNotes, nextPrompt, nextPromptTaskType string) error {
 	if strings.TrimSpace(roundID) == "" {
 		return errors.New(errs.MsgReviewRoundIDRequired)
 	}
-	return s.store.UpdateAiReviewRoundNotes(roundID, reviewNotes, nextPrompt)
+	return s.store.UpdateAiReviewRoundNotes(roundID, reviewNotes, nextPrompt, nextPromptTaskType)
 }

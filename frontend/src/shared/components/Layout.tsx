@@ -4,6 +4,7 @@ import {
   BarChart3,
   Check,
   ChevronDown,
+  CopyPlus,
   FolderDown,
   FolderOpen,
   GitPullRequest,
@@ -24,7 +25,9 @@ import { inspectDirectory } from '../../api/git';
 import {
   createNewProjectTaskSettings,
   createProject,
+  createProjectBatch,
   deleteProject,
+  getProjectTaskSettings,
   getProjects,
   serializeProjectModels,
   serializeProjectTaskSettings,
@@ -77,7 +80,7 @@ const DEFAULT_MODELS: ModelEntry[] = [
 const PROJECT_MENU_MIN_WIDTH_EM = 5;
 const PROJECT_MENU_MAX_NAME_WIDTH_EM = 15;
 const PROJECT_MENU_CHROME_WIDTH_REM = 4.25;
-const PROJECT_MENU_ACTIONS_WIDTH_REM = 8;
+const PROJECT_MENU_ACTIONS_WIDTH_REM = 13;
 
 function isEditableTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;
@@ -94,6 +97,56 @@ function createEmptyProjectForm(): ProjectFormState {
     sourceModelFolder: 'ORIGIN',
     overviewMarkdown: '',
   };
+}
+
+function createBatchProjectName(projectName: string) {
+  const trimmedName = projectName.trim() || '新项目';
+  const now = new Date();
+  const datePart = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+  ].join('-');
+  const timePart = [
+    String(now.getHours()).padStart(2, '0'),
+    String(now.getMinutes()).padStart(2, '0'),
+  ].join(':');
+  return `${trimmedName} ${datePart} ${timePart}`;
+}
+
+function parseProjectModels(models: string) {
+  try {
+    const parsed = JSON.parse(models) as unknown;
+    if (Array.isArray(parsed)) {
+      const normalized = parsed
+        .map((item) => normalizeModelName(String(item)))
+        .filter(Boolean);
+      return normalized.length > 0 ? normalized : ['ORIGIN'];
+    }
+  } catch {
+    // Fall through to comma/newline parsing for legacy project configs.
+  }
+
+  const normalized = models
+    .split(/[,\n]/)
+    .map((item) => normalizeModelName(item))
+    .filter(Boolean);
+  return normalized.length > 0 ? normalized : ['ORIGIN'];
+}
+
+function createModelEntries(models: string[]) {
+  const seen = new Set<string>();
+  const entries: ModelEntry[] = [];
+  for (const model of models) {
+    const normalized = normalizeModelName(model);
+    if (!normalized || seen.has(normalized.toLowerCase())) continue;
+    seen.add(normalized.toLowerCase());
+    entries.push({ id: normalized, name: normalized });
+  }
+  if (!entries.some((entry) => isOriginModel(entry.name))) {
+    entries.unshift({ id: 'ORIGIN', name: 'ORIGIN' });
+  }
+  return entries;
 }
 
 function normalizeModelName(name: string) {
@@ -147,6 +200,8 @@ export default function Layout() {
   const [pickingProjectDir, setPickingProjectDir] = useState(false);
   const [projectError, setProjectError] = useState('');
   const [projectForm, setProjectForm] = useState<ProjectFormState>(createEmptyProjectForm);
+  const [projectModalMode, setProjectModalMode] = useState<'create' | 'batch'>('create');
+  const [batchSourceProjectId, setBatchSourceProjectId] = useState('');
   const [modelList, setModelList] = useState<ModelEntry[]>(DEFAULT_MODELS);
   const [addingModel, setAddingModel] = useState(false);
   const [newModelName, setNewModelName] = useState('');
@@ -203,6 +258,30 @@ export default function Layout() {
     setQuotas(taskSettings.quotas);
     setTotals(taskSettings.totals);
     setProjectError('');
+    setProjectModalMode('create');
+    setBatchSourceProjectId('');
+  };
+
+  const prepareBatchProjectForm = (project: ProjectConfig) => {
+    const modelNames = parseProjectModels(project.models);
+    const taskSettings = getProjectTaskSettings(project);
+
+    setProjectForm({
+      name: createBatchProjectName(project.name),
+      basePath: '',
+      defaultSubmitRepo: project.defaultSubmitRepo,
+      sourceModelFolder: project.sourceModelFolder || 'ORIGIN',
+      overviewMarkdown: project.overviewMarkdown,
+    });
+    setModelList(createModelEntries(modelNames));
+    setTaskTypes(taskSettings.taskTypes);
+    setQuotas(taskSettings.quotas);
+    setTotals(taskSettings.totals);
+    setAddingModel(false);
+    setNewModelName('');
+    setProjectError('');
+    setProjectModalMode('batch');
+    setBatchSourceProjectId(project.id);
   };
 
   useEffect(() => {
@@ -518,6 +597,10 @@ export default function Layout() {
       setProjectError('项目名称不能为空');
       return;
     }
+    if (projectModalMode === 'batch' && !batchSourceProjectId) {
+      setProjectError('缺少原项目配置，无法创建领题批次');
+      return;
+    }
     if (!projectForm.basePath.trim()) {
       setProjectError('请选择项目文件位置');
       return;
@@ -571,7 +654,11 @@ export default function Layout() {
         updatedAt: 0,
       };
 
-      await createProject(nextProject);
+      if (projectModalMode === 'batch') {
+        await createProjectBatch(batchSourceProjectId, nextProject);
+      } else {
+        await createProject(nextProject);
+      }
       await setActiveProjectId(nextProject.id);
       await resetForNewProject();
       await refreshProjects();
@@ -658,6 +745,19 @@ export default function Layout() {
                             {isActive && <Check className="h-3.5 w-3.5 flex-shrink-0 text-emerald-500" />}
                           </button>
                           <button
+                            onClick={() => {
+                              prepareBatchProjectForm(project);
+                              setShowProjectMenu(false);
+                              setShowProjectModal(true);
+                            }}
+                            disabled={switchingProject || creatingProject}
+                            className="flex flex-shrink-0 items-center gap-1 rounded-xl px-2.5 py-2 text-[11px] font-semibold text-stone-400 transition-colors hover:bg-slate-50 hover:text-slate-700 disabled:opacity-50 dark:hover:bg-slate-500/10 dark:hover:text-slate-200"
+                            title={`基于 ${project.name} 新建领题批次`}
+                          >
+                            <CopyPlus className="h-3.5 w-3.5" />
+                            新批次
+                          </button>
+                          <button
                             onClick={() => handleOpenDeleteProject(project)}
                             disabled={switchingProject || deletingProject}
                             className="flex flex-shrink-0 items-center gap-1 rounded-xl px-2.5 py-2 text-[11px] font-semibold text-stone-400 transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-50 dark:hover:bg-red-500/10 dark:hover:text-red-300"
@@ -676,6 +776,7 @@ export default function Layout() {
                     onClick={() => {
                       setShowProjectMenu(false);
                       resetProjectForm();
+                      setProjectModalMode('create');
                       setShowProjectModal(true);
                     }}
                     className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-semibold text-stone-600 transition-colors hover:bg-stone-50 dark:text-stone-300 dark:hover:bg-stone-800/70"
@@ -783,9 +884,13 @@ export default function Layout() {
           <div className="relative flex w-full max-w-5xl max-h-[92vh] flex-col overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-2xl dark:border-stone-800 dark:bg-stone-900">
             <div className="flex items-start justify-between gap-4 border-b border-stone-100 px-6 py-5 dark:border-stone-800">
               <div>
-                <h2 className="text-lg font-bold text-stone-900 dark:text-stone-50">新建项目</h2>
+                <h2 className="text-lg font-bold text-stone-900 dark:text-stone-50">
+                  {projectModalMode === 'batch' ? '新建领题批次' : '新建项目'}
+                </h2>
                 <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
-                  配置项目目录、模型列表、源码来源和任务配额
+                  {projectModalMode === 'batch'
+                    ? '复制当前项目配置并使用新的本地目录，后续领题序号会从 -1 重新开始'
+                    : '配置项目目录、模型列表、源码来源和任务配额'}
                 </p>
               </div>
               <button
@@ -1014,7 +1119,11 @@ export default function Layout() {
                   disabled={creatingProject}
                   className="rounded-2xl bg-[#111827] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#1F2937] disabled:opacity-50 dark:bg-[#E5EAF2] dark:text-[#0D1117] dark:hover:bg-[#F3F6FB]"
                 >
-                  {creatingProject ? '创建中...' : '创建项目'}
+                  {creatingProject
+                    ? '创建中...'
+                    : projectModalMode === 'batch'
+                      ? '创建批次'
+                      : '创建项目'}
                 </button>
               </div>
             </div>

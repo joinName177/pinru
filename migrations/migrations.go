@@ -65,6 +65,15 @@ var Migration020 string
 //go:embed 021_question_bank.sql
 var Migration021 string
 
+//go:embed 022_task_prompt_difficulty.sql
+var Migration022 string
+
+//go:embed 023_ai_review_next_prompt_task_type.sql
+var Migration023 string
+
+//go:embed 024_project_profiles.sql
+var Migration024 string
+
 // All returns all migration SQL strings in version order.
 func All() []string {
 	return []string{
@@ -89,5 +98,8 @@ func All() []string {
 		Migration019,
 		Migration020,
 		Migration021,
+		Migration022,
+		Migration023,
+		Migration024,
 	}
 }

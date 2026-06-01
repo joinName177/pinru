@@ -6,6 +6,7 @@ import {
   DEFAULT_TASK_TYPES,
   deriveRemainingTaskTypeQuotas,
   deriveTaskTypeUsedCounts,
+  getTaskTypeDisplayLabel,
   getProjectTaskSettings,
   getTaskTypeQuotaRawValue,
   getTaskTypeQuotaValue,
@@ -19,19 +20,29 @@ describe('taskTypes helpers', () => {
   it('normalizes common aliases to canonical task types', () => {
     expect(normalizeTaskTypeName('bugfix')).toBe('Bug修复');
     expect(normalizeTaskTypeName('feature')).toBe('Feature迭代');
+    expect(normalizeTaskTypeName('代码生成')).toBe('0-1代码生成');
+    expect(normalizeTaskTypeName('从零到一')).toBe('0-1代码生成');
+    expect(normalizeTaskTypeName('0到1')).toBe('0-1代码生成');
     expect(normalizeTaskTypeName('test')).toBe('代码测试');
+  });
+
+  it('exposes the code generation task type in defaults and display labels', () => {
+    expect(DEFAULT_TASK_TYPES).toContain('0-1代码生成');
+    expect(DEFAULT_TASK_TYPES).not.toContain('0-1');
+    expect(DEFAULT_TASK_TYPES).not.toContain('代码生成');
+    expect(getTaskTypeDisplayLabel('0-1代码生成')).toBe('0-1代码生成');
   });
 
   it('builds project task types with dedupe and fallback merge', () => {
     expect(
       buildProjectTaskTypes(
         {
-          taskTypes: 'Bug修复\nfeature\n代码测试',
-          taskTypeQuotas: '{"Feature迭代":2,"Bug修复":1}',
+          taskTypes: 'Bug修复\nfeature\n从零到一\n代码测试',
+          taskTypeQuotas: '{"Feature迭代":2,"Bug修复":1,"0-1":3}',
         },
         ['代码测试', '代码理解'],
       ),
-    ).toEqual(['未归类', 'Bug修复', 'Feature迭代', '代码测试', '代码理解']);
+    ).toEqual(['未归类', 'Bug修复', 'Feature迭代', '0-1代码生成', '代码测试', '代码理解']);
   });
 
   it('falls back to the default task type list when project config is empty', () => {
@@ -115,7 +126,7 @@ describe('taskTypes helpers', () => {
     const usedCounts = deriveTaskTypeUsedCounts(
       { Bug修复: 5, Feature迭代: 4 },
       { Bug修复: 3, Feature迭代: -1 },
-      ['Bug修复', 'Feature迭代', '代码生成'],
+      ['Bug修复', 'Feature迭代', '0-1代码生成'],
     );
 
     expect(usedCounts).toEqual({
@@ -125,14 +136,14 @@ describe('taskTypes helpers', () => {
 
     expect(
       deriveRemainingTaskTypeQuotas(
-        ['Bug修复', 'Feature迭代', '代码生成'],
-        { Bug修复: 6, Feature迭代: 8, 代码生成: 2 },
+        ['Bug修复', 'Feature迭代', '0-1代码生成'],
+        { Bug修复: 6, Feature迭代: 8, '0-1代码生成': 2 },
         usedCounts,
       ),
     ).toEqual({
       Bug修复: 4,
       Feature迭代: 3,
-      代码生成: 2,
+      '0-1代码生成': 2,
     });
   });
 });

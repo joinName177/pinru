@@ -158,6 +158,50 @@ func (s *Store) UpdateModelRunReview(modelRunID, status string, round int, notes
 	return nil
 }
 
+func (s *Store) ResetTaskAiReview(taskID string) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var activeCount int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM background_jobs
+		 WHERE job_type = 'ai_review'
+		   AND task_id = ?
+		   AND status IN ('pending', 'running')`,
+		taskID,
+	).Scan(&activeCount); err != nil {
+		return err
+	}
+	if activeCount > 0 {
+		return fmt.Errorf("当前题卡还有复审任务在运行，请先取消或等待完成后再重置")
+	}
+
+	if _, err := tx.Exec(`DELETE FROM ai_review_rounds WHERE task_id = ?`, taskID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM ai_review_nodes WHERE task_id = ?`, taskID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM background_jobs WHERE job_type = 'ai_review' AND task_id = ?`, taskID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`UPDATE model_runs
+		    SET review_status = 'none',
+		        review_round = 0,
+		        review_notes = NULL
+		  WHERE task_id = ?`,
+		taskID,
+	); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
 func (s *Store) DeleteModelRun(taskID, modelName string) error {
 	res, err := s.DB.Exec("DELETE FROM model_runs WHERE task_id=? AND model_name=?", taskID, modelName)
 	return ensureRowsAffected(res, err, errs.FmtStoreModelRunNotFoundByPair, taskID, modelName)

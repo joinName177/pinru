@@ -25,7 +25,7 @@ export const DEFAULT_TASK_TYPE = '未归类';
 export const DEFAULT_TASK_TYPES = [
   DEFAULT_TASK_TYPE,
   'Bug修复',
-  '代码生成',
+  '0-1代码生成',
   'Feature迭代',
   '代码理解',
   '代码重构',
@@ -52,8 +52,8 @@ export const QUOTA_PRESETS: QuotaPreset[] = [
   {
     id: 'standard-13',
     label: '标准 13 题',
-    description: '3 Bug修复 + 3 Feature迭代 + 1 代码理解 + 1 代码重构 + 1 工程化 + 1 代码测试 + 3 代码生成',
-    taskTypes: ['Bug修复', 'Feature迭代', '代码理解', '代码重构', '工程化', '代码测试', '代码生成'],
+    description: '3 Bug修复 + 3 Feature迭代 + 1 代码理解 + 1 代码重构 + 1 工程化 + 1 代码测试 + 3 0-1代码生成',
+    taskTypes: ['Bug修复', 'Feature迭代', '代码理解', '代码重构', '工程化', '代码测试', '0-1代码生成'],
     totals: {
       'Bug修复': 3,
       'Feature迭代': 3,
@@ -61,7 +61,7 @@ export const QUOTA_PRESETS: QuotaPreset[] = [
       '代码重构': 1,
       '工程化': 1,
       '代码测试': 1,
-      '代码生成': 3,
+      '0-1代码生成': 3,
     },
   },
 ];
@@ -83,7 +83,12 @@ const TASK_TYPE_ALIASES: Record<string, string> = {
   'bug修复': 'Bug修复',
   '缺陷修复': 'Bug修复',
   'bug修復': 'Bug修复',
-  '代码生成': '代码生成',
+  '代码生成': '0-1代码生成',
+  '0-1代码生成': '0-1代码生成',
+  '0-1': '0-1代码生成',
+  '0到1': '0-1代码生成',
+  '从0到1': '0-1代码生成',
+  '从零到一': '0-1代码生成',
   feature: 'Feature迭代',
   'feature迭代': 'Feature迭代',
   '功能开发': 'Feature迭代',

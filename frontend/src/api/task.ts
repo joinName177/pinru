@@ -1,6 +1,7 @@
 import { callService } from './wails';
 
 export type PromptGenerationStatus = 'idle' | 'running' | 'done' | 'error';
+export type PromptDifficulty = '简单' | '一般' | '困难' | '地狱';
 
 export interface TaskSessionEvidence {
   workspacePath: string;
@@ -67,6 +68,7 @@ export interface TaskFromDB {
   promptGenerationError: string | null;
   promptGenerationStartedAt: number | null;
   promptGenerationFinishedAt: number | null;
+  promptDifficulty: PromptDifficulty;
   createdAt: number;
   updatedAt: number;
   notes: string | null;
@@ -115,6 +117,7 @@ export interface AiReviewNodeFromDB {
   runCount: number;
   originalPrompt: string;
   promptText: string;
+  promptDifficulty: PromptDifficulty;
   reviewNotes: string;
   parentReviewNotes: string;
   nextPrompt: string;
@@ -138,11 +141,13 @@ export interface AiReviewRoundFromDB {
   roundNumber: number;
   originalPrompt: string;
   promptText: string;
+  promptDifficulty: PromptDifficulty;
   status: ReviewStatus;
   isCompleted: boolean | null;
   isSatisfied: boolean | null;
   reviewNotes: string;
   nextPrompt: string;
+  nextPromptTaskType: string;
   projectType: string;
   changeScope: string;
   keyLocations: string;
@@ -209,8 +214,17 @@ export async function listAiReviewRounds(taskId: string): Promise<AiReviewRoundF
   return callService('TaskService', 'ListAiReviewRounds', taskId);
 }
 
-export async function saveAiReviewRoundNotes(roundID: string, reviewNotes: string, nextPrompt: string): Promise<void> {
-  return callService('TaskService', 'SaveAiReviewRoundNotes', roundID, reviewNotes, nextPrompt);
+export async function resetTaskAiReview(taskId: string): Promise<void> {
+  return callService('TaskService', 'ResetTaskAiReview', taskId);
+}
+
+export async function saveAiReviewRoundNotes(
+  roundID: string,
+  reviewNotes: string,
+  nextPrompt: string,
+  nextPromptTaskType: string,
+): Promise<void> {
+  return callService('TaskService', 'SaveAiReviewRoundNotes', roundID, reviewNotes, nextPrompt, nextPromptTaskType);
 }
 
 export async function listTaskChildDirectories(taskId: string): Promise<TaskChildDirectory[]> {

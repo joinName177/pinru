@@ -53,6 +53,49 @@ const COLUMNS: TaskStatus[] = [
   'Error',
 ];
 const DRAWER_ESC_CONFIRM_WINDOW_MS = 1600;
+const BOARD_EXPANDED_GROUPS_STORAGE_KEY = 'pinru.board.expandedGroups.v1';
+const BOARD_CARD_SIZE_STORAGE_KEY = 'pinru.board.cardSize.v1';
+const BOARD_CARD_SIZES: CardSize[] = ['sm', 'md', 'lg'];
+
+function loadExpandedGroupsFromStorage() {
+  try {
+    const raw = window.localStorage.getItem(BOARD_EXPANDED_GROUPS_STORAGE_KEY);
+    if (!raw) return new Set<string>();
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set<string>();
+    return new Set(parsed.filter((item): item is string => typeof item === 'string'));
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function saveExpandedGroupsToStorage(groupKeys: Set<string>) {
+  try {
+    window.localStorage.setItem(
+      BOARD_EXPANDED_GROUPS_STORAGE_KEY,
+      JSON.stringify([...groupKeys]),
+    );
+  } catch {
+    // Ignore storage failures; the board remains usable without persistence.
+  }
+}
+
+function loadCardSizeFromStorage(): CardSize {
+  try {
+    const raw = window.localStorage.getItem(BOARD_CARD_SIZE_STORAGE_KEY);
+    return BOARD_CARD_SIZES.includes(raw as CardSize) ? (raw as CardSize) : 'md';
+  } catch {
+    return 'md';
+  }
+}
+
+function saveCardSizeToStorage(cardSize: CardSize) {
+  try {
+    window.localStorage.setItem(BOARD_CARD_SIZE_STORAGE_KEY, cardSize);
+  } catch {
+    // Ignore storage failures; the board falls back to the default card size.
+  }
+}
 
 function normalizeTaskChildDirectoryList(
   directories: TaskChildDirectory[] | null | undefined,
@@ -90,9 +133,11 @@ export default function Board() {
   const [activeTypes, setActiveTypes]   = useState<Set<TaskType>>(new Set());
   const [activeStages, setActiveStages] = useState<Set<TaskStatus>>(new Set());
   const [activeRounds, setActiveRounds] = useState<Set<number>>(new Set());
-  const [cardSize, setCardSize]         = useState<CardSize>('md');
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
-  const [sortBy, setSortBy] = useState<BoardSortOption>('created-desc');
+  const [cardSize, setCardSize]         = useState<CardSize>(loadCardSizeFromStorage);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
+    loadExpandedGroupsFromStorage,
+  );
+  const [sortBy, setSortBy] = useState<BoardSortOption>('project-desc');
   const [pendingDelete, setPendingDelete]     = useState<Task | null>(null);
   const [deleting, setDeleting]   = useState(false);
   const [deleteError, setDeleteError] = useState('');
@@ -129,13 +174,13 @@ export default function Board() {
   const toggleRound = (round: number) =>
     setActiveRounds(prev => { const n = new Set(prev); n.has(round) ? n.delete(round) : n.add(round); return n; });
 
-  const toggleGroupCollapse = (taskType: string) =>
-    setCollapsedGroups((prev) => {
+  const toggleGroupCollapse = (groupKey: string) =>
+    setExpandedGroups((prev) => {
       const next = new Set(prev);
-      if (next.has(taskType)) {
-        next.delete(taskType);
+      if (next.has(groupKey)) {
+        next.delete(groupKey);
       } else {
-        next.add(taskType);
+        next.add(groupKey);
       }
       return next;
     });
@@ -517,6 +562,7 @@ export default function Board() {
     modelName: string,
     localPath: string,
     nextPromptOverride?: string,
+    reviewRoundId?: string,
   ) => {
     const taskId = detail.selected?.id?.trim();
     if (!taskId || !localPath) return;
@@ -524,6 +570,7 @@ export default function Board() {
     void (async () => {
       try {
         await submitAiReviewJob(taskId, {
+          reviewRoundId: reviewRoundId ?? null,
           modelRunId: modelRunId ?? null,
           modelName,
           localPath,
@@ -667,6 +714,24 @@ export default function Board() {
     [availableTaskTypes, sortedTasks],
   );
 
+  const collapsedGroups = useMemo(
+    () =>
+      new Set(
+        groupedTasks
+          .map((group) => group.groupKey)
+          .filter((groupKey) => !expandedGroups.has(groupKey)),
+      ),
+    [expandedGroups, groupedTasks],
+  );
+
+  useEffect(() => {
+    saveExpandedGroupsToStorage(expandedGroups);
+  }, [expandedGroups]);
+
+  useEffect(() => {
+    saveCardSizeToStorage(cardSize);
+  }, [cardSize]);
+
   const projectTaskSummaries = useMemo(
     () => buildTaskTypeOverviewSummaries(availableTaskTypes, tasks, projectQuotas, projectTotals),
     [availableTaskTypes, tasks, projectQuotas, projectTotals],
@@ -695,7 +760,7 @@ export default function Board() {
   );
 
   const gridClassBySize: Record<CardSize, string> = {
-    sm: 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5',
+    sm: 'grid-cols-5',
     md: 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3',
     lg: 'grid-cols-1 sm:grid-cols-2',
   };

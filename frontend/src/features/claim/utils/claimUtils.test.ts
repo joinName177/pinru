@@ -14,12 +14,23 @@ import type { ModelEntry } from '../types';
 
 describe('claimUtils', () => {
   it('parses project ids with dedupe and invalid-token filtering', () => {
-    expect(parseProjectIds('1849 1850, 1849\nabc；1851')).toEqual(['1849', '1850', '1851']);
+    expect(parseProjectIds('1849 1850, 1849\nabc；1851 zw-001')).toEqual([
+      '1849',
+      '1850',
+      '1851',
+      'zw-001',
+    ]);
+    expect(parseProjectIds('zw-001 prompt2repo/zw/zw-001 @bad')).toEqual([
+      'zw-001',
+      'prompt2repo/zw/zw-001',
+    ]);
   });
 
   it('formats gitlab project refs and managed task paths', () => {
     expect(formatProjectName('1849')).toBe('label-01849');
     expect(buildProjectRef('1849')).toBe('prompt2repo/label-01849');
+    expect(buildProjectRef('zw-001')).toBe('zw-001');
+    expect(buildProjectRef('prompt2repo/zw/zw-001')).toBe('prompt2repo/zw/zw-001');
     expect(buildProjectBasePath('label-01849', 'Bug修复', '/tmp/workspace/')).toBe(
       '/tmp/workspace/label-01849-bug修复',
     );

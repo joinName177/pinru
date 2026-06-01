@@ -71,6 +71,7 @@ function createTask(overrides: Partial<Task> = {}): Task {
     status: overrides.status ?? 'Claimed',
     taskType: overrides.taskType ?? 'Bug修复',
     sessionList: overrides.sessionList ?? [],
+    promptDifficulty: overrides.promptDifficulty ?? '一般',
     promptGenerationStatus: overrides.promptGenerationStatus ?? 'idle',
     promptGenerationError: overrides.promptGenerationError ?? null,
     createdAt: overrides.createdAt ?? 1,
@@ -93,6 +94,7 @@ function createTaskDetail(overrides: Partial<TaskFromDB> = {}): TaskFromDB {
     sessionList: overrides.sessionList ?? [],
     localPath: overrides.localPath ?? '/tmp/task',
     promptText: overrides.promptText ?? '',
+    promptDifficulty: overrides.promptDifficulty ?? '一般',
     promptGenerationStatus: overrides.promptGenerationStatus ?? 'idle',
     promptGenerationError: overrides.promptGenerationError ?? null,
     promptGenerationStartedAt: overrides.promptGenerationStartedAt ?? null,
@@ -367,7 +369,6 @@ describe('useBoardTaskDetail prompt generation', () => {
       id: 'task-2',
       projectId: '1849',
       projectName: 'alpha',
-      taskType: 'Bug修复',
     });
     const activeProject: ProjectConfig = {
       id: 'project-1',

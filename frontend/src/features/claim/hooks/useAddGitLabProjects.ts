@@ -12,6 +12,7 @@ import {
 import { useAppStore } from '../../../store';
 import {
   buildProjectRef,
+  gitLabProjectNumericId,
   parseProjectIds,
   parseQuestionBankProjectIds,
 } from '../utils/claimUtils';
@@ -95,7 +96,7 @@ export function useAddGitLabProjects(
       .split(/[\s,，、;；]+/)
       .map((segment) => segment.trim())
       .filter(Boolean);
-    return rawTokens.some((token) => !/^\d+$/.test(token));
+    return rawTokens.some((token) => parseProjectIds(token).length === 0);
   }, [inputText]);
 
   const handleReset = useCallback(() => {
@@ -162,7 +163,7 @@ export function useAddGitLabProjects(
     const toCheck: string[] = [];
 
     for (const token of tokens) {
-      if (existingSet.has(token)) {
+      if (/^\d+$/.test(token) && existingSet.has(token)) {
         existingRows.push({
           rawId: token,
           numId: Number.parseInt(token, 10),
@@ -181,8 +182,27 @@ export function useAddGitLabProjects(
         const results: GitLabProjectLookupResult[] = await fetchConfiguredGitLabProjects(refs);
         checkedRows = results.map((result, index) => {
           const rawId = toCheck[index];
-          const numId = Number.parseInt(rawId, 10);
+          const numericProjectId = gitLabProjectNumericId(result.project);
+          const numId = numericProjectId ?? Number.parseInt(rawId, 10);
           if (result.project) {
+            if (numericProjectId === null) {
+              return {
+                rawId,
+                numId: Number.isFinite(numId) ? numId : 0,
+                status: 'error',
+                errorMsg: 'GitLab 项目缺少数字 ID',
+                excluded: false,
+              };
+            }
+            if (existingSet.has(String(numericProjectId))) {
+              return {
+                rawId,
+                numId: numericProjectId,
+                status: 'existing',
+                projectName: result.project.name,
+                excluded: false,
+              };
+            }
             return {
               rawId,
               numId,

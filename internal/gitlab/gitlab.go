@@ -21,12 +21,14 @@ import (
 )
 
 type Project struct {
-	ID            int64   `json:"id"`
-	Name          string  `json:"name"`
-	Description   *string `json:"description"`
-	WebURL        string  `json:"web_url"`
-	DefaultBranch *string `json:"default_branch"`
-	HTTPURLToRepo *string `json:"http_url_to_repo"`
+	ID                int64   `json:"id"`
+	Name              string  `json:"name"`
+	Path              string  `json:"path"`
+	PathWithNamespace string  `json:"path_with_namespace"`
+	Description       *string `json:"description"`
+	WebURL            string  `json:"web_url"`
+	DefaultBranch     *string `json:"default_branch"`
+	HTTPURLToRepo     *string `json:"http_url_to_repo"`
 }
 
 func TestConnection(apiURL, token string, skipTLSVerify bool) (bool, error) {
@@ -77,6 +79,39 @@ func FetchProject(projectRef, apiURL, token string, skipTLSVerify bool) (*Projec
 		return nil, err
 	}
 	return &p, nil
+}
+
+func SearchProjects(query, apiURL, token string, skipTLSVerify bool) ([]Project, error) {
+	baseURL, err := normalizeAPIBaseURL(apiURL)
+	if err != nil {
+		return nil, err
+	}
+
+	trimmedQuery := strings.TrimSpace(query)
+	if trimmedQuery == "" {
+		return []Project{}, nil
+	}
+
+	reqURL := fmt.Sprintf("%s/api/v4/projects?search=%s&per_page=20", baseURL, neturl.QueryEscape(trimmedQuery))
+	req, err := http.NewRequest("GET", reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("PRIVATE-TOKEN", token)
+	resp, err := newHTTPClient(skipTLSVerify).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf(errs.FmtGitLabAPIStatus, resp.StatusCode, string(body))
+	}
+	var projects []Project
+	if err := json.NewDecoder(resp.Body).Decode(&projects); err != nil {
+		return nil, err
+	}
+	return projects, nil
 }
 
 func DownloadArchive(projectID int64, apiURL, token, destination string, sha *string, skipTLSVerify bool) error {

@@ -25,6 +25,7 @@ type AiReviewNode struct {
 	RunCount          int     `json:"runCount"`
 	OriginalPrompt    string  `json:"originalPrompt"`
 	PromptText        string  `json:"promptText"`
+	PromptDifficulty  string  `json:"promptDifficulty"`
 	ReviewNotes       string  `json:"reviewNotes"`
 	ParentReviewNotes string  `json:"parentReviewNotes"`
 	NextPrompt        string  `json:"nextPrompt"`
@@ -43,7 +44,7 @@ func (s *Store) ListAiReviewNodes(taskID string) ([]AiReviewNode, error) {
 	rows, err := s.DB.Query(
 		`SELECT id, task_id, model_run_id, parent_id, root_id, model_name, local_path,
 		        title, issue_type, level, sequence, status, run_count, original_prompt,
-		        prompt_text, review_notes, parent_review_notes, next_prompt,
+		        prompt_text, prompt_difficulty, review_notes, parent_review_notes, next_prompt,
 		        is_completed, is_satisfied, project_type, change_scope, key_locations,
 		        last_job_id, is_active, created_at, updated_at
 		   FROM ai_review_nodes
@@ -71,7 +72,7 @@ func (s *Store) ListAiReviewNodesByModelRun(modelRunID string) ([]AiReviewNode, 
 	rows, err := s.DB.Query(
 		`SELECT id, task_id, model_run_id, parent_id, root_id, model_name, local_path,
 		        title, issue_type, level, sequence, status, run_count, original_prompt,
-		        prompt_text, review_notes, parent_review_notes, next_prompt,
+		        prompt_text, prompt_difficulty, review_notes, parent_review_notes, next_prompt,
 		        is_completed, is_satisfied, project_type, change_scope, key_locations,
 		        last_job_id, is_active, created_at, updated_at
 		   FROM ai_review_nodes
@@ -99,7 +100,7 @@ func (s *Store) GetAiReviewNode(id string) (*AiReviewNode, error) {
 	row := s.DB.QueryRow(
 		`SELECT id, task_id, model_run_id, parent_id, root_id, model_name, local_path,
 		        title, issue_type, level, sequence, status, run_count, original_prompt,
-		        prompt_text, review_notes, parent_review_notes, next_prompt,
+		        prompt_text, prompt_difficulty, review_notes, parent_review_notes, next_prompt,
 		        is_completed, is_satisfied, project_type, change_scope, key_locations,
 		        last_job_id, is_active, created_at, updated_at
 		   FROM ai_review_nodes
@@ -119,8 +120,8 @@ func (s *Store) GetAiReviewNode(id string) (*AiReviewNode, error) {
 
 func (s *Store) FindActiveAiReviewRoot(taskID string, modelRunID *string, localPath string) (*AiReviewNode, error) {
 	query := `SELECT id, task_id, model_run_id, parent_id, root_id, model_name, local_path,
-	                 title, issue_type, level, sequence, status, run_count, original_prompt,
-	                 prompt_text, review_notes, parent_review_notes, next_prompt,
+	            title, issue_type, level, sequence, status, run_count, original_prompt,
+	                 prompt_text, prompt_difficulty, review_notes, parent_review_notes, next_prompt,
 	                 is_completed, is_satisfied, project_type, change_scope, key_locations,
 	                 last_job_id, is_active, created_at, updated_at
 	            FROM ai_review_nodes
@@ -157,13 +158,13 @@ func (s *Store) CreateAiReviewNode(node AiReviewNode) error {
 		`INSERT INTO ai_review_nodes (
 			id, task_id, model_run_id, parent_id, root_id, model_name, local_path,
 			title, issue_type, level, sequence, status, run_count, original_prompt,
-			prompt_text, review_notes, parent_review_notes, next_prompt,
+			prompt_text, prompt_difficulty, review_notes, parent_review_notes, next_prompt,
 			is_completed, is_satisfied, project_type, change_scope, key_locations,
 			last_job_id, is_active
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		node.ID, node.TaskID, node.ModelRunID, node.ParentID, node.RootID, node.ModelName, node.LocalPath,
 		node.Title, node.IssueType, node.Level, node.Sequence, node.Status, node.RunCount, node.OriginalPrompt,
-		node.PromptText, node.ReviewNotes, node.ParentReviewNotes, node.NextPrompt,
+		node.PromptText, normalizePromptDifficulty(node.PromptDifficulty), node.ReviewNotes, node.ParentReviewNotes, node.NextPrompt,
 		boolPtrToNullableInt(node.IsCompleted), boolPtrToNullableInt(node.IsSatisfied),
 		node.ProjectType, node.ChangeScope, node.KeyLocations, node.LastJobID, boolToInt(node.IsActive),
 	)
@@ -178,13 +179,13 @@ func (s *Store) SaveAiReviewNode(node AiReviewNode) error {
 		`UPDATE ai_review_nodes
 		    SET task_id = ?, model_run_id = ?, parent_id = ?, root_id = ?, model_name = ?, local_path = ?,
 		        title = ?, issue_type = ?, level = ?, sequence = ?, status = ?, run_count = ?,
-		        original_prompt = ?, prompt_text = ?, review_notes = ?, parent_review_notes = ?, next_prompt = ?,
+		        original_prompt = ?, prompt_text = ?, prompt_difficulty = ?, review_notes = ?, parent_review_notes = ?, next_prompt = ?,
 		        is_completed = ?, is_satisfied = ?, project_type = ?, change_scope = ?, key_locations = ?,
 		        last_job_id = ?, is_active = ?, updated_at = strftime('%s','now')
 		  WHERE id = ?`,
 		node.TaskID, node.ModelRunID, node.ParentID, node.RootID, node.ModelName, node.LocalPath,
 		node.Title, node.IssueType, node.Level, node.Sequence, node.Status, node.RunCount,
-		node.OriginalPrompt, node.PromptText, node.ReviewNotes, node.ParentReviewNotes, node.NextPrompt,
+		node.OriginalPrompt, node.PromptText, normalizePromptDifficulty(node.PromptDifficulty), node.ReviewNotes, node.ParentReviewNotes, node.NextPrompt,
 		boolPtrToNullableInt(node.IsCompleted), boolPtrToNullableInt(node.IsSatisfied),
 		node.ProjectType, node.ChangeScope, node.KeyLocations, node.LastJobID, boolToInt(node.IsActive), node.ID,
 	)
@@ -216,7 +217,7 @@ func scanAiReviewNode(scanner interface {
 	err := scanner.Scan(
 		&node.ID, &node.TaskID, &node.ModelRunID, &node.ParentID, &node.RootID, &node.ModelName, &node.LocalPath,
 		&node.Title, &node.IssueType, &node.Level, &node.Sequence, &node.Status, &node.RunCount, &node.OriginalPrompt,
-		&node.PromptText, &node.ReviewNotes, &node.ParentReviewNotes, &node.NextPrompt,
+		&node.PromptText, &node.PromptDifficulty, &node.ReviewNotes, &node.ParentReviewNotes, &node.NextPrompt,
 		&isCompletedRaw, &isSatisfiedRaw, &node.ProjectType, &node.ChangeScope, &node.KeyLocations,
 		&node.LastJobID, &isActiveRaw, &node.CreatedAt, &node.UpdatedAt,
 	)
@@ -225,6 +226,7 @@ func scanAiReviewNode(scanner interface {
 	}
 	node.IsCompleted = nullableIntToBoolPtr(isCompletedRaw)
 	node.IsSatisfied = nullableIntToBoolPtr(isSatisfiedRaw)
+	node.PromptDifficulty = normalizePromptDifficulty(node.PromptDifficulty)
 	node.IsActive = isActiveRaw != 0
 	return node, nil
 }

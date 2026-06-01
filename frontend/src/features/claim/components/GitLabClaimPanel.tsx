@@ -43,6 +43,7 @@ import type {
 import {
   buildProjectRef,
   formatClaimProjectId,
+  gitLabProjectNumericId,
   getResultStatusMeta,
   isOriginModel,
   parseProjectIds,
@@ -254,7 +255,7 @@ export default function GitLabClaimPanel({ project }: { project: ClaimProjectSta
   const handleSearch = async () => {
     const ids = parseProjectIds(rawInput);
     if (!ids.length) {
-      setSearchError('请输入至少一个纯数字项目编号');
+      setSearchError('请输入至少一个项目编号或项目名，例如 1849 或 zw-001');
       return;
     }
 
@@ -275,10 +276,16 @@ export default function GitLabClaimPanel({ project }: { project: ClaimProjectSta
       const resultMap = new Map(results.map((r) => [r.projectRef, r]));
       const mapped: ProjectLookup[] = ids.map((id) => {
         const lookup = resultMap.get(buildProjectRef(id));
+        const numericProjectId = gitLabProjectNumericId(lookup?.project);
         return {
-          id,
+          id: numericProjectId ? String(numericProjectId) : id,
+          inputRef: id,
           project: lookup?.project ?? undefined,
-          error: lookup?.project ? undefined : lookup?.error ?? '未找到项目',
+          error: lookup?.project
+            ? numericProjectId
+              ? undefined
+              : 'GitLab 项目缺少数字 ID'
+            : lookup?.error ?? '未找到项目',
         };
       });
 
@@ -548,7 +555,7 @@ export default function GitLabClaimPanel({ project }: { project: ClaimProjectSta
           <section className={cardCls}>
             <div className="flex items-start justify-between gap-4 mb-4">
               <label className="block text-sm font-semibold text-stone-700 dark:text-stone-300">
-                项目编号
+                项目编号 / 项目名
               </label>
               <button
                 onClick={handleSearch}
@@ -571,7 +578,7 @@ export default function GitLabClaimPanel({ project }: { project: ClaimProjectSta
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSearch();
               }}
-              placeholder={'输入项目编号，支持空格、逗号或换行分隔\n例如：1849 1850 1851'}
+              placeholder={'输入项目编号或项目名，支持空格、逗号或换行分隔\n例如：1849 zw-001 prompt2repo/zw/zw-001'}
               className={`${inputCls} resize-none font-mono`}
             />
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/blueship581/pinru/internal/errs"
+	internalprompt "github.com/blueship581/pinru/internal/prompt"
 )
 
 const (
@@ -21,22 +22,22 @@ const (
 )
 
 type Project struct {
-	ID                string `json:"id"`
-	Name              string `json:"name"`
-	GitLabURL         string `json:"gitlabUrl"`
-	GitLabToken       string `json:"gitlabToken"`
-	HasGitLabToken    bool   `json:"hasGitLabToken"`
-	CloneBasePath     string `json:"cloneBasePath"`
-	Models            string `json:"models"`
-	SourceModelFolder string `json:"sourceModelFolder"`
-	DefaultSubmitRepo string `json:"defaultSubmitRepo"`
-	TaskTypes         string `json:"taskTypes"`
-	TaskTypeQuotas    string `json:"taskTypeQuotas"`
-	TaskTypeTotals    string `json:"taskTypeTotals"`
+	ID                     string `json:"id"`
+	Name                   string `json:"name"`
+	GitLabURL              string `json:"gitlabUrl"`
+	GitLabToken            string `json:"gitlabToken"`
+	HasGitLabToken         bool   `json:"hasGitLabToken"`
+	CloneBasePath          string `json:"cloneBasePath"`
+	Models                 string `json:"models"`
+	SourceModelFolder      string `json:"sourceModelFolder"`
+	DefaultSubmitRepo      string `json:"defaultSubmitRepo"`
+	TaskTypes              string `json:"taskTypes"`
+	TaskTypeQuotas         string `json:"taskTypeQuotas"`
+	TaskTypeTotals         string `json:"taskTypeTotals"`
 	QuestionBankProjectIDs string `json:"questionBankProjectIds"`
-	OverviewMarkdown  string `json:"overviewMarkdown"`
-	CreatedAt         int64  `json:"createdAt"`
-	UpdatedAt         int64  `json:"updatedAt"`
+	OverviewMarkdown       string `json:"overviewMarkdown"`
+	CreatedAt              int64  `json:"createdAt"`
+	UpdatedAt              int64  `json:"updatedAt"`
 }
 
 type projectScanner interface {
@@ -44,13 +45,13 @@ type projectScanner interface {
 }
 
 type projectColumnSet struct {
-	SourceModelFolder bool
-	DefaultSubmitRepo bool
-	TaskTypes         bool
-	TaskTypeQuotas    bool
-	TaskTypeTotals    bool
+	SourceModelFolder      bool
+	DefaultSubmitRepo      bool
+	TaskTypes              bool
+	TaskTypeQuotas         bool
+	TaskTypeTotals         bool
 	QuestionBankProjectIDs bool
-	OverviewMarkdown  bool
+	OverviewMarkdown       bool
 }
 
 func (s *Store) loadProjectColumnSet() (projectColumnSet, error) {
@@ -522,6 +523,7 @@ func (s *Store) ConsumeProjectQuota(projectID, taskType string) error {
 	if err != nil {
 		return err
 	}
+	taskType = internalprompt.NormalizeTaskType(taskType)
 
 	current, ok := quotas[taskType]
 	if !ok {
@@ -540,6 +542,8 @@ func (s *Store) ConsumeProjectQuota(projectID, taskType string) error {
 }
 
 func adjustProjectQuotaForTaskTypeChange(quotas map[string]int, previousTaskType, nextTaskType string) error {
+	previousTaskType = internalprompt.NormalizeTaskType(previousTaskType)
+	nextTaskType = internalprompt.NormalizeTaskType(nextTaskType)
 	if previousTaskType == nextTaskType {
 		return nil
 	}

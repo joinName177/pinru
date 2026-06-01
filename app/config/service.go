@@ -174,6 +174,55 @@ func (s *ConfigService) CreateProject(p store.Project) error {
 	return s.store.CreateProject(p)
 }
 
+func (s *ConfigService) CreateProjectBatch(sourceProjectID string, p store.Project) error {
+	sourceProjectID = strings.TrimSpace(sourceProjectID)
+	if sourceProjectID == "" {
+		return errors.New(errs.MsgProjectConfigIDReq)
+	}
+	source, err := s.store.GetProject(sourceProjectID)
+	if err != nil {
+		return err
+	}
+	if source == nil {
+		return fmt.Errorf(errs.FmtStoreProjectNotFound, sourceProjectID)
+	}
+
+	p.ID = strings.TrimSpace(p.ID)
+	p.Name = strings.TrimSpace(p.Name)
+	p.CloneBasePath = util.NormalizePath(p.CloneBasePath)
+	p.GitLabURL = source.GitLabURL
+	p.GitLabToken = source.GitLabToken
+	if strings.TrimSpace(p.Models) == "" {
+		p.Models = source.Models
+	}
+	if strings.TrimSpace(p.SourceModelFolder) == "" {
+		p.SourceModelFolder = source.SourceModelFolder
+	}
+	if strings.TrimSpace(p.DefaultSubmitRepo) == "" {
+		p.DefaultSubmitRepo = source.DefaultSubmitRepo
+	}
+	if strings.TrimSpace(p.TaskTypes) == "" {
+		p.TaskTypes = source.TaskTypes
+	}
+	if strings.TrimSpace(p.TaskTypeQuotas) == "" {
+		p.TaskTypeQuotas = source.TaskTypeQuotas
+	}
+	if strings.TrimSpace(p.TaskTypeTotals) == "" {
+		p.TaskTypeTotals = source.TaskTypeTotals
+	}
+	if strings.TrimSpace(p.QuestionBankProjectIDs) == "" {
+		p.QuestionBankProjectIDs = source.QuestionBankProjectIDs
+	}
+	if strings.TrimSpace(p.OverviewMarkdown) == "" {
+		p.OverviewMarkdown = source.OverviewMarkdown
+	}
+
+	if err := s.validateQuestionBankProjectIDs(p); err != nil {
+		return err
+	}
+	return s.store.CreateProject(p)
+}
+
 func (s *ConfigService) UpdateProject(p store.Project) error {
 	p.CloneBasePath = util.NormalizePath(p.CloneBasePath)
 	if strings.TrimSpace(p.GitLabToken) == "" {

@@ -11,6 +11,7 @@ function createTask(overrides: Partial<Task> = {}): Task {
     status: overrides.status ?? 'PromptReady',
     taskType: overrides.taskType ?? 'Bug修复',
     sessionList: overrides.sessionList ?? [],
+    promptDifficulty: overrides.promptDifficulty ?? '一般',
     promptGenerationStatus: overrides.promptGenerationStatus ?? 'done',
     promptGenerationError: overrides.promptGenerationError ?? null,
     createdAt: overrides.createdAt ?? 1,

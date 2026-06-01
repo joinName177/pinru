@@ -14,7 +14,7 @@ import (
 const (
 	TaskTypeUncategorized = "未归类"
 	TaskTypeBugFix        = "Bug修复"
-	TaskTypeCodeGen       = "代码生成"
+	TaskTypeCodeGen       = "0-1代码生成"
 	TaskTypeFeature       = "Feature迭代"
 	TaskTypeUnderstand    = "代码理解"
 	TaskTypeRefactor      = "代码重构"
@@ -31,6 +31,11 @@ var taskTypeAliases = map[string]string{
 	"bug修复":         TaskTypeBugFix,
 	"缺陷修复":          TaskTypeBugFix,
 	"代码生成":          TaskTypeCodeGen,
+	"0-1代码生成":       TaskTypeCodeGen,
+	"0-1":           TaskTypeCodeGen,
+	"0到1":           TaskTypeCodeGen,
+	"从0到1":          TaskTypeCodeGen,
+	"从零到一":          TaskTypeCodeGen,
 	"feature":       TaskTypeFeature,
 	"feature迭代":     TaskTypeFeature,
 	"功能开发":          TaskTypeFeature,
@@ -66,7 +71,10 @@ const (
 	ScopeCrossSystem = "跨系统多模块"
 )
 
-const MaxPromptBodyRunes = 80
+const (
+	PreferredPromptBodyMinRunes = 150
+	MaxPromptBodyRunes          = 300
+)
 
 // ── 任务类型到出题要点的精简指导 ──────────────────────────────────────────────
 
@@ -88,12 +96,13 @@ var taskGuidance = map[string]string{
 - 可以提供报错信息的文字描述（不要粘贴堆栈，用业务语言描述现象）
 - 必须基于仓库中真实存在的代码缺陷出题`,
 
-	TaskTypeCodeGen: `出题方向：基于现有代码结构和业务背景，要求从零生成一个新的功能模块。
-描述业务目标和功能需求，以"用户视角"的产品需求形式表达，
-让模型去设计和实现完整可运行的代码。
+	TaskTypeCodeGen: `出题方向：在现有系统、现有仓库和现有业务边界的基础上，新增一个此前还不存在的完整业务模块或核心能力。
+描述用户为什么现在需要这项能力、它要覆盖哪些关键流程、不同角色分别怎么使用，
+让模型从当前系统起步，把这个能力从入口、流程、状态到结果补齐完整。
 关键要求：
-- 需求描述要完整具体，包含功能点、预期行为
-- 题目必须有足够的上下文，让模型能接上现有系统的约定
+- 明确这是"基于现有系统补齐完整新模块/新能力"，不是在空白项目里独立造一个 demo
+- 要体现完整链路，而不只是加一个孤立按钮、字段或接口
+- 需要说明和现有功能、现有数据、现有流程怎么衔接，避免和普通 Feature 迭代混淆
 - 生成结果应能直接运行和验证`,
 
 	TaskTypeFeature: `出题方向：在现有已实现的功能基础上，扩展或新增一个与业务相关的新特性。
@@ -102,7 +111,8 @@ var taskGuidance = map[string]string{
 关键要求：
 - 明确说明是"在现有系统基础上"新增功能，不是从零构建
 - 强调新旧功能的兼容性要求
-- 功能扩展要自然合理，是现有功能的延伸`,
+- 功能扩展要自然合理，是现有功能的延伸
+- 更适合已有模块的增强、补入口、补规则、补交互，不要写成完整新模块从零到一落地`,
 
 	TaskTypeUnderstand: `出题方向：要求解释、梳理或可视化某段代码/功能模块的运作机制。
 以"不了解这套系统的新人"视角提问，描述"我想理解 XXX 是怎么运作的"，
@@ -184,10 +194,10 @@ func BuildSystemPrompt() string {
 		"   - 不能出现：井号标题、双星粗体、代码块、有序或无序列表符号",
 		"   - 输出必须是纯文本段落",
 		"",
-		"3. 简短直接",
-		"   - 正文描述控制在 2-4 句话内，清晰表达「用户遇到了什么问题」或「需要什么新功能」",
-		"   - 全文总长度不得超过 80 个字（空白字符不计入）",
-		"   - 去掉所有铺垫语、客套语和废话",
+		"3. 自然完整",
+		fmt.Sprintf("   - 正文描述控制在 1 段 3-6 句话内，完整表达业务背景、用户现象、目标结果和必要边界"),
+		fmt.Sprintf("   - 全文建议控制在 %d-%d 个字之间（空白字符不计入），最多不超过 %d 个字", PreferredPromptBodyMinRunes, MaxPromptBodyRunes, MaxPromptBodyRunes),
+		"   - 去掉空话和套话，但不要为了压短而丢掉关键业务信息",
 		"",
 		"4. 约束要求必须融入正文",
 		"   - 所有约束要求（技术栈、架构、代码风格、业务规则等）必须作为正文的自然组成部分写出，和需求描述合在同一段里",
@@ -201,7 +211,7 @@ func BuildSystemPrompt() string {
 		"   - 去除 AI 写作惯用的刻板措辞",
 		"",
 		"6. 输出前自检",
-		"   - 如果正文部分超过 80 个字，先自行压缩语言，再输出最终版本",
+		fmt.Sprintf("   - 如果正文部分超过 %d 个字，先自行压缩语言，再输出最终版本", MaxPromptBodyRunes),
 		"",
 		"直接输出提示词正文，不要加任何前言、解释或标注。",
 	}, "\n")
@@ -312,7 +322,7 @@ func BuildUserPrompt(task TaskInfo, req PromptRequest, summary analysis.Summary,
 	if len(constraintDescs) > 0 {
 		sb.WriteString("所有约束要求必须和需求描述融合在同一段文字中，严禁单独分段或加任何标签前缀。")
 	}
-	sb.WriteString(fmt.Sprintf("输出前请自检：全文必须不超过 %d 个字，且必须是一整段连贯的文字。", MaxPromptBodyRunes))
+	sb.WriteString(fmt.Sprintf("输出前请自检：全文建议控制在 %d-%d 个字之间，最多不超过 %d 个字，且必须是一整段连贯的文字。", PreferredPromptBodyMinRunes, MaxPromptBodyRunes, MaxPromptBodyRunes))
 	sb.WriteString("直接输出提示词内容，不加任何前言或说明。")
 
 	return sb.String()
@@ -426,8 +436,9 @@ func PromptBodyExceedsLimit(promptText string) bool {
 func BuildShortenSystemPrompt(limit int) string {
 	return strings.Join([]string{
 		"你是一名中文产品需求文案编辑。",
-		fmt.Sprintf("请把给定提示词压缩到 %d 个字以内。", limit),
+		fmt.Sprintf("请把给定提示词压缩到 %d 个字以内，同时尽量保留自然完整的业务表达。", limit),
 		"不要改变业务含义，不要引入技术实现。",
+		fmt.Sprintf("压缩后的正文仍应尽量保持在 %d-%d 个字这一自然业务描述区间内。", PreferredPromptBodyMinRunes, limit),
 		"所有约束要求必须和需求描述融合在同一段文字中，不要单独分行或加标签前缀。",
 		"只输出精炼后的文字，不要输出解释、前言、标题或 Markdown。",
 	}, "\n")
@@ -436,7 +447,7 @@ func BuildShortenSystemPrompt(limit int) string {
 func BuildShortenUserPrompt(body string, limit int) string {
 	var sb strings.Builder
 	sb.WriteString("请在不改变原意的前提下，把下面这段提示词压缩得更短、更自然。\n")
-	sb.WriteString(fmt.Sprintf("要求：最终不超过 %d 个字，保留业务场景、问题现象和目标结果，所有内容合在一段里。\n", limit))
+	sb.WriteString(fmt.Sprintf("要求：最终尽量控制在 %d-%d 个字之间；如果原文过长，至少确保不超过 %d 个字，保留业务场景、问题现象、目标结果和必要边界，所有内容合在一段里。\n", PreferredPromptBodyMinRunes, limit, limit))
 	sb.WriteString("原文如下：\n")
 	sb.WriteString(strings.TrimSpace(body))
 	return sb.String()
@@ -465,4 +476,3 @@ func isLegacyConstraintLine(line string) bool {
 
 // DefaultManualDir 返回执行手册的平台对应存放目录，供 CLI Agent 的 additionalDirs 使用。
 func DefaultManualDir() string { return util.PinruManualDir() }
-

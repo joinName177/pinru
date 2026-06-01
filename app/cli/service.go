@@ -39,12 +39,15 @@ type CliService struct {
 	reviewContextPath string
 }
 
-func defaultPgCodeContextScriptPath() string {
+func defaultPgCodeContextScriptPaths() []string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ""
+		return nil
 	}
-	return filepath.Join(home, ".codex", "skills", "pg-code", "scripts", "collect_project_context.py")
+	return []string{
+		filepath.Join(home, ".codex", "skills", "pg-code", "scripts", "collect_project_context.py"),
+		filepath.Join(home, ".claude", "skills", "pg-code", "scripts", "collect_project_context.py"),
+	}
 }
 
 type cliSession struct {
@@ -555,14 +558,15 @@ type CodexReviewIssue struct {
 
 // CodexReviewResult is the structured output from the pg-code review skill.
 type CodexReviewResult struct {
-	IsCompleted  bool               `json:"isCompleted"`
-	IsSatisfied  bool               `json:"isSatisfied"`
-	ProjectType  string             `json:"projectType"`
-	ChangeScope  string             `json:"changeScope"`
-	ReviewNotes  string             `json:"reviewNotes"`
-	NextPrompt   string             `json:"nextPrompt"`
-	KeyLocations string             `json:"keyLocations"`
-	Issues       []CodexReviewIssue `json:"issues"`
+	IsCompleted        bool               `json:"isCompleted"`
+	IsSatisfied        bool               `json:"isSatisfied"`
+	ProjectType        string             `json:"projectType"`
+	ChangeScope        string             `json:"changeScope"`
+	ReviewNotes        string             `json:"reviewNotes"`
+	NextPrompt         string             `json:"nextPrompt"`
+	NextPromptTaskType string             `json:"nextPromptTaskType"`
+	KeyLocations       string             `json:"keyLocations"`
+	Issues             []CodexReviewIssue `json:"issues"`
 }
 
 type CodexReviewRequest struct {
@@ -759,33 +763,423 @@ func (s *CliService) reviewContextScriptPath() string {
 	if strings.TrimSpace(s.reviewContextPath) != "" {
 		return s.reviewContextPath
 	}
-	return defaultPgCodeContextScriptPath()
+	candidates := defaultPgCodeContextScriptPaths()
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	if len(candidates) == 0 {
+		return ""
+	}
+	return candidates[0]
 }
 
 func (s *CliService) collectPgCodeReviewContext(ctx context.Context, localPath string) (*pgCodeProjectContext, error) {
 	scriptPath := strings.TrimSpace(s.reviewContextScriptPath())
 	if scriptPath == "" {
-		return nil, nil
+		return collectNativePgCodeReviewContext(ctx, localPath)
 	}
 	if _, err := os.Stat(scriptPath); err != nil {
-		return nil, err
+		slog.Warn("pg-code context script unavailable, using native collector", "scriptPath", scriptPath, "error", err)
+		return collectNativePgCodeReviewContext(ctx, localPath)
 	}
 
-	cmd := exec.CommandContext(ctx, "python3", scriptPath, localPath)
-	cmd.Dir = localPath
-	output, err := cmd.Output()
+	pythonPath, err := s.lookupCLI("python3")
 	if err != nil {
-		return nil, err
+		slog.Warn("python3 unavailable for pg-code context script, using native collector", "error", err)
+		return collectNativePgCodeReviewContext(ctx, localPath)
+	}
+
+	cmd := exec.CommandContext(ctx, pythonPath, scriptPath, localPath)
+	cmd.Dir = localPath
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		trimmed := strings.TrimSpace(string(output))
+		if trimmed != "" {
+			slog.Warn("pg-code context script failed, using native collector", "error", err, "output", trimmed)
+			return collectNativePgCodeReviewContext(ctx, localPath)
+		}
+		slog.Warn("pg-code context script failed, using native collector", "error", err)
+		return collectNativePgCodeReviewContext(ctx, localPath)
 	}
 
 	var envelope pgCodeContextEnvelope
 	if err := json.Unmarshal(output, &envelope); err != nil {
-		return nil, err
+		slog.Warn("pg-code context script output invalid, using native collector", "error", err)
+		return collectNativePgCodeReviewContext(ctx, localPath)
 	}
 	if len(envelope.Projects) == 0 {
-		return nil, nil
+		slog.Warn("pg-code context script returned no projects, using native collector", "scriptPath", scriptPath)
+		return collectNativePgCodeReviewContext(ctx, localPath)
 	}
 	return &envelope.Projects[0], nil
+}
+
+var nativeContextIgnoredDirs = map[string]struct{}{
+	".git": {}, ".hg": {}, ".svn": {}, "node_modules": {}, "dist": {}, "build": {},
+	"coverage": {}, ".next": {}, ".nuxt": {}, ".idea": {}, ".vscode": {}, "__pycache__": {},
+}
+
+var nativeContextIgnoredSuffixes = map[string]struct{}{
+	".png": {}, ".jpg": {}, ".jpeg": {}, ".gif": {}, ".webp": {}, ".svg": {},
+	".ico": {}, ".mp3": {}, ".wav": {}, ".ogg": {}, ".mp4": {}, ".mov": {},
+	".pdf": {}, ".zip": {}, ".tar": {}, ".gz": {}, ".lock": {},
+}
+
+var nativeContextIgnoredNames = map[string]struct{}{
+	".DS_Store": {},
+}
+
+type nativeCommandResult struct {
+	code   int
+	stdout string
+	stderr string
+}
+
+func collectNativePgCodeReviewContext(ctx context.Context, localPath string) (*pgCodeProjectContext, error) {
+	inputPath := strings.TrimSpace(localPath)
+	if inputPath == "" {
+		return nil, nil
+	}
+
+	resolvedPath, err := filepath.Abs(inputPath)
+	if err != nil {
+		resolvedPath = filepath.Clean(inputPath)
+	}
+	if realPath, err := filepath.EvalSymlinks(resolvedPath); err == nil {
+		resolvedPath = realPath
+	}
+
+	project := &pgCodeProjectContext{
+		InputPath:      inputPath,
+		ResolvedPath:   resolvedPath,
+		Exists:         false,
+		ProjectIDGuess: guessNativeProjectID(resolvedPath),
+		Git: pgCodeGitContext{
+			InGit:           false,
+			RepoRoot:        nil,
+			StatusLines:     []string{},
+			ChangedFiles:    []string{},
+			ChangedFilesRaw: []string{},
+		},
+		RecentFiles: []pgCodeRecentFile{},
+		Summary: pgCodeProjectSummary{
+			TopLevelEntries: []string{},
+			Extensions:      map[string]int{},
+		},
+	}
+
+	info, statErr := os.Stat(resolvedPath)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
+			return project, nil
+		}
+		return project, statErr
+	}
+	project.Exists = true
+
+	root := resolvedPath
+	if !info.IsDir() {
+		root = filepath.Dir(resolvedPath)
+	}
+	project.Git = collectNativeGitContext(ctx, root, 40)
+	project.RecentFiles = collectNativeRecentFiles(ctx, root, 12)
+	project.Summary = summarizeNativeProjectFiles(root, project.Git.ChangedFiles, project.RecentFiles)
+	return project, nil
+}
+
+func runNativeCommand(ctx context.Context, args ...string) nativeCommandResult {
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	code := 0
+	if err != nil {
+		code = 1
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			code = exitErr.ExitCode()
+		}
+	}
+	return nativeCommandResult{
+		code:   code,
+		stdout: strings.TrimRight(stdout.String(), "\n"),
+		stderr: strings.TrimRight(stderr.String(), "\n"),
+	}
+}
+
+func collectNativeGitContext(ctx context.Context, scope string, changedLimit int) pgCodeGitContext {
+	context := pgCodeGitContext{
+		InGit:           false,
+		RepoRoot:        nil,
+		StatusLines:     []string{},
+		ChangedFiles:    []string{},
+		ChangedFilesRaw: []string{},
+	}
+	if ctx.Err() != nil {
+		return context
+	}
+
+	rootResult := runNativeCommand(ctx, "git", "-C", scope, "rev-parse", "--show-toplevel")
+	if rootResult.code != 0 || strings.TrimSpace(rootResult.stdout) == "" {
+		return context
+	}
+
+	repoRoot := strings.TrimSpace(rootResult.stdout)
+	if absRoot, err := filepath.Abs(repoRoot); err == nil {
+		repoRoot = absRoot
+	}
+	context.InGit = true
+	context.RepoRoot = &repoRoot
+
+	relScope, err := filepath.Rel(repoRoot, scope)
+	if err != nil || relScope == "" {
+		relScope = "."
+	}
+	relScope = filepath.ToSlash(relScope)
+
+	statusResult := runNativeCommand(ctx, "git", "-C", repoRoot, "status", "--porcelain", "--untracked-files=all", "--", relScope)
+	if statusResult.code == 0 {
+		context.StatusLines = limitStrings(nonEmptyLines(statusResult.stdout), changedLimit)
+	}
+
+	changedRaw := make([]string, 0, len(context.StatusLines))
+	for _, line := range context.StatusLines {
+		if len(line) < 4 {
+			continue
+		}
+		changedRaw = append(changedRaw, normalizeNativeStatusPath(line[3:]))
+	}
+	if len(changedRaw) == 0 {
+		diffResult := runNativeCommand(ctx, "git", "-C", repoRoot, "diff", "--name-only", "HEAD", "--", relScope)
+		if diffResult.code == 0 {
+			changedRaw = nonEmptyLines(diffResult.stdout)
+		}
+	}
+
+	changedRaw = limitStrings(uniqueStrings(changedRaw), changedLimit)
+	context.ChangedFilesRaw = changedRaw
+	context.ChangedFiles = repoRelativeToProjectRelative(repoRoot, scope, changedRaw)
+	return context
+}
+
+func normalizeNativeStatusPath(raw string) string {
+	if strings.Contains(raw, " -> ") {
+		parts := strings.Split(raw, " -> ")
+		raw = parts[len(parts)-1]
+	}
+	return strings.TrimSpace(raw)
+}
+
+func repoRelativeToProjectRelative(repoRoot, scope string, repoRelativePaths []string) []string {
+	result := make([]string, 0, len(repoRelativePaths))
+	for _, repoRelative := range repoRelativePaths {
+		absolute := filepath.Join(repoRoot, filepath.FromSlash(repoRelative))
+		if rel, err := filepath.Rel(scope, absolute); err == nil && !strings.HasPrefix(rel, "..") {
+			result = append(result, filepath.ToSlash(rel))
+			continue
+		}
+		result = append(result, filepath.ToSlash(repoRelative))
+	}
+	return result
+}
+
+func collectNativeRecentFiles(ctx context.Context, root string, limit int) []pgCodeRecentFile {
+	type fileEntry struct {
+		mtime time.Time
+		path  string
+	}
+	entries := make([]fileEntry, 0, limit)
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || ctx.Err() != nil {
+			return nil
+		}
+		name := entry.Name()
+		if entry.IsDir() {
+			if _, ignored := nativeContextIgnoredDirs[name]; ignored {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if _, ignored := nativeContextIgnoredNames[name]; ignored {
+			return nil
+		}
+		if _, ignored := nativeContextIgnoredSuffixes[strings.ToLower(filepath.Ext(name))]; ignored {
+			return nil
+		}
+		info, statErr := entry.Info()
+		if statErr != nil {
+			return nil
+		}
+		entries = append(entries, fileEntry{mtime: info.ModTime(), path: path})
+		return nil
+	})
+
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].mtime.Equal(entries[j].mtime) {
+			return entries[i].path < entries[j].path
+		}
+		return entries[i].mtime.After(entries[j].mtime)
+	})
+
+	if len(entries) > limit {
+		entries = entries[:limit]
+	}
+	result := make([]pgCodeRecentFile, 0, len(entries))
+	for _, entry := range entries {
+		rel, err := filepath.Rel(root, entry.path)
+		if err != nil {
+			rel = entry.path
+		}
+		result = append(result, pgCodeRecentFile{
+			Path:         entry.path,
+			RelativePath: filepath.ToSlash(rel),
+			MTime:        entry.mtime.Format("2006-01-02T15:04:05"),
+		})
+	}
+	return result
+}
+
+func summarizeNativeProjectFiles(root string, changedFiles []string, recentFiles []pgCodeRecentFile) pgCodeProjectSummary {
+	sourcePaths := make([]string, 0, len(changedFiles)+len(recentFiles))
+	for _, rel := range changedFiles {
+		sourcePaths = append(sourcePaths, filepath.Join(root, filepath.FromSlash(rel)))
+	}
+	if len(sourcePaths) == 0 {
+		for _, file := range recentFiles {
+			sourcePaths = append(sourcePaths, filepath.Join(root, filepath.FromSlash(file.RelativePath)))
+		}
+	}
+
+	topCounts := make(map[string]int)
+	extCounts := make(map[string]int)
+	for _, path := range sourcePaths {
+		rel, err := filepath.Rel(root, path)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			continue
+		}
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		if len(parts) > 0 && parts[0] != "" {
+			topCounts[parts[0]]++
+		} else {
+			topCounts["."]++
+		}
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext == "" {
+			ext = "<no-ext>"
+		}
+		extCounts[ext]++
+	}
+
+	return pgCodeProjectSummary{
+		TopLevelEntries: topNamesByCount(topCounts, 6),
+		Extensions:      topMapByCount(extCounts, 8),
+	}
+}
+
+func guessNativeProjectID(path string) string {
+	for _, part := range pathPartsFromLeaf(path, 4) {
+		if strings.Contains(part, "label-") {
+			return part
+		}
+	}
+	base := filepath.Base(path)
+	if base == "." || base == string(filepath.Separator) {
+		return path
+	}
+	return base
+}
+
+func pathPartsFromLeaf(path string, limit int) []string {
+	parts := make([]string, 0, limit)
+	current := filepath.Clean(path)
+	for len(parts) < limit {
+		base := filepath.Base(current)
+		if base == "." || base == string(filepath.Separator) || base == "" {
+			break
+		}
+		parts = append(parts, base)
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+	return parts
+}
+
+func nonEmptyLines(text string) []string {
+	lines := strings.Split(text, "\n")
+	result := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+	return result
+}
+
+func limitStrings(values []string, limit int) []string {
+	if limit >= 0 && len(values) > limit {
+		return values[:limit]
+	}
+	return values
+}
+
+func topNamesByCount(counts map[string]int, limit int) []string {
+	items := sortCountKeys(counts)
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	return items
+}
+
+func topMapByCount(counts map[string]int, limit int) map[string]int {
+	items := sortCountKeys(counts)
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	result := make(map[string]int, len(items))
+	for _, key := range items {
+		result[key] = counts[key]
+	}
+	return result
+}
+
+func sortCountKeys(counts map[string]int) []string {
+	items := make([]string, 0, len(counts))
+	for key := range counts {
+		items = append(items, key)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if counts[items[i]] == counts[items[j]] {
+			return items[i] < items[j]
+		}
+		return counts[items[i]] > counts[items[j]]
+	})
+	return items
 }
 
 func buildCodexReviewPrompt(req CodexReviewRequest, project *pgCodeProjectContext) string {
@@ -796,13 +1190,16 @@ func buildCodexReviewPrompt(req CodexReviewRequest, project *pgCodeProjectContex
 1. 【严格限制】只能基于任务提示词、git 变更、最近更新文件以及你实际读取过的文件下结论。允许主动读取和评审的仓库文件仍限于 git 变更文件（git status / git diff 列出的文件）以及最近更新文件。
 2. 严禁猜测运行效果、页面视觉、接口返回、测试结果或用户体验。
 3. keyLocations 只能填写 git 变更文件或最近更新文件中 1 到 3 个你实际核验过的代码位置，写不出时可留空。
-4. 当主要功能实现度达到 80% 以上时，isCompleted 和 isSatisfied 均可填 true，允许存在少量非关键细节缺失或边缘情况未覆盖。
+4. isCompleted 和 isSatisfied 必须分开判断：核心交付物出现、主流程大体落地时，isCompleted 可填 true；只有主要求覆盖接近 90 分、没有明确主链路缺口、关键边界不影响验收时，isSatisfied 才能填 true。80% 左右只能算“完成但不满意”，不能直接满意通过。
 5. 找不到任务提示词或有效改动时，reviewNotes 注明”依据不足”，isCompleted 和 isSatisfied 均填 false。
 6. projectType 和 changeScope 按最符合实际情况的选项填写。
-7. 任务提示词以“当前复核节点上下文”里的 original_prompt/current_prompt 为唯一来源，不要再去读取本地提示词文件；若两者都缺失请在 reviewNotes 注明并终止评审。
-8. 当本轮发现多个独立问题时，必须通过 issues 数组分别列出；不要把多个问题揉成一条。
-9. issues[*].issueType 默认填“Bug修复”，除非证据明确表明是其他类型。
-10. 若本轮已通过，issues 返回空数组。
+7. 任务提示词以“当前复核节点上下文”里的 original_prompt/current_prompt 为唯一来源，只把其中明确写出的要求作为验收标准；不要再去读取本地提示词文件，也不要把未写明的扩展点、常识性联想、顺手优化项记为未完成或不满意。parent_review_notes 仅作辅助上下文，不能替代任务提示词本身。
+8. 当 isCompleted=false 或 isSatisfied=false 时，reviewNotes 必须回指 original_prompt/current_prompt 中对应的具体句子、短语或明确要求；若拆分到 issues，则每条 issues[*].reviewNotes 也必须分别回指对应 prompt 语句。回指不到的内容不能作为主缺口，不得据此判定未完成或不满意。
+9. nextPrompt 只能围绕主缺口补充最小修复指令，必须与已回指的 prompt 要求直接对应，不得扩展额外需求；若拆分到 issues，则每条 issues[*].nextPrompt 也遵守同样规则。
+10. 当本轮发现多个独立问题时，必须通过 issues 数组分别列出；不要把多个问题揉成一条。
+11. nextPromptTaskType 根据 nextPrompt 的任务性质填写，只能在“Bug修复、Feature迭代、0-1代码生成、代码理解、代码重构、工程化、代码测试、未归类”中选择；满意且 nextPrompt 为“无”时填“未归类”。
+12. issues[*].issueType 默认填“Bug修复”，除非证据明确表明是其他类型。
+13. 若本轮已通过，issues 返回空数组，但 reviewNotes 不能只填“无”；必须用一两句话说明已经核验哪些核心要求和关键代码位置，作为通过依据。
 `))
 
 	reviewInput := map[string]string{
@@ -873,6 +1270,17 @@ func applyCodexReviewEvidenceGuards(localPath string, project *pgCodeProjectCont
 		return
 	}
 
+	if result.IsCompleted && result.IsSatisfied && isEmptyPassingReviewNote(result.ReviewNotes) {
+		result.IsSatisfied = false
+		result.ReviewNotes = "通过依据不足：isSatisfied=true 时 reviewNotes 不能只填“无”，需要说明已核验的核心要求和关键代码证据。"
+		if prompt := strings.TrimSpace(result.NextPrompt); prompt == "" || prompt == "无" {
+			result.NextPrompt = "请补充复审通过依据，明确说明已核验哪些核心要求和关键代码位置；如存在主链路缺口，则按实际缺口修复。"
+		}
+		if normalized := strings.TrimSpace(result.NextPromptTaskType); normalized == "" || normalized == "未归类" {
+			result.NextPromptTaskType = "未归类"
+		}
+	}
+
 	// Soft guard: invalid key locations are noted but do not override the
 	// AI's pass/fail judgment.
 	if countValidKeyLocations(localPath, result.KeyLocations) == 0 && strings.TrimSpace(result.KeyLocations) != "" {
@@ -883,6 +1291,11 @@ func applyCodexReviewEvidenceGuards(localPath string, project *pgCodeProjectCont
 			result.ReviewNotes = existing + "；" + note
 		}
 	}
+}
+
+func isEmptyPassingReviewNote(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	return trimmed == "" || trimmed == "无" || strings.EqualFold(trimmed, "none") || strings.EqualFold(trimmed, "n/a")
 }
 
 func countValidKeyLocations(localPath, raw string) int {

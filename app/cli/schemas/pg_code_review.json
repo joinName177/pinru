@@ -2,15 +2,15 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "additionalProperties": false,
-  "required": ["isCompleted", "isSatisfied", "projectType", "changeScope", "reviewNotes", "nextPrompt", "keyLocations", "issues"],
+  "required": ["isCompleted", "isSatisfied", "projectType", "changeScope", "reviewNotes", "nextPrompt", "nextPromptTaskType", "keyLocations", "issues"],
   "properties": {
     "isCompleted": {
       "type": "boolean",
-      "description": "是否完成：提示词要求的核心交付物已经落到代码或文件里"
+      "description": "是否完成：提示词要求的核心交付物已经落到代码或文件里；80%左右可判定完成，但不等于满意"
     },
     "isSatisfied": {
       "type": "boolean",
-      "description": "是否满意：提示词的主要求已覆盖且质量达到 90 分及以上"
+      "description": "是否满意：提示词的主要求已覆盖且质量达到 90 分及以上；80%左右只能算完成但不满意"
     },
     "projectType": {
       "type": "string",
@@ -23,11 +23,16 @@
     },
     "reviewNotes": {
       "type": "string",
-      "description": "不满意点评，满意时填「无」"
+      "description": "复审点评；满意时也不能只填「无」，必须简要说明已核验的核心要求和关键代码证据；当 isCompleted=false 或 isSatisfied=false 时，必须回指 original_prompt/current_prompt 中对应的具体句子、短语或明确要求，不能用未写明的扩展点作为主缺口"
     },
     "nextPrompt": {
       "type": "string",
-      "description": "下一轮提示词建议，满意时填「无」"
+      "description": "下一轮提示词建议，满意时填「无」；只允许围绕 reviewNotes 已回指的主缺口给出最小修复指令，不得扩展额外需求"
+    },
+    "nextPromptTaskType": {
+      "type": "string",
+      "enum": ["Bug修复", "Feature迭代", "0-1代码生成", "代码理解", "代码重构", "工程化", "代码测试", "未归类"],
+      "description": "nextPrompt 对应的提示词任务类型；满意且 nextPrompt 为「无」时填「未归类」"
     },
     "keyLocations": {
       "type": "string",
@@ -35,7 +40,7 @@
     },
     "issues": {
       "type": "array",
-      "description": "当当前节点存在多个独立问题时，逐条拆分为子问题；通过时返回空数组",
+      "description": "当当前节点存在多个独立问题时，逐条拆分为子问题；通过时返回空数组。每个子问题都只能对应 prompt 中明确写出的要求，不能把未写明的扩展点当作主缺口",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -51,11 +56,11 @@
           },
           "reviewNotes": {
             "type": "string",
-            "description": "这个子问题对应的不满意结论"
+            "description": "这个子问题对应的不满意结论；必须回指 original_prompt/current_prompt 中对应的具体句子、短语或明确要求"
           },
           "nextPrompt": {
             "type": "string",
-            "description": "这个子问题下一次复核时应携带的提示词"
+            "description": "这个子问题下一次复核时应携带的提示词；只修复当前子问题对应的主缺口，不得扩展额外需求"
           },
           "keyLocations": {
             "type": "string",

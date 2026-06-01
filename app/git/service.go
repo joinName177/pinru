@@ -77,7 +77,7 @@ type ManagedClaimPathPlan struct {
 }
 
 func (s *GitService) FetchGitLabProject(projectRef, url, token string) (*gl.Project, error) {
-	return gl.FetchProject(projectRef, url, token, false)
+	return fetchGitLabProjectWithFallback(projectRef, url, token, false)
 }
 
 func (s *GitService) FetchGitLabProjects(projectRefs []string, url, token string) []GitLabProjectLookupResult {
@@ -94,7 +94,7 @@ func (s *GitService) fetchGitLabProjects(projectRefs []string, url, token string
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			p, err := gl.FetchProject(r, url, token, skipTLSVerify)
+			p, err := fetchGitLabProjectWithFallback(r, url, token, skipTLSVerify)
 			result := GitLabProjectLookupResult{ProjectRef: r, Project: p}
 			if err != nil {
 				errStr := err.Error()
@@ -105,6 +105,65 @@ func (s *GitService) fetchGitLabProjects(projectRefs []string, url, token string
 	}
 	wg.Wait()
 	return results
+}
+
+func fetchGitLabProjectWithFallback(projectRef, url, token string, skipTLSVerify bool) (*gl.Project, error) {
+	project, err := gl.FetchProject(projectRef, url, token, skipTLSVerify)
+	if err == nil {
+		return project, nil
+	}
+
+	trimmedRef := strings.TrimSpace(projectRef)
+	if trimmedRef == "" || looksLikeNumericGitLabRef(trimmedRef) {
+		return nil, err
+	}
+
+	query := gitLabProjectSearchQuery(trimmedRef)
+	projects, searchErr := gl.SearchProjects(query, url, token, skipTLSVerify)
+	if searchErr != nil {
+		return nil, err
+	}
+	if matched := pickGitLabSearchResult(trimmedRef, query, projects); matched != nil {
+		return matched, nil
+	}
+	return nil, err
+}
+
+func looksLikeNumericGitLabRef(projectRef string) bool {
+	_, convErr := strconv.ParseInt(strings.TrimSpace(projectRef), 10, 64)
+	return convErr == nil
+}
+
+func gitLabProjectSearchQuery(projectRef string) string {
+	trimmed := strings.Trim(strings.TrimSpace(projectRef), "/")
+	if trimmed == "" {
+		return ""
+	}
+	parts := strings.Split(trimmed, "/")
+	return parts[len(parts)-1]
+}
+
+func pickGitLabSearchResult(projectRef, query string, projects []gl.Project) *gl.Project {
+	normalizedRef := normalizeGitLabLookupToken(projectRef)
+	normalizedQuery := normalizeGitLabLookupToken(query)
+	for _, project := range projects {
+		if normalizeGitLabLookupToken(project.PathWithNamespace) == normalizedRef {
+			matched := project
+			return &matched
+		}
+	}
+	for _, project := range projects {
+		if normalizeGitLabLookupToken(project.Name) == normalizedQuery ||
+			normalizeGitLabLookupToken(project.Path) == normalizedQuery {
+			matched := project
+			return &matched
+		}
+	}
+	return nil
+}
+
+func normalizeGitLabLookupToken(value string) string {
+	return strings.ToLower(strings.Trim(strings.TrimSpace(value), "/"))
 }
 
 func (s *GitService) FetchConfiguredGitLabProjects(projectRefs []string) ([]GitLabProjectLookupResult, error) {

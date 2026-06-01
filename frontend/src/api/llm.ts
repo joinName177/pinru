@@ -39,6 +39,7 @@ export interface CodeAnalysisSummary {
 
 export interface PromptGenerationResult {
   promptText: string;
+  promptDifficulty: string;
   analysis: CodeAnalysisSummary;
   providerName: string;
   model: string;

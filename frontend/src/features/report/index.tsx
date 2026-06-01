@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, ChevronDown } from 'lucide-react';
+import { Loader2, ChevronDown, Copy, Check } from 'lucide-react';
 import { useAppStore } from '../../store';
 import {
   listTasks,
@@ -14,7 +14,7 @@ import {
   type TaskSession,
 } from '../../api/task';
 import ReportTable from './components/ReportTable';
-import { assembleReportRows } from './utils';
+import { assembleReportRows, buildReportMarkdown } from './utils';
 import { REPORT_TYPE_OPTIONS, type ReportRow } from './types';
 
 export default function Report() {
@@ -23,9 +23,11 @@ export default function Report() {
   const [rows, setRows] = useState<ReportRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [markdownCopied, setMarkdownCopied] = useState(false);
 
   const tasksRef = useRef<TaskFromDB[]>([]);
   const modelRunsRef = useRef<Map<string, ModelRunFromDB[]>>(new Map());
+  const markdownCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadData = useCallback(async () => {
     if (!activeProject?.id) {
@@ -194,6 +196,16 @@ export default function Report() {
     [updateLocalRows, rows],
   );
 
+  const handleCopyMarkdown = useCallback(async () => {
+    const markdown = buildReportMarkdown(rows);
+    await navigator.clipboard.writeText(markdown);
+    setMarkdownCopied(true);
+    if (markdownCopyTimerRef.current) {
+      clearTimeout(markdownCopyTimerRef.current);
+    }
+    markdownCopyTimerRef.current = setTimeout(() => setMarkdownCopied(false), 1500);
+  }, [rows]);
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-4 px-6 py-4 border-b border-stone-200 dark:border-[#232834] shrink-0">
@@ -219,6 +231,15 @@ export default function Report() {
             {activeProject.name}
           </span>
         )}
+        <button
+          type="button"
+          onClick={handleCopyMarkdown}
+          disabled={rows.length === 0}
+          className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-stone-200 dark:border-[#232834] px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-[#1A1F29] disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {markdownCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+          {markdownCopied ? '已复制 Markdown' : '复制 Markdown'}
+        </button>
       </div>
 
       {loading ? (

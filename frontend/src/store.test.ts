@@ -93,6 +93,7 @@ describe('useAppStore.loadTasks', () => {
         status: 'PromptReady',
         taskType: 'Bug修复',
         sessionList: [],
+        promptDifficulty: '一般',
         localPath: null,
         promptText: null,
         promptGenerationStatus: 'done',

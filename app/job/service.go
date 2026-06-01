@@ -26,24 +26,26 @@ import (
 )
 
 const (
-	gitCloneConcurrencyLimit = 3
-	gitCloneRetryAttempts    = 3
-	gitCloneRetryBackoff     = 2 * time.Second
-	gitCloneIdleTimeout      = 30 * time.Second
+	gitCloneConcurrencyLimit       = 3
+	promptGenerateConcurrencyLimit = 1
+	gitCloneRetryAttempts          = 3
+	gitCloneRetryBackoff           = 2 * time.Second
+	gitCloneIdleTimeout            = 30 * time.Second
 )
 
 var errGitCloneIdleTimeout = fmt.Errorf(errs.FmtJobGitCloneIdleTimeout, gitCloneIdleTimeout)
 
 type JobService struct {
-	store     *store.Store
-	promptSvc *appprompt.PromptService
-	gitSvc    *appgit.GitService
-	submitSvc *appsubmit.SubmitService
-	taskSvc   *apptask.TaskService
-	cliSvc    *appcli.CliService
-	mu        sync.Mutex
-	running   map[string]context.CancelFunc
-	cloneSem  chan struct{}
+	store             *store.Store
+	promptSvc         *appprompt.PromptService
+	gitSvc            *appgit.GitService
+	submitSvc         *appsubmit.SubmitService
+	taskSvc           *apptask.TaskService
+	cliSvc            *appcli.CliService
+	mu                sync.Mutex
+	running           map[string]context.CancelFunc
+	cloneSem          chan struct{}
+	promptGenerateSem chan struct{}
 }
 
 func New(
@@ -55,14 +57,15 @@ func New(
 	cliSvc *appcli.CliService,
 ) *JobService {
 	return &JobService{
-		store:     st,
-		promptSvc: promptSvc,
-		gitSvc:    gitSvc,
-		submitSvc: submitSvc,
-		taskSvc:   taskSvc,
-		cliSvc:    cliSvc,
-		running:   make(map[string]context.CancelFunc),
-		cloneSem:  make(chan struct{}, gitCloneConcurrencyLimit),
+		store:             st,
+		promptSvc:         promptSvc,
+		gitSvc:            gitSvc,
+		submitSvc:         submitSvc,
+		taskSvc:           taskSvc,
+		cliSvc:            cliSvc,
+		running:           make(map[string]context.CancelFunc),
+		cloneSem:          make(chan struct{}, gitCloneConcurrencyLimit),
+		promptGenerateSem: make(chan struct{}, promptGenerateConcurrencyLimit),
 	}
 }
 
@@ -489,7 +492,14 @@ func (s *JobService) executePromptGenerate(
 		"project", projectLabel,
 		"task_type", promptReq.TaskType,
 	)
-	s.emitProgress(jobID, req.JobType, req.TaskID, "running", 20, strPtr(fmt.Sprintf("[%s] 分析代码仓库…", projectLabel)), nil)
+	s.emitProgress(jobID, req.JobType, req.TaskID, "running", 10, strPtr(fmt.Sprintf("[%s] 等待提示词生成队列…", projectLabel)), nil)
+
+	if err := s.acquirePromptGenerateSlot(ctx, jobID, req.TaskID, projectLabel); err != nil {
+		return jobExecutionResult{}, err
+	}
+	defer func() { <-s.promptGenerateSem }()
+
+	s.emitProgress(jobID, req.JobType, req.TaskID, "running", 20, strPtr(fmt.Sprintf("[%s] 正在生成提示词…", projectLabel)), nil)
 
 	res, err := s.promptSvc.GenerateTaskPromptWithContext(ctx, promptReq)
 	if err != nil {
@@ -512,6 +522,19 @@ func (s *JobService) executePromptGenerate(
 		outputPayload: &outputStr,
 		finalMessage:  strPtr(fmt.Sprintf("[%s] 提示词已生成", projectLabel)),
 	}, nil
+}
+
+func (s *JobService) acquirePromptGenerateSlot(ctx context.Context, jobID, taskID, projectLabel string) error {
+	select {
+	case s.promptGenerateSem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		if s.isJobCancelled(jobID) {
+			return ctx.Err()
+		}
+		s.emitProgress(jobID, "prompt_generate", taskID, "running", 0, strPtr(fmt.Sprintf("[%s] 提示词生成排队超时", projectLabel)), nil)
+		return ctx.Err()
+	}
 }
 
 func (s *JobService) executeSessionSync(
@@ -582,8 +605,10 @@ func (s *JobService) emitProgress(id, jobType, taskID, status string, progress i
 		if message != nil {
 			msg = *message
 		}
-		if err := s.store.UpdateBackgroundJobProgress(id, progress, msg); err != nil {
-			slog.Error("failed to update job progress", "job_id", id, "error", err)
+		if s.store != nil {
+			if err := s.store.UpdateBackgroundJobProgress(id, progress, msg); err != nil {
+				slog.Error("failed to update job progress", "job_id", id, "error", err)
+			}
 		}
 	}
 
@@ -607,6 +632,9 @@ func (s *JobService) emitProgress(id, jobType, taskID, status string, progress i
 }
 
 func (s *JobService) isJobCancelled(id string) bool {
+	if s.store == nil {
+		return false
+	}
 	job, err := s.store.GetBackgroundJob(id)
 	if err != nil || job == nil {
 		return false
@@ -639,10 +667,10 @@ type GitCloneResult struct {
 }
 
 type QuestionBankMaterializePayload struct {
-	BankSourcePath string               `json:"bankSourcePath"`
-	TargetSourcePath string             `json:"targetSourcePath"`
-	SourceModelID string                `json:"sourceModelId"`
-	CopyTargets   []GitCloneCopyTarget  `json:"copyTargets"`
+	BankSourcePath   string               `json:"bankSourcePath"`
+	TargetSourcePath string               `json:"targetSourcePath"`
+	SourceModelID    string               `json:"sourceModelId"`
+	CopyTargets      []GitCloneCopyTarget `json:"copyTargets"`
 }
 
 func (s *JobService) executeGitClone(
@@ -894,11 +922,11 @@ func (s *JobService) executePrSubmit(
 
 // AiReviewPayload 描述一次 ai_review 任务的参数。
 type AiReviewPayload struct {
-	ReviewRoundID      *string              `json:"reviewRoundId,omitempty"`
-	ModelRunID         *string              `json:"modelRunId"`
-	ModelName          string               `json:"modelName"`
-	LocalPath          string               `json:"localPath"`
-	NextPromptOverride string               `json:"nextPromptOverride,omitempty"`
+	ReviewRoundID      *string                `json:"reviewRoundId,omitempty"`
+	ModelRunID         *string                `json:"modelRunId"`
+	ModelName          string                 `json:"modelName"`
+	LocalPath          string                 `json:"localPath"`
+	NextPromptOverride string                 `json:"nextPromptOverride,omitempty"`
 	RoundSnapshot      *AiReviewRoundSnapshot `json:"roundSnapshot,omitempty"`
 
 	// Deprecated: 兼容旧版前端，映射到 ReviewRoundID
@@ -912,18 +940,20 @@ type AiReviewRoundSnapshot struct {
 
 // AiReviewResult 记录一次 ai_review 任务的输出。
 type AiReviewResult struct {
-	ReviewRoundID string `json:"reviewRoundId"`
-	ModelRunID    string `json:"modelRunId"`
-	ModelName     string `json:"modelName"`
-	ReviewStatus  string `json:"reviewStatus"`
-	ReviewRound   int    `json:"reviewRound"`
-	ReviewNotes   string `json:"reviewNotes"`
-	NextPrompt    string `json:"nextPrompt"`
-	IsCompleted   bool   `json:"isCompleted"`
-	IsSatisfied   bool   `json:"isSatisfied"`
-	ProjectType   string `json:"projectType"`
-	ChangeScope   string `json:"changeScope"`
-	KeyLocations  string `json:"keyLocations"`
+	ReviewRoundID      string `json:"reviewRoundId"`
+	ModelRunID         string `json:"modelRunId"`
+	ModelName          string `json:"modelName"`
+	PromptDifficulty   string `json:"promptDifficulty"`
+	ReviewStatus       string `json:"reviewStatus"`
+	ReviewRound        int    `json:"reviewRound"`
+	ReviewNotes        string `json:"reviewNotes"`
+	NextPrompt         string `json:"nextPrompt"`
+	NextPromptTaskType string `json:"nextPromptTaskType"`
+	IsCompleted        bool   `json:"isCompleted"`
+	IsSatisfied        bool   `json:"isSatisfied"`
+	ProjectType        string `json:"projectType"`
+	ChangeScope        string `json:"changeScope"`
+	KeyLocations       string `json:"keyLocations"`
 }
 
 func (s *JobService) executeAiReview(
@@ -1024,7 +1054,8 @@ func (s *JobService) executeAiReview(
 				"round_number", roundNumber,
 				"error", out.err,
 			)
-			if err := s.store.FinalizeAiReviewRound(round.ID, "warning", nil, nil, "", "", "", "", ""); err != nil {
+			reviewNotes := formatAiReviewExecutionFailure(out.err)
+			if err := s.store.FinalizeAiReviewRound(round.ID, "warning", boolPtr(false), boolPtr(false), reviewNotes, "", "", "", "", ""); err != nil {
 				slog.Error("failed to persist ai review round error state", "review_round_id", round.ID, "error", err)
 			}
 			if modelRunID != "" {
@@ -1051,14 +1082,19 @@ func (s *JobService) executeAiReview(
 	if passed {
 		finalStatus = "pass"
 	}
+	finalIsCompleted := lastResult.IsCompleted
+	if !passed {
+		finalIsCompleted = false
+	}
 
 	if err := s.store.FinalizeAiReviewRound(
 		round.ID,
 		finalStatus,
-		boolPtr(lastResult.IsCompleted),
+		boolPtr(finalIsCompleted),
 		boolPtr(lastResult.IsSatisfied),
 		strings.TrimSpace(lastResult.ReviewNotes),
 		strings.TrimSpace(lastResult.NextPrompt),
+		resolveNextPromptTaskType(lastResult.NextPrompt, lastResult.NextPromptTaskType),
 		strings.TrimSpace(lastResult.ProjectType),
 		strings.TrimSpace(lastResult.ChangeScope),
 		strings.TrimSpace(lastResult.KeyLocations),
@@ -1097,19 +1133,22 @@ func (s *JobService) executeAiReview(
 		}
 	}
 
+	nextPromptTaskType := resolveNextPromptTaskType(lastResult.NextPrompt, lastResult.NextPromptTaskType)
 	result := AiReviewResult{
-		ReviewRoundID: round.ID,
-		ModelRunID:    modelRunID,
-		ModelName:     payload.ModelName,
-		ReviewStatus:  finalStatus,
-		ReviewRound:   roundNumber,
-		ReviewNotes:   strings.TrimSpace(lastResult.ReviewNotes),
-		NextPrompt:    strings.TrimSpace(lastResult.NextPrompt),
-		IsCompleted:   lastResult.IsCompleted,
-		IsSatisfied:   lastResult.IsSatisfied,
-		ProjectType:   strings.TrimSpace(lastResult.ProjectType),
-		ChangeScope:   strings.TrimSpace(lastResult.ChangeScope),
-		KeyLocations:  strings.TrimSpace(lastResult.KeyLocations),
+		ReviewRoundID:      round.ID,
+		ModelRunID:         modelRunID,
+		ModelName:          payload.ModelName,
+		PromptDifficulty:   strings.TrimSpace(round.PromptDifficulty),
+		ReviewStatus:       finalStatus,
+		ReviewRound:        roundNumber,
+		ReviewNotes:        strings.TrimSpace(lastResult.ReviewNotes),
+		NextPrompt:         strings.TrimSpace(lastResult.NextPrompt),
+		NextPromptTaskType: nextPromptTaskType,
+		IsCompleted:        finalIsCompleted,
+		IsSatisfied:        lastResult.IsSatisfied,
+		ProjectType:        strings.TrimSpace(lastResult.ProjectType),
+		ChangeScope:        strings.TrimSpace(lastResult.ChangeScope),
+		KeyLocations:       strings.TrimSpace(lastResult.KeyLocations),
 	}
 	outputJSON, _ := json.Marshal(result)
 	outputStr := string(outputJSON)
@@ -1117,6 +1156,14 @@ func (s *JobService) executeAiReview(
 		outputPayload: &outputStr,
 		finalMessage:  strPtr(fmt.Sprintf("[%s] 复核%s（第 %d 轮）", label, ternaryAiReviewResultText(passed), roundNumber)),
 	}, nil
+}
+
+func formatAiReviewExecutionFailure(err error) string {
+	msg := strings.TrimSpace(fmt.Sprint(err))
+	if msg == "" {
+		return "复审执行失败"
+	}
+	return "复审执行失败：" + msg
 }
 
 func (s *JobService) prepareAiReviewPayload(taskID string, payload AiReviewPayload) (AiReviewPayload, error) {
@@ -1278,8 +1325,12 @@ func (s *JobService) ensureAiReviewRound(taskID string, payload AiReviewPayload)
 		return nil, fmt.Errorf("读取任务失败：%w", err)
 	}
 	originalPrompt := ""
+	promptDifficulty := store.DefaultPromptDifficulty
 	if task != nil && task.PromptText != nil {
 		originalPrompt = strings.TrimSpace(*task.PromptText)
+	}
+	if task != nil {
+		promptDifficulty = strings.TrimSpace(task.PromptDifficulty)
 	}
 
 	// 确定 round_number 和本轮使用的提示词
@@ -1308,17 +1359,18 @@ func (s *JobService) ensureAiReviewRound(taskID string, payload AiReviewPayload)
 	roundID := uuid.New().String()
 	now := time.Now().Unix()
 	round := store.AiReviewRound{
-		ID:             roundID,
-		TaskID:         normalizedTaskID,
-		ModelRunID:     payload.ModelRunID,
-		LocalPath:      payload.LocalPath,
-		ModelName:      firstNonEmpty(strings.TrimSpace(payload.ModelName), filepath.Base(payload.LocalPath)),
-		RoundNumber:    nextRound,
-		OriginalPrompt: originalPrompt,
-		PromptText:     promptText,
-		Status:         "none",
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		ID:               roundID,
+		TaskID:           normalizedTaskID,
+		ModelRunID:       payload.ModelRunID,
+		LocalPath:        payload.LocalPath,
+		ModelName:        firstNonEmpty(strings.TrimSpace(payload.ModelName), filepath.Base(payload.LocalPath)),
+		RoundNumber:      nextRound,
+		OriginalPrompt:   originalPrompt,
+		PromptText:       promptText,
+		PromptDifficulty: promptDifficulty,
+		Status:           "none",
+		CreatedAt:        now,
+		UpdatedAt:        now,
 	}
 	if err := s.store.CreateAiReviewRound(round); err != nil {
 		return nil, fmt.Errorf(errs.FmtJobCreateReviewRoundFail, err)
@@ -1344,6 +1396,65 @@ func normalizeAiReviewRoundLabel(round store.AiReviewRound) string {
 		return pathBase
 	}
 	return round.ID
+}
+
+func resolveNextPromptTaskType(nextPrompt, explicitTaskType string) string {
+	if normalized := normalizeReviewTaskType(explicitTaskType); normalized != "" {
+		return normalized
+	}
+	return inferReviewTaskTypeFromPrompt(nextPrompt)
+}
+
+func inferReviewTaskTypeFromPrompt(prompt string) string {
+	text := strings.ToLower(strings.TrimSpace(prompt))
+	if text == "" || text == "无" {
+		return "未归类"
+	}
+	switch {
+	case strings.Contains(text, "测试") || strings.Contains(text, "用例") || strings.Contains(text, "覆盖率") || strings.Contains(text, "断言"):
+		return "代码测试"
+	case strings.Contains(text, "重构") || strings.Contains(text, "拆分") || strings.Contains(text, "抽取") || strings.Contains(text, "简化结构"):
+		return "代码重构"
+	case strings.Contains(text, "工程化") || strings.Contains(text, "构建") || strings.Contains(text, "脚手架") || strings.Contains(text, "ci") || strings.Contains(text, "配置"):
+		return "工程化"
+	case strings.Contains(text, "理解") || strings.Contains(text, "说明") || strings.Contains(text, "梳理") || strings.Contains(text, "文档"):
+		return "代码理解"
+	case strings.Contains(text, "从零") || strings.Contains(text, "0-1") || strings.Contains(text, "全新") || strings.Contains(text, "完整"):
+		return "0-1代码生成"
+	case strings.Contains(text, "新增") || strings.Contains(text, "增加") || strings.Contains(text, "支持") || strings.Contains(text, "补充") || strings.Contains(text, "补齐"):
+		return "Feature迭代"
+	case strings.Contains(text, "修复") || strings.Contains(text, "问题") || strings.Contains(text, "错误") || strings.Contains(text, "异常") || strings.Contains(text, "不正确") || strings.Contains(text, "失败"):
+		return "Bug修复"
+	default:
+		return "Bug修复"
+	}
+}
+
+func normalizeReviewTaskType(taskType string) string {
+	trimmed := strings.TrimSpace(taskType)
+	if trimmed == "" {
+		return ""
+	}
+	switch strings.ToLower(strings.ReplaceAll(trimmed, " ", "")) {
+	case "bugfix", "bug修复", "缺陷修复":
+		return "Bug修复"
+	case "feature", "feature迭代", "功能开发":
+		return "Feature迭代"
+	case "代码生成", "0-1代码生成", "0-1", "0到1", "从0到1", "从零到一":
+		return "0-1代码生成"
+	case "代码理解":
+		return "代码理解"
+	case "refactor", "代码重构":
+		return "代码重构"
+	case "工程化":
+		return "工程化"
+	case "test", "测试", "测试补全", "代码测试":
+		return "代码测试"
+	case "未分类", "未归类", "uncategorized", "unclassified":
+		return "未归类"
+	default:
+		return trimmed
+	}
 }
 
 func firstNonEmpty(values ...string) string {

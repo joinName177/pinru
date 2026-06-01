@@ -9,6 +9,7 @@ function createTask(overrides: Partial<Task> = {}): Task {
     projectName: overrides.projectName ?? '示例项目',
     status: overrides.status ?? 'Claimed',
     taskType: overrides.taskType ?? 'Bug修复',
+    promptDifficulty: overrides.promptDifficulty ?? '一般',
     sessionList: overrides.sessionList ?? [
       {
         sessionId: '',
