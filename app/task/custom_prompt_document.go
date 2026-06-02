@@ -72,6 +72,7 @@ type CustomPromptTaskJobPayload struct {
 	QuestionID       int64  `json:"questionId"`
 	ProjectName      string `json:"projectName"`
 	SourcePath       string `json:"sourcePath"`
+	TargetSourcePath string `json:"targetSourcePath"`
 	TaskType         string `json:"taskType"`
 	PromptDifficulty string `json:"promptDifficulty"`
 	PromptText       string `json:"promptText"`
@@ -281,6 +282,7 @@ func (s *TaskService) prepareCustomPromptTaskJobsFromSingleDocument(
 			QuestionID:       item.QuestionID,
 			ProjectName:      item.DisplayName,
 			SourcePath:       item.SourcePath,
+			TargetSourcePath: plan.SourcePath,
 			TaskType:         entry.TaskType,
 			PromptDifficulty: entry.PromptDifficulty,
 			PromptText:       entry.PromptText,
@@ -309,7 +311,10 @@ func (s *TaskService) CreateCustomPromptTaskFromPayload(ctx context.Context, pay
 	plan := managedClaimPlan{
 		Sequence:   payload.ClaimSequence,
 		TaskPath:   payload.LocalPath,
-		SourcePath: payload.LocalPath,
+		SourcePath: payload.TargetSourcePath,
+	}
+	if strings.TrimSpace(plan.SourcePath) == "" {
+		plan.SourcePath = filepath.Join(plan.TaskPath, filepath.Base(plan.TaskPath))
 	}
 	return s.createSingleCustomPromptTask(ctx, project, item, payload.SourceModelName, entry, plan)
 }
@@ -348,8 +353,8 @@ func (s *TaskService) createSingleCustomPromptTask(
 		return detail
 	}
 
-	if err := gitops.CopyProjectDirectoryWithNodeModules(ctx, item.SourcePath, plan.TaskPath); err != nil {
-		_ = cleanupCustomPromptTaskTargets(append(targetPaths, plan.TaskPath))
+	if err := gitops.CopyProjectDirectoryWithNodeModules(ctx, item.SourcePath, plan.SourcePath); err != nil {
+		_ = cleanupCustomPromptTaskTargets(targetPaths)
 		detail.Status = "error"
 		detail.Message = err.Error()
 		return detail
@@ -358,7 +363,7 @@ func (s *TaskService) createSingleCustomPromptTask(
 
 	projectConfigID := project.ID
 	localPath := plan.TaskPath
-	sourcePath := plan.TaskPath
+	sourcePath := plan.SourcePath
 	created, err := s.CreateTask(CreateTaskRequest{
 		GitLabProjectID: item.QuestionID,
 		ProjectName:     item.DisplayName,
@@ -371,7 +376,7 @@ func (s *TaskService) createSingleCustomPromptTask(
 		ProjectConfigID: &projectConfigID,
 	})
 	if err != nil {
-		_ = cleanupCustomPromptTaskTargets(append(targetPaths, plan.TaskPath))
+		_ = cleanupCustomPromptTaskTargets(targetPaths)
 		detail.Status = "error"
 		detail.Message = err.Error()
 		return detail
@@ -430,10 +435,11 @@ func (s *TaskService) planCustomPromptDocumentClaims(project store.Project, item
 		for _, sequence := range sequences {
 			usedSequences[sequence] = struct{}{}
 			taskPath := util.BuildManagedTaskFolderPathWithSequence(project.CloneBasePath, item.DisplayName, taskType, sequence)
+			sourcePath := filepath.Join(taskPath, filepath.Base(taskPath))
 			plans = append(plans, managedClaimPlan{
 				Sequence:   sequence,
 				TaskPath:   taskPath,
-				SourcePath: taskPath,
+				SourcePath: sourcePath,
 			})
 		}
 		result[taskType] = plans

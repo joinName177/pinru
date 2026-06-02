@@ -142,7 +142,8 @@ func TestCreateTasksFromCustomPromptDocumentsCreatesTasksAndPromptArtifacts(t *t
 		if strings.TrimSpace(string(artifact)) != strings.TrimSpace(*task.PromptText) {
 			t.Fatalf("artifact mismatch for %s", task.ID)
 		}
-		if _, err := os.Stat(filepath.Join(*task.LocalPath, "src", "main.ts")); err != nil {
+		sourceFolderName := filepath.Base(*task.LocalPath)
+		if _, err := os.Stat(filepath.Join(*task.LocalPath, sourceFolderName, "src", "main.ts")); err != nil {
 			t.Fatalf("source copy missing for %s: %v", task.ID, err)
 		}
 		if _, err := os.Stat(filepath.Join(*task.LocalPath, "model-a", "src", "main.ts")); err != nil {
@@ -225,7 +226,8 @@ func TestCreateTasksFromCustomPromptDocumentsCopiesExistingNodeModules(t *testin
 	if len(tasks) != 1 || tasks[0].LocalPath == nil {
 		t.Fatalf("tasks = %+v", tasks)
 	}
-	if _, err := os.Stat(filepath.Join(*tasks[0].LocalPath, "node_modules", "left-pad", "index.js")); err != nil {
+	sourceFolderName := filepath.Base(*tasks[0].LocalPath)
+	if _, err := os.Stat(filepath.Join(*tasks[0].LocalPath, sourceFolderName, "node_modules", "left-pad", "index.js")); err != nil {
 		t.Fatalf("node_modules copy missing: %v", err)
 	}
 }
