@@ -38,8 +38,11 @@ func TestHelperProcess(t *testing.T) {
 	}
 	switch os.Getenv("GO_TEST_SUBPROCESS_MODE") {
 	case "codex_single_round":
-		// Count invocations.
-		if countFile := os.Getenv("GO_TEST_COUNT_FILE"); countFile != "" {
+		reviewOutPath := os.Getenv("PINRU_CODEX_REVIEW_OUTPUT_PATH")
+		summaryOutPath := os.Getenv("PINRU_CODEX_DISSATISFACTION_OUTPUT_PATH")
+		// Count review invocations only. Dissatisfaction summary is a follow-up
+		// Codex call and should not be treated as another review round.
+		if countFile := os.Getenv("GO_TEST_COUNT_FILE"); countFile != "" && reviewOutPath != "" {
 			count := 0
 			if data, err := os.ReadFile(countFile); err == nil {
 				fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &count)
@@ -50,7 +53,10 @@ func TestHelperProcess(t *testing.T) {
 		// Find -o argument and write structured JSON output.
 		// Prefer the explicit env hint from RunCodexReview because Windows
 		// command wrappers can lose trailing args when prompts contain newlines.
-		outPath := os.Getenv("PINRU_CODEX_REVIEW_OUTPUT_PATH")
+		outPath := reviewOutPath
+		if summaryOutPath != "" {
+			outPath = summaryOutPath
+		}
 		// On Windows the .bat wrapper parses -o before calling us (to avoid
 		// newline-in-arg cmd.exe issues) and passes the path via GO_TEST_OUT_PATH.
 		// On Unix args are forwarded directly via "$@".
@@ -66,7 +72,10 @@ func TestHelperProcess(t *testing.T) {
 			}
 		}
 		if outPath != "" {
-			const jsonOut = `{"isCompleted":true,"isSatisfied":false,"projectType":"Bug修复","changeScope":"单文件","reviewNotes":"needs work","nextPrompt":"fix it","keyLocations":"a.go:1"}`
+			jsonOut := `{"isCompleted":true,"isSatisfied":false,"projectType":"Bug修复","changeScope":"单文件","reviewNotes":"needs work","nextPrompt":"fix it","nextPromptTaskType":"Bug修复","keyLocations":"a.go:1","issues":[]}`
+			if summaryOutPath != "" {
+				jsonOut = `{"summary":"过程不满意：验证覆盖不完整，复审指出功能还有明确缺口后，没有形成可导出的过程和产物两段结论。产物不满意：needs work"}`
+			}
 			os.WriteFile(outPath, []byte(jsonOut), 0o644) //nolint:errcheck
 		}
 		os.Exit(0)

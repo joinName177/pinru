@@ -141,6 +141,7 @@ describe('report utils', () => {
       isCompleted: false,
       isSatisfied: false,
       reviewNotes: '复审执行失败：stream disconnected',
+      dissatisfactionSummary: '',
       nextPrompt: '',
       nextPromptTaskType: '未归类',
       projectType: '',

@@ -362,9 +362,17 @@ func (s *Store) ensureSchema() error {
 		{table: "projects", column: "overview_markdown", definition: "TEXT NOT NULL DEFAULT ''"},
 		{table: "tasks", column: "project_type", definition: "TEXT NOT NULL DEFAULT ''"},
 		{table: "tasks", column: "change_scope", definition: "TEXT NOT NULL DEFAULT ''"},
+		{table: "ai_review_rounds", column: "dissatisfaction_summary", definition: "TEXT NOT NULL DEFAULT ''"},
 	}
 
 	for _, column := range requiredColumns {
+		tableExists, err := s.tableExists(column.table)
+		if err != nil {
+			return err
+		}
+		if !tableExists {
+			continue
+		}
 		if err := s.ensureColumn(column.table, column.column, column.definition); err != nil {
 			return err
 		}

@@ -36,7 +36,7 @@ function resolveSessionDecision(
 function resolveDissatisfactionReason(session: TaskSession, round: AiReviewRoundFromDB | null): string {
   const roundSatisfied = round?.isSatisfied;
   if (round && roundSatisfied === false) {
-    return round.reviewNotes?.trim() || session.evaluation || '';
+    return round.dissatisfactionSummary?.trim() || round.reviewNotes?.trim() || session.evaluation || '';
   }
   return session.evaluation ?? '';
 }

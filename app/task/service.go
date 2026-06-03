@@ -1054,3 +1054,11 @@ func (s *TaskService) SaveAiReviewRoundNotes(roundID, reviewNotes, nextPrompt, n
 	}
 	return s.store.UpdateAiReviewRoundNotes(roundID, reviewNotes, nextPrompt, nextPromptTaskType)
 }
+
+// SaveAiReviewRoundDissatisfactionSummary 保存复审轮次的导出用不满意原因总结。
+func (s *TaskService) SaveAiReviewRoundDissatisfactionSummary(roundID, dissatisfactionSummary string) error {
+	if strings.TrimSpace(roundID) == "" {
+		return errors.New(errs.MsgReviewRoundIDRequired)
+	}
+	return s.store.UpdateAiReviewRoundDissatisfactionSummary(roundID, dissatisfactionSummary)
+}

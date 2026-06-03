@@ -103,6 +103,7 @@ export interface AiReviewResult {
   reviewStatus: 'pass' | 'warning';
   reviewRound: number;
   reviewNotes: string;
+  dissatisfactionSummary?: string;
   nextPrompt: string;
   nextPromptTaskType?: string;
   isCompleted?: boolean;

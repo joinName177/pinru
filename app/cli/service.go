@@ -31,6 +31,12 @@ var manualFS embed.FS
 //go:embed schemas/pg_code_review.json
 var pgCodeReviewSchema []byte
 
+//go:embed schemas/dissatisfaction_summary.json
+var dissatisfactionSummarySchema []byte
+
+//go:embed prompts/dissatisfaction_summary.md
+var dissatisfactionSummaryPromptTemplate string
+
 // Service executes the local claude CLI and streams output back via polling.
 type CliService struct {
 	mu                sync.Mutex
@@ -579,6 +585,21 @@ type CodexReviewRequest struct {
 	ModelName         string `json:"modelName"`
 }
 
+type DissatisfactionSummaryRequest struct {
+	LocalPath      string `json:"localPath"`
+	ModelName      string `json:"modelName"`
+	OriginalPrompt string `json:"originalPrompt"`
+	CurrentPrompt  string `json:"currentPrompt"`
+	ReviewNotes    string `json:"reviewNotes"`
+	ProjectType    string `json:"projectType"`
+	ChangeScope    string `json:"changeScope"`
+	KeyLocations   string `json:"keyLocations"`
+}
+
+type DissatisfactionSummaryResult struct {
+	Summary string `json:"summary"`
+}
+
 type pgCodeContextEnvelope struct {
 	BaseDir  string                 `json:"base_dir"`
 	Projects []pgCodeProjectContext `json:"projects"`
@@ -733,6 +754,124 @@ func (s *CliService) RunCodexReview(ctx context.Context, req CodexReviewRequest,
 		return nil, fmt.Errorf(errs.FmtCodexParseJSONFail, err)
 	}
 	applyCodexReviewEvidenceGuards(localPath, reviewContext, &result)
+	return &result, nil
+}
+
+func (s *CliService) RunCodexDissatisfactionSummary(ctx context.Context, req DissatisfactionSummaryRequest, onLine func(string)) (*DissatisfactionSummaryResult, error) {
+	codexPath, err := s.lookupCLI("codex")
+	if err != nil {
+		return nil, fmt.Errorf(errs.MsgCodexCliMissing)
+	}
+	localPath := strings.TrimSpace(req.LocalPath)
+	if localPath == "" {
+		return nil, fmt.Errorf(errs.MsgLocalPathRequired)
+	}
+	if strings.TrimSpace(req.ReviewNotes) == "" {
+		return nil, fmt.Errorf("复审点评为空，无法整理不满意原因")
+	}
+
+	prompt := buildDissatisfactionSummaryPrompt(req)
+	if runtime.GOOS == "windows" {
+		prompt = compactPromptForWindowsCommandLine(prompt)
+	}
+
+	schemaFile, err := os.CreateTemp("", "pinru-dissatisfaction-schema-*.json")
+	if err != nil {
+		return nil, fmt.Errorf(errs.FmtSchemaTempFileFail, err)
+	}
+	schemaPath := schemaFile.Name()
+	defer os.Remove(schemaPath)
+	if _, err := schemaFile.Write(dissatisfactionSummarySchema); err != nil {
+		schemaFile.Close()
+		return nil, fmt.Errorf(errs.FmtWriteSchemaFail, err)
+	}
+	schemaFile.Close()
+
+	outFile, err := os.CreateTemp("", "pinru-dissatisfaction-out-*.json")
+	if err != nil {
+		return nil, fmt.Errorf(errs.FmtOutputTempFileFail, err)
+	}
+	outPath := outFile.Name()
+	outFile.Close()
+	defer os.Remove(outPath)
+
+	args := []string{
+		"exec", prompt,
+		"-C", localPath,
+		"--dangerously-bypass-approvals-and-sandbox",
+		"--output-schema", schemaPath,
+		"-o", outPath,
+		"--ephemeral",
+	}
+
+	cmd := exec.CommandContext(ctx, codexPath, args...)
+	cmd.Dir = localPath
+	cmd.Env = applyEnvOverrides(os.Environ(), map[string]string{
+		"PINRU_CODEX_DISSATISFACTION_OUTPUT_PATH": outPath,
+	})
+
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf(errs.FmtStdoutPipeWrap, err)
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf(errs.FmtStderrPipeWrap, err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf(errs.FmtCodexStartFail, err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	var recentOutputMu sync.Mutex
+	recentOutput := make([]string, 0, 8)
+	streamPipe := func(r io.Reader) {
+		defer wg.Done()
+		scanner := bufio.NewScanner(r)
+		for scanner.Scan() {
+			line := scanner.Text()
+			appendRecentCodexOutput(&recentOutputMu, &recentOutput, line)
+			if onLine != nil {
+				onLine(line)
+			}
+		}
+	}
+	go streamPipe(stdoutPipe)
+	go streamPipe(stderrPipe)
+	wg.Wait()
+
+	if err := cmd.Wait(); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if summary := formatRecentCodexOutput(recentOutput); summary != "" {
+			return nil, fmt.Errorf(errs.FmtCodexRunFailWithSummary, err, summary)
+		}
+		return nil, fmt.Errorf(errs.FmtCodexRunFail, err)
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		return nil, fmt.Errorf(errs.FmtCodexReadOutputFail, err)
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil, fmt.Errorf(errs.MsgCodexNoStructuredOutput)
+	}
+
+	var result DissatisfactionSummaryResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		slog.Error("codex 不满意原因总结 JSON 解析失败", "err", err, "raw", string(data))
+		return nil, fmt.Errorf(errs.FmtCodexParseJSONFail, err)
+	}
+	result.Summary = normalizeDissatisfactionSummary(result.Summary)
+	if result.Summary == "" {
+		return nil, fmt.Errorf("不满意原因总结为空")
+	}
+	if !strings.Contains(result.Summary, "过程不满意：") || !strings.Contains(result.Summary, "产物不满意：") {
+		return nil, fmt.Errorf("不满意原因总结缺少过程或产物段")
+	}
 	return &result, nil
 }
 
@@ -1222,6 +1361,47 @@ func buildCodexReviewPrompt(req CodexReviewRequest, project *pgCodeProjectContex
 	}
 
 	return strings.Join(parts, "\n\n")
+}
+
+func buildDissatisfactionSummaryPrompt(req DissatisfactionSummaryRequest) string {
+	var parts []string
+	parts = append(parts, strings.TrimSpace(dissatisfactionSummaryPromptTemplate))
+	summaryInput := map[string]string{
+		"model_name":      strings.TrimSpace(req.ModelName),
+		"original_prompt": strings.TrimSpace(req.OriginalPrompt),
+		"current_prompt":  strings.TrimSpace(req.CurrentPrompt),
+		"review_notes":    strings.TrimSpace(req.ReviewNotes),
+		"project_type":    strings.TrimSpace(req.ProjectType),
+		"change_scope":    strings.TrimSpace(req.ChangeScope),
+		"key_locations":   strings.TrimSpace(req.KeyLocations),
+	}
+	if inputJSON, err := json.MarshalIndent(summaryInput, "", "  "); err == nil {
+		parts = append(parts, "现有复审证据如下，只能基于这些内容整理：\n"+string(inputJSON))
+	}
+	parts = append(parts, "请只输出符合 schema 的 JSON，其中 summary 字段直接填最终可导出的不满意原因。")
+	return strings.Join(parts, "\n\n")
+}
+
+func normalizeDissatisfactionSummary(value string) string {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return ""
+	}
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	lines := strings.Split(text, "\n")
+	parts := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			parts = append(parts, trimmed)
+		}
+	}
+	text = strings.Join(parts, "")
+	text = strings.ReplaceAll(text, "过程不满意 :", "过程不满意：")
+	text = strings.ReplaceAll(text, "产物不满意 :", "产物不满意：")
+	text = strings.ReplaceAll(text, "结果不满意：", "产物不满意：")
+	text = strings.ReplaceAll(text, "结果不满意:", "产物不满意：")
+	return strings.TrimSpace(text)
 }
 
 func compactPromptForWindowsCommandLine(prompt string) string {

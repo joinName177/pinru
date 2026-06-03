@@ -259,6 +259,7 @@ function createAiReviewRound(overrides: Partial<AiReviewRoundFromDB> = {}): AiRe
     isCompleted: overrides.isCompleted ?? true,
     isSatisfied: overrides.isSatisfied ?? false,
     reviewNotes: overrides.reviewNotes ?? '导出逻辑还缺异常处理，需要补上错误提示。',
+    dissatisfactionSummary: overrides.dissatisfactionSummary ?? '',
     nextPrompt: overrides.nextPrompt ?? '把导出失败提示和空数据保护补齐，再复审一轮。',
     nextPromptTaskType: overrides.nextPromptTaskType ?? 'Bug修复',
     projectType: overrides.projectType ?? '',

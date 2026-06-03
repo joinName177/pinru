@@ -8,32 +8,33 @@ import (
 )
 
 type AiReviewRound struct {
-	ID                 string  `json:"id"`
-	TaskID             string  `json:"taskId"`
-	ModelRunID         *string `json:"modelRunId"`
-	LocalPath          string  `json:"localPath"`
-	ModelName          string  `json:"modelName"`
-	RoundNumber        int     `json:"roundNumber"`
-	OriginalPrompt     string  `json:"originalPrompt"`
-	PromptText         string  `json:"promptText"`
-	PromptDifficulty   string  `json:"promptDifficulty"`
-	Status             string  `json:"status"`
-	IsCompleted        *bool   `json:"isCompleted"`
-	IsSatisfied        *bool   `json:"isSatisfied"`
-	ReviewNotes        string  `json:"reviewNotes"`
-	NextPrompt         string  `json:"nextPrompt"`
-	NextPromptTaskType string  `json:"nextPromptTaskType"`
-	ProjectType        string  `json:"projectType"`
-	ChangeScope        string  `json:"changeScope"`
-	KeyLocations       string  `json:"keyLocations"`
-	JobID              *string `json:"jobId"`
-	CreatedAt          int64   `json:"createdAt"`
-	UpdatedAt          int64   `json:"updatedAt"`
+	ID                     string  `json:"id"`
+	TaskID                 string  `json:"taskId"`
+	ModelRunID             *string `json:"modelRunId"`
+	LocalPath              string  `json:"localPath"`
+	ModelName              string  `json:"modelName"`
+	RoundNumber            int     `json:"roundNumber"`
+	OriginalPrompt         string  `json:"originalPrompt"`
+	PromptText             string  `json:"promptText"`
+	PromptDifficulty       string  `json:"promptDifficulty"`
+	Status                 string  `json:"status"`
+	IsCompleted            *bool   `json:"isCompleted"`
+	IsSatisfied            *bool   `json:"isSatisfied"`
+	ReviewNotes            string  `json:"reviewNotes"`
+	DissatisfactionSummary string  `json:"dissatisfactionSummary"`
+	NextPrompt             string  `json:"nextPrompt"`
+	NextPromptTaskType     string  `json:"nextPromptTaskType"`
+	ProjectType            string  `json:"projectType"`
+	ChangeScope            string  `json:"changeScope"`
+	KeyLocations           string  `json:"keyLocations"`
+	JobID                  *string `json:"jobId"`
+	CreatedAt              int64   `json:"createdAt"`
+	UpdatedAt              int64   `json:"updatedAt"`
 }
 
 const aiReviewRoundColumns = `id, task_id, model_run_id, local_path, model_name,
 	round_number, original_prompt, prompt_text,
-	prompt_difficulty, status, is_completed, is_satisfied, review_notes, next_prompt,
+	prompt_difficulty, status, is_completed, is_satisfied, review_notes, dissatisfaction_summary, next_prompt,
 	next_prompt_task_type, project_type, change_scope, key_locations, job_id,
 	created_at, updated_at`
 
@@ -42,30 +43,30 @@ func (s *Store) CreateAiReviewRound(round AiReviewRound) error {
 		`INSERT INTO ai_review_rounds (
 			id, task_id, model_run_id, local_path, model_name,
 			round_number, original_prompt, prompt_text,
-			prompt_difficulty, status, is_completed, is_satisfied, review_notes, next_prompt,
+			prompt_difficulty, status, is_completed, is_satisfied, review_notes, dissatisfaction_summary, next_prompt,
 			next_prompt_task_type, project_type, change_scope, key_locations, job_id
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		round.ID, round.TaskID, round.ModelRunID, round.LocalPath, round.ModelName,
 		round.RoundNumber, round.OriginalPrompt, round.PromptText,
 		normalizePromptDifficulty(round.PromptDifficulty),
 		round.Status, boolPtrToNullableInt(round.IsCompleted), boolPtrToNullableInt(round.IsSatisfied),
-		round.ReviewNotes, round.NextPrompt,
+		round.ReviewNotes, round.DissatisfactionSummary, round.NextPrompt,
 		normalizeAiReviewTaskType(round.NextPromptTaskType),
 		round.ProjectType, round.ChangeScope, round.KeyLocations, round.JobID,
 	)
 	return err
 }
 
-func (s *Store) FinalizeAiReviewRound(id, status string, isCompleted, isSatisfied *bool, reviewNotes, nextPrompt, nextPromptTaskType, projectType, changeScope, keyLocations string) error {
+func (s *Store) FinalizeAiReviewRound(id, status string, isCompleted, isSatisfied *bool, reviewNotes, dissatisfactionSummary, nextPrompt, nextPromptTaskType, projectType, changeScope, keyLocations string) error {
 	res, err := s.DB.Exec(
 		`UPDATE ai_review_rounds
 		    SET status = ?, is_completed = ?, is_satisfied = ?,
-		        review_notes = ?, next_prompt = ?, next_prompt_task_type = ?,
+		        review_notes = ?, dissatisfaction_summary = ?, next_prompt = ?, next_prompt_task_type = ?,
 		        project_type = ?, change_scope = ?, key_locations = ?,
 		        updated_at = strftime('%s','now')
 		  WHERE id = ?`,
 		status, boolPtrToNullableInt(isCompleted), boolPtrToNullableInt(isSatisfied),
-		reviewNotes, nextPrompt,
+		reviewNotes, dissatisfactionSummary, nextPrompt,
 		normalizeAiReviewTaskType(nextPromptTaskType),
 		projectType, changeScope, keyLocations,
 		id,
@@ -85,6 +86,14 @@ func (s *Store) UpdateAiReviewRoundNotes(id, reviewNotes, nextPrompt, nextPrompt
 	res, err := s.DB.Exec(
 		`UPDATE ai_review_rounds SET review_notes = ?, next_prompt = ?, next_prompt_task_type = ?, updated_at = strftime('%s','now') WHERE id = ?`,
 		reviewNotes, nextPrompt, normalizeAiReviewTaskType(nextPromptTaskType), id,
+	)
+	return ensureRowsAffected(res, err, errs.FmtStoreReviewRoundNotFound, id)
+}
+
+func (s *Store) UpdateAiReviewRoundDissatisfactionSummary(id, dissatisfactionSummary string) error {
+	res, err := s.DB.Exec(
+		`UPDATE ai_review_rounds SET dissatisfaction_summary = ?, updated_at = strftime('%s','now') WHERE id = ?`,
+		strings.TrimSpace(dissatisfactionSummary), id,
 	)
 	return ensureRowsAffected(res, err, errs.FmtStoreReviewRoundNotFound, id)
 }
@@ -232,7 +241,7 @@ func scanAiReviewRound(scanner interface {
 	err := scanner.Scan(
 		&round.ID, &round.TaskID, &round.ModelRunID, &round.LocalPath, &round.ModelName,
 		&round.RoundNumber, &round.OriginalPrompt, &round.PromptText,
-		&round.PromptDifficulty, &round.Status, &isCompletedRaw, &isSatisfiedRaw, &round.ReviewNotes, &round.NextPrompt,
+		&round.PromptDifficulty, &round.Status, &isCompletedRaw, &isSatisfiedRaw, &round.ReviewNotes, &round.DissatisfactionSummary, &round.NextPrompt,
 		&round.NextPromptTaskType,
 		&round.ProjectType, &round.ChangeScope, &round.KeyLocations, &round.JobID,
 		&round.CreatedAt, &round.UpdatedAt,

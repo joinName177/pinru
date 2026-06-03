@@ -245,5 +245,9 @@ export type WailsServiceContract = {
       [roundID: string, reviewNotes: string, nextPrompt: string, nextPromptTaskType: string],
       void
     >;
+    SaveAiReviewRoundDissatisfactionSummary: ServiceMethod<
+      [roundID: string, dissatisfactionSummary: string],
+      void
+    >;
   };
 };

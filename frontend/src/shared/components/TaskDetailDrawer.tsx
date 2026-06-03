@@ -28,7 +28,7 @@ import {
 import { useAppStore, type Task, type TaskStatus } from '../../store';
 import type { AiReviewPayload, AiReviewResult, BackgroundJob } from '../../api/job';
 import type { AiReviewRoundFromDB, ModelRunFromDB, PromptGenerationStatus, TaskFromDB } from '../../api/task';
-import { saveAiReviewRoundNotes } from '../../api/task';
+import { saveAiReviewRoundDissatisfactionSummary, saveAiReviewRoundNotes } from '../../api/task';
 import type { GeneratePromptRequest, LlmProviderConfig } from '../../api/llm';
 import { polishText as polishTextApi } from '../../api/llm';
 import {
@@ -268,10 +268,14 @@ export default function TaskDetailDrawer({
   const [expandedRoundPrompts, setExpandedRoundPrompts] = useState<Set<string>>(new Set());
   const [polishingKeys, setPolishingKeys] = useState<Set<string>>(new Set());
   const [polishedNotes, setPolishedNotes] = useState<Record<string, string>>({});
+  const [polishedDissatisfactionSummaries, setPolishedDissatisfactionSummaries] = useState<Record<string, string>>({});
   const [polishError, setPolishError] = useState<string | null>(null);
   const [savingRoundNotes, setSavingRoundNotes] = useState<Set<string>>(new Set());
+  const [savingRoundSummaries, setSavingRoundSummaries] = useState<Set<string>>(new Set());
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editingNoteDraft, setEditingNoteDraft] = useState('');
+  const [editingSummaryId, setEditingSummaryId] = useState<string | null>(null);
+  const [editingSummaryDraft, setEditingSummaryDraft] = useState('');
   const [conversationEditMode, setConversationEditMode] = useState<string | null>(null);
   const [copiedConversation, setCopiedConversation] = useState<string | null>(null);
   const [sessionIdEditMode, setSessionIdEditMode] = useState<string | null>(null);
@@ -400,6 +404,28 @@ export default function TaskDetailDrawer({
       setTimeout(() => setPolishError(null), 4000);
     } finally {
       setSavingRoundNotes((prev) => {
+        const next = new Set(prev);
+        next.delete(roundId);
+        return next;
+      });
+    }
+  };
+
+  const handleSaveDissatisfactionSummary = async (
+    roundId: string,
+    originalSummary: string,
+  ) => {
+    if (savingRoundSummaries.has(roundId)) return;
+    setSavingRoundSummaries((prev) => new Set(prev).add(roundId));
+    try {
+      const summary = polishedDissatisfactionSummaries[roundId] ?? originalSummary;
+      await saveAiReviewRoundDissatisfactionSummary(roundId, summary);
+      setPolishedDissatisfactionSummaries((prev) => ({ ...prev, [roundId]: summary }));
+    } catch (err) {
+      setPolishError(err instanceof Error ? err.message : '保存失败');
+      setTimeout(() => setPolishError(null), 4000);
+    } finally {
+      setSavingRoundSummaries((prev) => {
         const next = new Set(prev);
         next.delete(roundId);
         return next;
@@ -1778,6 +1804,10 @@ export default function TaskDetailDrawer({
                             ? null
                             : reviewStatusPresentation(round.status, round.roundNumber);
                         const promptExpanded = expandedRoundPrompts.has(round.id);
+                        const summaryText =
+                          polishedDissatisfactionSummaries[round.id] ??
+                          round.dissatisfactionSummary ??
+                          '';
 
                         return (
                           <div
@@ -1961,6 +1991,132 @@ export default function TaskDetailDrawer({
                                           delete next[round.id];
                                           return next;
                                         })}
+                                        className="mt-1 text-[10px] text-zinc-500 hover:text-zinc-300"
+                                      >
+                                        恢复原文
+                                      </button>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            )}
+
+                            {/* 导出用不满意原因总结 */}
+                            {round.isSatisfied === false && (
+                              <div className="border-t border-zinc-800/40 px-3.5 py-3">
+                                <div className="flex items-center gap-1.5">
+                                  <p className="text-[10px] font-medium text-sky-300/75">不满意原因总结</p>
+                                  <CopyIconButton
+                                    value={summaryText}
+                                    label="复制不满意原因总结"
+                                    className="rounded p-0.5 text-zinc-500 transition hover:bg-zinc-800/40 hover:text-zinc-300"
+                                    iconClassName="h-3 w-3"
+                                  />
+                                  <button
+                                    type="button"
+                                    disabled={!summaryText.trim() || polishingKeys.has(`summary-${round.id}`)}
+                                    onClick={() =>
+                                      void handlePolish(
+                                        `summary-${round.id}`,
+                                        summaryText,
+                                        (polished) =>
+                                          setPolishedDissatisfactionSummaries((prev) => ({
+                                            ...prev,
+                                            [round.id]: polished,
+                                          })),
+                                        50,
+                                      )
+                                    }
+                                    title="润色"
+                                    className="rounded p-0.5 text-zinc-500 transition hover:bg-zinc-800/40 hover:text-zinc-300 disabled:opacity-40"
+                                  >
+                                    {polishingKeys.has(`summary-${round.id}`) ? (
+                                      <RefreshCw className="h-3 w-3 animate-spin" />
+                                    ) : (
+                                      <Wand2 className="h-3 w-3" />
+                                    )}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={savingRoundSummaries.has(round.id)}
+                                    onClick={() =>
+                                      void handleSaveDissatisfactionSummary(
+                                        round.id,
+                                        round.dissatisfactionSummary ?? '',
+                                      )
+                                    }
+                                    title="保存不满意原因总结"
+                                    className="rounded p-0.5 text-zinc-500 transition hover:bg-zinc-800/40 hover:text-zinc-300 disabled:opacity-40"
+                                  >
+                                    {savingRoundSummaries.has(round.id) ? (
+                                      <RefreshCw className="h-3 w-3 animate-spin" />
+                                    ) : (
+                                      <Check className="h-3 w-3" />
+                                    )}
+                                  </button>
+                                </div>
+                                {editingSummaryId === round.id ? (
+                                  <div className="mt-1.5 space-y-1.5">
+                                    <textarea
+                                      autoFocus
+                                      rows={5}
+                                      value={editingSummaryDraft}
+                                      onChange={(e) => setEditingSummaryDraft(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Escape') {
+                                          setEditingSummaryId(null);
+                                        }
+                                      }}
+                                      className="w-full resize-y rounded-lg border border-sky-500/30 bg-black/20 px-2.5 py-2 text-xs leading-5 text-sky-50/90 outline-none transition focus:border-sky-500/50 focus:ring-1 focus:ring-sky-500/20"
+                                    />
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setPolishedDissatisfactionSummaries((prev) => ({
+                                            ...prev,
+                                            [round.id]: editingSummaryDraft.trim(),
+                                          }));
+                                          setEditingSummaryId(null);
+                                        }}
+                                        className="text-[10px] text-sky-300/75 hover:text-sky-200"
+                                      >
+                                        确认
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditingSummaryId(null)}
+                                        className="text-[10px] text-zinc-500 hover:text-zinc-300"
+                                      >
+                                        取消
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <p
+                                      title="双击编辑"
+                                      onDoubleClick={() => {
+                                        setEditingSummaryId(round.id);
+                                        setEditingSummaryDraft(summaryText);
+                                      }}
+                                      className={clsx(
+                                        'mt-1.5 cursor-text whitespace-pre-wrap text-xs leading-5',
+                                        summaryText.trim() ? 'text-sky-50/80' : 'text-zinc-500',
+                                      )}
+                                    >
+                                      {summaryText.trim() || '暂无总结，可双击手动填写后保存。'}
+                                    </p>
+                                    {polishedDissatisfactionSummaries[round.id] !== undefined && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setPolishedDissatisfactionSummaries((prev) => {
+                                            const next = { ...prev };
+                                            delete next[round.id];
+                                            return next;
+                                          })
+                                        }
                                         className="mt-1 text-[10px] text-zinc-500 hover:text-zinc-300"
                                       >
                                         恢复原文
@@ -2837,6 +2993,8 @@ function parseAiReviewResult(raw: string | null | undefined): AiReviewResult | n
       reviewStatus: parsed.reviewStatus,
       reviewRound: typeof parsed.reviewRound === 'number' ? parsed.reviewRound : 0,
       reviewNotes: typeof parsed.reviewNotes === 'string' ? parsed.reviewNotes : '',
+      dissatisfactionSummary:
+        typeof parsed.dissatisfactionSummary === 'string' ? parsed.dissatisfactionSummary : undefined,
       nextPrompt: typeof parsed.nextPrompt === 'string' ? parsed.nextPrompt : '',
       nextPromptTaskType: typeof parsed.nextPromptTaskType === 'string' ? parsed.nextPromptTaskType : undefined,
       isCompleted: typeof parsed.isCompleted === 'boolean' ? parsed.isCompleted : undefined,
@@ -2891,6 +3049,8 @@ function parseAiReviewProgressDetails(
       reviewStatus: parsed.reviewStatus === 'pass' || parsed.reviewStatus === 'warning' ? parsed.reviewStatus : 'warning',
       reviewRound: typeof parsed.reviewRound === 'number' ? parsed.reviewRound : 0,
       reviewNotes: typeof parsed.reviewNotes === 'string' ? parsed.reviewNotes : '',
+      dissatisfactionSummary:
+        typeof parsed.dissatisfactionSummary === 'string' ? parsed.dissatisfactionSummary : undefined,
       nextPrompt: typeof parsed.nextPrompt === 'string' ? parsed.nextPrompt : '',
       nextPromptTaskType: typeof parsed.nextPromptTaskType === 'string' ? parsed.nextPromptTaskType : undefined,
       isCompleted: typeof parsed.isCompleted === 'boolean' ? parsed.isCompleted : undefined,

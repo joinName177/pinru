@@ -1010,20 +1010,21 @@ type AiReviewRoundSnapshot struct {
 
 // AiReviewResult 记录一次 ai_review 任务的输出。
 type AiReviewResult struct {
-	ReviewRoundID      string `json:"reviewRoundId"`
-	ModelRunID         string `json:"modelRunId"`
-	ModelName          string `json:"modelName"`
-	PromptDifficulty   string `json:"promptDifficulty"`
-	ReviewStatus       string `json:"reviewStatus"`
-	ReviewRound        int    `json:"reviewRound"`
-	ReviewNotes        string `json:"reviewNotes"`
-	NextPrompt         string `json:"nextPrompt"`
-	NextPromptTaskType string `json:"nextPromptTaskType"`
-	IsCompleted        bool   `json:"isCompleted"`
-	IsSatisfied        bool   `json:"isSatisfied"`
-	ProjectType        string `json:"projectType"`
-	ChangeScope        string `json:"changeScope"`
-	KeyLocations       string `json:"keyLocations"`
+	ReviewRoundID          string `json:"reviewRoundId"`
+	ModelRunID             string `json:"modelRunId"`
+	ModelName              string `json:"modelName"`
+	PromptDifficulty       string `json:"promptDifficulty"`
+	ReviewStatus           string `json:"reviewStatus"`
+	ReviewRound            int    `json:"reviewRound"`
+	ReviewNotes            string `json:"reviewNotes"`
+	DissatisfactionSummary string `json:"dissatisfactionSummary"`
+	NextPrompt             string `json:"nextPrompt"`
+	NextPromptTaskType     string `json:"nextPromptTaskType"`
+	IsCompleted            bool   `json:"isCompleted"`
+	IsSatisfied            bool   `json:"isSatisfied"`
+	ProjectType            string `json:"projectType"`
+	ChangeScope            string `json:"changeScope"`
+	KeyLocations           string `json:"keyLocations"`
 }
 
 func (s *JobService) executeAiReview(
@@ -1125,7 +1126,7 @@ func (s *JobService) executeAiReview(
 				"error", out.err,
 			)
 			reviewNotes := formatAiReviewExecutionFailure(out.err)
-			if err := s.store.FinalizeAiReviewRound(round.ID, "warning", boolPtr(false), boolPtr(false), reviewNotes, "", "", "", "", ""); err != nil {
+			if err := s.store.FinalizeAiReviewRound(round.ID, "warning", boolPtr(false), boolPtr(false), reviewNotes, "", "", "", "", "", ""); err != nil {
 				slog.Error("failed to persist ai review round error state", "review_round_id", round.ID, "error", err)
 			}
 			if modelRunID != "" {
@@ -1157,12 +1158,55 @@ func (s *JobService) executeAiReview(
 		finalIsCompleted = false
 	}
 
+	dissatisfactionSummary := ""
+	if !passed {
+		s.emitProgress(jobID, req.JobType, req.TaskID, "running", 82,
+			strPtr(fmt.Sprintf("[%s] 正在整理不满意原因…", label)),
+			nil,
+		)
+		summary, err := s.cliSvc.RunCodexDissatisfactionSummary(ctx, appcli.DissatisfactionSummaryRequest{
+			LocalPath:      payload.LocalPath,
+			ModelName:      strings.TrimSpace(round.ModelName),
+			OriginalPrompt: strings.TrimSpace(round.OriginalPrompt),
+			CurrentPrompt:  strings.TrimSpace(round.PromptText),
+			ReviewNotes:    strings.TrimSpace(lastResult.ReviewNotes),
+			ProjectType:    strings.TrimSpace(lastResult.ProjectType),
+			ChangeScope:    strings.TrimSpace(lastResult.ChangeScope),
+			KeyLocations:   strings.TrimSpace(lastResult.KeyLocations),
+		}, func(line string) {
+			if isStructuredAiReviewLine(line) {
+				return
+			}
+			s.emitProgress(jobID, req.JobType, req.TaskID, "running", 84,
+				strPtr(fmt.Sprintf("[%s] %s", label, line)),
+				nil,
+			)
+		})
+		if err != nil {
+			if ctx.Err() != nil {
+				return jobExecutionResult{}, ctx.Err()
+			}
+			slog.Warn("failed to summarize ai review dissatisfaction",
+				"job_id", jobID,
+				"review_round_id", round.ID,
+				"error", err,
+			)
+			s.emitProgress(jobID, req.JobType, req.TaskID, "running", 86,
+				strPtr(fmt.Sprintf("[%s] 不满意原因整理失败，保留原始复审点评", label)),
+				nil,
+			)
+		} else if summary != nil {
+			dissatisfactionSummary = strings.TrimSpace(summary.Summary)
+		}
+	}
+
 	if err := s.store.FinalizeAiReviewRound(
 		round.ID,
 		finalStatus,
 		boolPtr(finalIsCompleted),
 		boolPtr(lastResult.IsSatisfied),
 		strings.TrimSpace(lastResult.ReviewNotes),
+		dissatisfactionSummary,
 		strings.TrimSpace(lastResult.NextPrompt),
 		resolveNextPromptTaskType(lastResult.NextPrompt, lastResult.NextPromptTaskType),
 		strings.TrimSpace(lastResult.ProjectType),
@@ -1205,20 +1249,21 @@ func (s *JobService) executeAiReview(
 
 	nextPromptTaskType := resolveNextPromptTaskType(lastResult.NextPrompt, lastResult.NextPromptTaskType)
 	result := AiReviewResult{
-		ReviewRoundID:      round.ID,
-		ModelRunID:         modelRunID,
-		ModelName:          payload.ModelName,
-		PromptDifficulty:   strings.TrimSpace(round.PromptDifficulty),
-		ReviewStatus:       finalStatus,
-		ReviewRound:        roundNumber,
-		ReviewNotes:        strings.TrimSpace(lastResult.ReviewNotes),
-		NextPrompt:         strings.TrimSpace(lastResult.NextPrompt),
-		NextPromptTaskType: nextPromptTaskType,
-		IsCompleted:        finalIsCompleted,
-		IsSatisfied:        lastResult.IsSatisfied,
-		ProjectType:        strings.TrimSpace(lastResult.ProjectType),
-		ChangeScope:        strings.TrimSpace(lastResult.ChangeScope),
-		KeyLocations:       strings.TrimSpace(lastResult.KeyLocations),
+		ReviewRoundID:          round.ID,
+		ModelRunID:             modelRunID,
+		ModelName:              payload.ModelName,
+		PromptDifficulty:       strings.TrimSpace(round.PromptDifficulty),
+		ReviewStatus:           finalStatus,
+		ReviewRound:            roundNumber,
+		ReviewNotes:            strings.TrimSpace(lastResult.ReviewNotes),
+		DissatisfactionSummary: dissatisfactionSummary,
+		NextPrompt:             strings.TrimSpace(lastResult.NextPrompt),
+		NextPromptTaskType:     nextPromptTaskType,
+		IsCompleted:            finalIsCompleted,
+		IsSatisfied:            lastResult.IsSatisfied,
+		ProjectType:            strings.TrimSpace(lastResult.ProjectType),
+		ChangeScope:            strings.TrimSpace(lastResult.ChangeScope),
+		KeyLocations:           strings.TrimSpace(lastResult.KeyLocations),
 	}
 	outputJSON, _ := json.Marshal(result)
 	outputStr := string(outputJSON)

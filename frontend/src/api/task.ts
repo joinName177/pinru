@@ -146,6 +146,7 @@ export interface AiReviewRoundFromDB {
   isCompleted: boolean | null;
   isSatisfied: boolean | null;
   reviewNotes: string;
+  dissatisfactionSummary: string;
   nextPrompt: string;
   nextPromptTaskType: string;
   projectType: string;
@@ -261,6 +262,13 @@ export async function saveAiReviewRoundNotes(
   nextPromptTaskType: string,
 ): Promise<void> {
   return callService('TaskService', 'SaveAiReviewRoundNotes', roundID, reviewNotes, nextPrompt, nextPromptTaskType);
+}
+
+export async function saveAiReviewRoundDissatisfactionSummary(
+  roundID: string,
+  dissatisfactionSummary: string,
+): Promise<void> {
+  return callService('TaskService', 'SaveAiReviewRoundDissatisfactionSummary', roundID, dissatisfactionSummary);
 }
 
 export async function listTaskChildDirectories(taskId: string): Promise<TaskChildDirectory[]> {
