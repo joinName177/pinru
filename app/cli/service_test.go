@@ -253,6 +253,18 @@ func TestApplyEnvOverrides(t *testing.T) {
 	}
 }
 
+func TestRedactClaudePromptArg(t *testing.T) {
+	args := []string{"-p", "secret prompt", "--model", "deepseek-v4-pro"}
+	got := redactClaudePromptArg(args)
+	want := []string{"-p", "<prompt redacted>", "--model", "deepseek-v4-pro"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("redactClaudePromptArg() = %#v, want %#v", got, want)
+	}
+	if args[1] != "secret prompt" {
+		t.Fatalf("redactClaudePromptArg mutated input args: %#v", args)
+	}
+}
+
 func TestPgCodeReviewSchemaDisallowsAdditionalProperties(t *testing.T) {
 	var schema map[string]interface{}
 	if err := json.Unmarshal(pgCodeReviewSchema, &schema); err != nil {

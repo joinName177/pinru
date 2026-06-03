@@ -253,6 +253,8 @@ func (s *CliService) StartClaude(req StartClaudeRequest) (*StartClaudeResponse, 
 	// Stream stdout and stderr concurrently
 	var wg sync.WaitGroup
 	wg.Add(2)
+	var recentMu sync.Mutex
+	recentOutput := make([]string, 0, 8)
 
 	streamReader := func(r io.Reader, prefix string) {
 		defer wg.Done()
@@ -262,6 +264,7 @@ func (s *CliService) StartClaude(req StartClaudeRequest) (*StartClaudeResponse, 
 			if prefix != "" {
 				line = prefix + line
 			}
+			appendRecentCodexOutput(&recentMu, &recentOutput, line)
 			sess.append(line)
 			// Emit each line as a real-time event so the frontend can display
 			// output without polling.
@@ -282,6 +285,12 @@ func (s *CliService) StartClaude(req StartClaudeRequest) (*StartClaudeResponse, 
 				errMsg = "执行超时（10 分钟）"
 			} else {
 				errMsg = waitErr.Error()
+				if summary := formatRecentCodexOutput(recentOutput); summary != "" {
+					errMsg += "：" + summary
+				}
+				if logPath := writeClaudeFailureLog(req, args, sessionID, waitErr, recentOutput); logPath != "" {
+					errMsg += "；日志：" + logPath
+				}
 			}
 		}
 		// Emit done event before marking session finished so listeners receive
@@ -291,6 +300,64 @@ func (s *CliService) StartClaude(req StartClaudeRequest) (*StartClaudeResponse, 
 	}()
 
 	return &StartClaudeResponse{SessionID: sessionID}, nil
+}
+
+func writeClaudeFailureLog(req StartClaudeRequest, args []string, sessionID string, err error, lines []string) string {
+	home, homeErr := os.UserHomeDir()
+	if homeErr != nil {
+		return ""
+	}
+	logDir := filepath.Join(home, ".pinru", "logs", "claude-failures")
+	if mkdirErr := os.MkdirAll(logDir, 0o755); mkdirErr != nil {
+		return ""
+	}
+	timestamp := time.Now().Format("20060102-150405")
+	logPath := filepath.Join(logDir, fmt.Sprintf("%s-%s.log", timestamp, sessionID))
+
+	var sb strings.Builder
+	sb.WriteString("time: ")
+	sb.WriteString(time.Now().Format(time.RFC3339))
+	sb.WriteString("\n")
+	sb.WriteString("session_id: ")
+	sb.WriteString(sessionID)
+	sb.WriteString("\n")
+	sb.WriteString("work_dir: ")
+	sb.WriteString(req.WorkDir)
+	sb.WriteString("\n")
+	sb.WriteString("model: ")
+	sb.WriteString(req.Model)
+	sb.WriteString("\n")
+	sb.WriteString("permission_mode: ")
+	sb.WriteString(req.PermissionMode)
+	sb.WriteString("\n")
+	sb.WriteString("error: ")
+	sb.WriteString(strings.TrimSpace(fmt.Sprint(err)))
+	sb.WriteString("\n")
+	sb.WriteString("args: ")
+	sb.WriteString(strings.Join(redactClaudePromptArg(args), " "))
+	sb.WriteString("\n\n")
+	sb.WriteString("recent_output:\n")
+	for _, line := range lines {
+		sb.WriteString(line)
+		sb.WriteString("\n")
+	}
+
+	if writeErr := os.WriteFile(logPath, []byte(sb.String()), 0o644); writeErr != nil {
+		return ""
+	}
+	return logPath
+}
+
+func redactClaudePromptArg(args []string) []string {
+	result := make([]string, len(args))
+	copy(result, args)
+	for i := 0; i < len(result)-1; i++ {
+		if result[i] == "-p" {
+			result[i+1] = "<prompt redacted>"
+			i++
+		}
+	}
+	return result
 }
 
 // PollOutput returns new output lines since the given offset.
