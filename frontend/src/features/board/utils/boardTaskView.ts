@@ -1,3 +1,4 @@
+import type { ReviewStatus } from '../../../api/task';
 import type { Task, TaskStatus, TaskType } from '../../../store';
 import { extractTaskClaimSequence } from '../../../shared/lib/taskId';
 import { normalizeTaskTypeName } from '../../../shared/lib/taskTypes';
@@ -20,11 +21,13 @@ export function filterBoardTasks(
     activeTypes,
     activeStages,
     activeRounds,
+    activeReviewStatuses,
   }: {
     search: string;
     activeTypes: Set<TaskType>;
     activeStages: Set<TaskStatus>;
     activeRounds: Set<number>;
+    activeReviewStatuses?: Set<ReviewStatus>;
   },
 ) {
   const normalizedSearch = search.trim().toLowerCase();
@@ -38,8 +41,12 @@ export function filterBoardTasks(
     const matchType = activeTypes.size === 0 || activeTypes.has(normalizeTaskTypeName(task.taskType));
     const matchStage = activeStages.size === 0 || activeStages.has(task.status);
     const matchRound = activeRounds.size === 0 || activeRounds.has(task.executionRounds);
+    const matchReviewStatus =
+      !activeReviewStatuses ||
+      activeReviewStatuses.size === 0 ||
+      activeReviewStatuses.has(task.aiReviewStatus);
 
-    return matchSearch && matchType && matchStage && matchRound;
+    return matchSearch && matchType && matchStage && matchRound && matchReviewStatus;
   });
 }
 

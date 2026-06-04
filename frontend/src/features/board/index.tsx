@@ -20,7 +20,7 @@ import {
   deleteAiReviewJob,
   type JobProgressEvent,
 } from '../../api/job';
-import type { ModelRunFromDB, TaskChildDirectory } from '../../api/task';
+import type { ModelRunFromDB, ReviewStatus, TaskChildDirectory } from '../../api/task';
 import {
   BatchActionBar,
 } from './components/BatchActionBar';
@@ -133,6 +133,7 @@ export default function Board() {
   const [activeTypes, setActiveTypes]   = useState<Set<TaskType>>(new Set());
   const [activeStages, setActiveStages] = useState<Set<TaskStatus>>(new Set());
   const [activeRounds, setActiveRounds] = useState<Set<number>>(new Set());
+  const [activeReviewStatuses, setActiveReviewStatuses] = useState<Set<ReviewStatus>>(new Set());
   const [cardSize, setCardSize]         = useState<CardSize>(loadCardSizeFromStorage);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
     loadExpandedGroupsFromStorage,
@@ -174,6 +175,9 @@ export default function Board() {
   const toggleRound = (round: number) =>
     setActiveRounds(prev => { const n = new Set(prev); n.has(round) ? n.delete(round) : n.add(round); return n; });
 
+  const toggleReviewStatus = (status: ReviewStatus) =>
+    setActiveReviewStatuses(prev => { const n = new Set(prev); n.has(status) ? n.delete(status) : n.add(status); return n; });
+
   const toggleGroupCollapse = (groupKey: string) =>
     setExpandedGroups((prev) => {
       const next = new Set(prev);
@@ -191,11 +195,13 @@ export default function Board() {
     activeTypes.size > 0 ||
     activeStages.size > 0 ||
     activeRounds.size > 0 ||
+    activeReviewStatuses.size > 0 ||
     search.length > 0;
   const clearFilters = () => {
     setActiveTypes(new Set());
     setActiveStages(new Set());
     setActiveRounds(new Set());
+    setActiveReviewStatuses(new Set());
     setSearch('');
   };
 
@@ -693,18 +699,22 @@ export default function Board() {
   }, [availableExecutionRounds]);
 
   const filtered = useMemo(
-    () => filterBoardTasks(tasks, { search, activeTypes, activeStages, activeRounds }),
-    [tasks, search, activeTypes, activeStages, activeRounds],
+    () => filterBoardTasks(tasks, { search, activeTypes, activeStages, activeRounds, activeReviewStatuses }),
+    [tasks, search, activeTypes, activeStages, activeRounds, activeReviewStatuses],
   );
 
   // 各维度的计数基准：排除自身维度，反映其他维度当前筛选的结果
   const tasksForStageCount = useMemo(
-    () => filterBoardTasks(tasks, { search, activeTypes, activeStages: new Set(), activeRounds }),
-    [tasks, search, activeTypes, activeRounds],
+    () => filterBoardTasks(tasks, { search, activeTypes, activeStages: new Set(), activeRounds, activeReviewStatuses }),
+    [tasks, search, activeTypes, activeRounds, activeReviewStatuses],
   );
   const tasksForRoundCount = useMemo(
-    () => filterBoardTasks(tasks, { search, activeTypes, activeStages, activeRounds: new Set() }),
-    [tasks, search, activeTypes, activeStages],
+    () => filterBoardTasks(tasks, { search, activeTypes, activeStages, activeRounds: new Set(), activeReviewStatuses }),
+    [tasks, search, activeTypes, activeStages, activeReviewStatuses],
+  );
+  const tasksForReviewStatusCount = useMemo(
+    () => filterBoardTasks(tasks, { search, activeTypes, activeStages, activeRounds, activeReviewStatuses: new Set() }),
+    [tasks, search, activeTypes, activeStages, activeRounds],
   );
 
   const sortedTasks = useMemo(() => sortBoardTasks(filtered, sortBy), [filtered, sortBy]);
@@ -791,12 +801,14 @@ export default function Board() {
         activeTypes={activeTypes}
         activeStages={activeStages}
         activeRounds={activeRounds}
+        activeReviewStatuses={activeReviewStatuses}
         cardSize={cardSize}
         hasFilters={hasFilters}
         availableExecutionRounds={availableExecutionRounds}
         tasks={tasks}
         tasksForStageCount={tasksForStageCount}
         tasksForRoundCount={tasksForRoundCount}
+        tasksForReviewStatusCount={tasksForReviewStatusCount}
         sortedTasks={sortedTasks}
         groupedTasks={groupedTasks}
         visibleProjectTaskSummaries={visibleProjectTaskSummaries}
@@ -811,6 +823,7 @@ export default function Board() {
         onToggleType={toggleType}
         onToggleStage={toggleStage}
         onToggleRound={toggleRound}
+        onToggleReviewStatus={toggleReviewStatus}
         onClearFilters={clearFilters}
         onToggleGroupCollapse={toggleGroupCollapse}
         onSelectTask={detail.setSelected}

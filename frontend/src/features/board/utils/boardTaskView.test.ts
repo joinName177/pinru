@@ -46,6 +46,24 @@ describe('boardTaskView helpers', () => {
     ).toEqual(['task-a']);
   });
 
+  it('filters tasks by AI review status', () => {
+    const tasks = [
+      createTask({ id: 'task-a', aiReviewStatus: 'none' }),
+      createTask({ id: 'task-b', aiReviewStatus: 'warning' }),
+      createTask({ id: 'task-c', aiReviewStatus: 'pass' }),
+    ];
+
+    expect(
+      filterBoardTasks(tasks, {
+        search: '',
+        activeTypes: new Set(),
+        activeStages: new Set(),
+        activeRounds: new Set(),
+        activeReviewStatuses: new Set(['warning']),
+      }).map((task) => task.id),
+    ).toEqual(['task-b']);
+  });
+
   it('groups repeated project labels inside each task type and keeps single labels in the normal flow', () => {
     const tasks = [
       createTask({ id: 'task-b', projectId: '1002', projectName: 'Beta 2', createdAt: 2, executionRounds: 2, taskType: 'Feature迭代' }),

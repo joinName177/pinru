@@ -11,6 +11,7 @@ import {
 import { motion } from 'motion/react';
 import TaskGroupSection from '../../../shared/components/TaskGroupSection';
 import TaskTypeOverviewBar from '../../../shared/components/TaskTypeOverviewBar';
+import type { ReviewStatus } from '../../../api/task';
 import type { Task, TaskStatus, TaskType } from '../../../store';
 import { getTaskTypePresentation } from '../../../api/config';
 import type { TaskTypeOverviewSummary } from '../../../shared/lib/taskTypeOverview';
@@ -27,6 +28,38 @@ const CARD_SIZE_OPTIONS: Array<{
   { size: 'lg', icon: LayoutGrid, title: '宽松' },
 ];
 
+const REVIEW_STATUS_FILTERS: Array<{
+  value: ReviewStatus;
+  label: string;
+  activeClassName: string;
+  activeDotClassName: string;
+}> = [
+  {
+    value: 'none',
+    label: '未复审',
+    activeClassName: 'bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-200 border-stone-300 dark:border-stone-600',
+    activeDotClassName: 'bg-stone-500 dark:bg-stone-300',
+  },
+  {
+    value: 'running',
+    label: '复审中',
+    activeClassName: 'bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-500/20',
+    activeDotClassName: 'bg-sky-500',
+  },
+  {
+    value: 'warning',
+    label: '复审未过',
+    activeClassName: 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/20',
+    activeDotClassName: 'bg-amber-500',
+  },
+  {
+    value: 'pass',
+    label: '复审通过',
+    activeClassName: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/20',
+    activeDotClassName: 'bg-emerald-500',
+  },
+];
+
 export function BoardMainContent({
   search,
   sortBy,
@@ -35,12 +68,14 @@ export function BoardMainContent({
   activeTypes,
   activeStages,
   activeRounds,
+  activeReviewStatuses,
   cardSize,
   hasFilters,
   availableExecutionRounds,
   tasks,
   tasksForStageCount,
   tasksForRoundCount,
+  tasksForReviewStatusCount,
   sortedTasks,
   groupedTasks,
   visibleProjectTaskSummaries,
@@ -55,6 +90,7 @@ export function BoardMainContent({
   onToggleType,
   onToggleStage,
   onToggleRound,
+  onToggleReviewStatus,
   onClearFilters,
   onToggleGroupCollapse,
   onSelectTask,
@@ -72,12 +108,14 @@ export function BoardMainContent({
   activeTypes: Set<TaskType>;
   activeStages: Set<TaskStatus>;
   activeRounds: Set<number>;
+  activeReviewStatuses: Set<ReviewStatus>;
   cardSize: CardSize;
   hasFilters: boolean;
   availableExecutionRounds: number[];
   tasks: Task[];
   tasksForStageCount: Task[];
   tasksForRoundCount: Task[];
+  tasksForReviewStatusCount: Task[];
   sortedTasks: Task[];
   groupedTasks: BoardTaskGroup[];
   visibleProjectTaskSummaries: TaskTypeOverviewSummary[];
@@ -92,6 +130,7 @@ export function BoardMainContent({
   onToggleType: (taskType: TaskType) => void;
   onToggleStage: (status: TaskStatus) => void;
   onToggleRound: (round: number) => void;
+  onToggleReviewStatus: (status: ReviewStatus) => void;
   onClearFilters: () => void;
   onToggleGroupCollapse: (groupKey: string) => void;
   onSelectTask: (task: Task) => void;
@@ -263,6 +302,42 @@ export function BoardMainContent({
               清除
             </button>
           )}
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap mt-2">
+          <span className="text-[11px] font-bold uppercase tracking-widest text-stone-400 w-14 flex-shrink-0">
+            复审
+          </span>
+          {REVIEW_STATUS_FILTERS.map((item) => {
+            const count = tasksForReviewStatusCount.filter((task) => task.aiReviewStatus === item.value).length;
+            const active = activeReviewStatuses.has(item.value);
+
+            return (
+              <button
+                key={item.value}
+                onClick={() => onToggleReviewStatus(item.value)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-default ${
+                  active
+                    ? `${item.activeClassName} shadow-sm scale-[1.02]`
+                    : 'bg-white dark:bg-stone-900 text-stone-500 dark:text-stone-400 border-stone-200 dark:border-stone-700 hover:border-stone-300 dark:hover:border-stone-600'
+                }`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                    active ? item.activeDotClassName : 'bg-stone-300 dark:bg-stone-600'
+                  }`}
+                />
+                {item.label}
+                <span
+                  className={`tabular-nums font-bold ${
+                    active ? 'opacity-75' : 'text-stone-400 dark:text-stone-500'
+                  }`}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
         </div>
 
         {availableExecutionRounds.length > 0 && (

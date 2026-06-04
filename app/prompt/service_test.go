@@ -106,6 +106,27 @@ func TestGenerateCustomProjectPromptDocumentsWritesMarkdownToCustomRoot(t *testi
 	}
 }
 
+func TestBuildCustomProjectPromptDocumentPromptUsesBalancedDifficultyRules(t *testing.T) {
+	prompt := buildCustomProjectPromptDocumentPrompt("zw-001", nil)
+
+	requiredSnippets := []string{
+		"简单约 3 条、一般约 10 条、困难约 8 条",
+		"默认不要生成地狱",
+		"一般题必须带一个真实链路压力",
+		"困难题必须同时包含两个以上压力点",
+		"简单题建议 40-80 字，一般题建议 70-110 字，困难题建议 90-140 字",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(prompt, snippet) {
+			t.Fatalf("custom prompt document prompt missing %q:\n%s", snippet, prompt)
+		}
+	}
+
+	if strings.Contains(prompt, "简单约 8 条") || strings.Contains(prompt, "困难约 3 条") {
+		t.Fatalf("custom prompt document prompt still contains old low-complexity distribution:\n%s", prompt)
+	}
+}
+
 func TestSaveTaskPromptSyncsExistingArtifact(t *testing.T) {
 	testStore := testutil.OpenTestStore(t)
 	defer testStore.Close()

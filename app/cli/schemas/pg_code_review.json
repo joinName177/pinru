@@ -10,7 +10,7 @@
     },
     "isSatisfied": {
       "type": "boolean",
-      "description": "是否满意：提示词的主要求已覆盖且质量达到 90 分及以上；80%左右只能算完成但不满意"
+      "description": "是否满意：提示词的主要求已覆盖且质量达到 90 分及以上；80%左右只能算完成但不满意。Feature迭代、0-1代码生成、Bug修复不能只因看到相关代码改动就满意，必须能核清入口、数据来源/接口返回、状态或持久化变化、前端展示/用户反馈等主链路；关键链路证据不足时填 false。代码理解类按文档交付物覆盖度判断，可相对宽松"
     },
     "projectType": {
       "type": "string",
@@ -23,11 +23,11 @@
     },
     "reviewNotes": {
       "type": "string",
-      "description": "复审点评；满意时也不能只填「无」，必须简要说明已核验的核心要求和关键代码证据；当 isCompleted=false 或 isSatisfied=false 时，必须回指 original_prompt/current_prompt 中对应的具体句子、短语或明确要求，不能用未写明的扩展点作为主缺口"
+      "description": "复审点评；满意时也不能只填「无」，必须简要说明已核验的核心要求、关键代码证据和主链路闭环依据；当 isCompleted=false 或 isSatisfied=false 时，必须回指 original_prompt/current_prompt 中对应的具体句子、短语或明确要求，不能用未写明的扩展点作为主缺口。若仅静态取证且无法确认 Feature/Bug/0-1 的关键主链路，需说明缺少哪段链路证据并判定不满意；不满意时必须给出具体不满意原因，不能只写“证据不足/测试不足/未运行页面”等泛化结论"
     },
     "nextPrompt": {
       "type": "string",
-      "description": "下一轮提示词建议，满意时填「无」；只允许围绕 reviewNotes 已回指的主缺口给出最小修复指令，不得扩展额外需求"
+      "description": "下一轮提示词建议，满意时填「无」；只允许围绕 reviewNotes 已回指的主缺口给出最小修复指令，不得扩展额外需求；不满意时必须给出可执行的最小修复词，不能留空或只写“重新检查”"
     },
     "nextPromptTaskType": {
       "type": "string",

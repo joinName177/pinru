@@ -504,6 +504,15 @@ func TestBuildCodexReviewPromptIncludesEvidenceGuardrails(t *testing.T) {
 	if !strings.Contains(prompt, "nextPrompt 只能围绕主缺口补充最小修复指令") {
 		t.Fatalf("prompt missing focused nextPrompt rule: %q", prompt)
 	}
+	if !strings.Contains(prompt, "代码理解类可以按文档交付物判断") {
+		t.Fatalf("prompt missing code-understanding relaxed rule: %q", prompt)
+	}
+	if !strings.Contains(prompt, "Feature迭代、0-1代码生成、Bug修复必须收紧") {
+		t.Fatalf("prompt missing stricter feature/bug rule: %q", prompt)
+	}
+	if !strings.Contains(prompt, "未运行页面或接口、仅静态取证") {
+		t.Fatalf("prompt missing static-evidence caveat: %q", prompt)
+	}
 	if strings.Contains(prompt, "prompt_sources") || strings.Contains(prompt, "prompt_candidates") {
 		t.Fatalf("prompt should not reference local prompt sources: %q", prompt)
 	}
@@ -610,5 +619,45 @@ func TestApplyCodexReviewEvidenceGuardsRejectsEmptyPassingReviewNotes(t *testing
 	}
 	if !strings.Contains(result.ReviewNotes, "通过依据不足") {
 		t.Fatalf("ReviewNotes = %q, want pass evidence guard note", result.ReviewNotes)
+	}
+	if strings.TrimSpace(result.NextPrompt) == "" || strings.TrimSpace(result.NextPrompt) == "无" {
+		t.Fatalf("NextPrompt = %q, want concrete repair prompt", result.NextPrompt)
+	}
+}
+
+func TestApplyCodexReviewEvidenceGuardsDowngradesHighRiskStaticPassWithPrompt(t *testing.T) {
+	repoDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoDir, "frontend.js"), []byte("console.log('ws')\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(frontend.js) error = %v", err)
+	}
+
+	result := CodexReviewResult{
+		IsCompleted:        true,
+		IsSatisfied:        true,
+		ReviewNotes:        "已核验 WebSocket 自动同步相关代码。未运行页面或接口，仅静态取证。",
+		NextPrompt:         "无",
+		NextPromptTaskType: "未归类",
+		KeyLocations:       "frontend.js:1",
+	}
+
+	applyCodexReviewEvidenceGuards(repoDir, &pgCodeProjectContext{
+		Exists: true,
+		Git: pgCodeGitContext{
+			InGit:        true,
+			ChangedFiles: []string{"frontend.js"},
+		},
+	}, &result)
+
+	if !result.IsCompleted {
+		t.Fatalf("IsCompleted = false, want preserved true")
+	}
+	if result.IsSatisfied {
+		t.Fatalf("IsSatisfied = true, want downgraded false for high-risk static pass")
+	}
+	if !strings.Contains(result.ReviewNotes, "自动同步链路证据不足") {
+		t.Fatalf("ReviewNotes = %q, want concrete high-risk reason", result.ReviewNotes)
+	}
+	if !strings.Contains(result.NextPrompt, "自动同步链路") || !strings.Contains(result.NextPrompt, "WebSocket") {
+		t.Fatalf("NextPrompt = %q, want concrete repair prompt", result.NextPrompt)
 	}
 }
