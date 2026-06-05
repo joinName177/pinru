@@ -300,16 +300,19 @@ export default function TaskDetailDrawer({
     () => (Array.isArray(selectedModelRuns) ? selectedModelRuns : []),
     [selectedModelRuns],
   );
-  const codePushRecordByRunId = useMemo(() => {
-    const map = new Map<string, CodePushRecord>();
+  const codePushRecordsByRunId = useMemo(() => {
+    const map = new Map<string, CodePushRecord[]>();
     const records = Array.isArray(selectedCodePushRecords) ? selectedCodePushRecords : [];
     records
       .slice()
       .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
       .forEach((record) => {
-        if (record.modelRunId && !map.has(record.modelRunId)) {
-          map.set(record.modelRunId, record);
+        if (!record.modelRunId) {
+          return;
         }
+        const list = map.get(record.modelRunId) ?? [];
+        list.push(record);
+        map.set(record.modelRunId, list);
       });
     return map;
   }, [selectedCodePushRecords]);
@@ -1548,7 +1551,11 @@ export default function TaskDetailDrawer({
                   run.localPath,
                   sourceModelName,
                 );
-                const codePushRecord = codePushRecordByRunId.get(run.id) ?? null;
+                const codePushRecords = codePushRecordsByRunId.get(run.id) ?? [];
+                const currentSessionId = resolveLatestRunSession(run)?.sessionId ?? '';
+                const codePushRecord =
+                  codePushRecords.find((record) => record.sessionId === currentSessionId) ??
+                  null;
                 return (
                   <div
                     key={run.id}
@@ -1596,6 +1603,8 @@ export default function TaskDetailDrawer({
                         <CodePushControls
                           run={run}
                           record={codePushRecord}
+                          records={codePushRecords}
+                          currentSessionId={currentSessionId}
                           actionKey={codePushActionKey}
                           onCommitCode={onCommitCode}
                           onRedoCommit={onRedoCommit}
@@ -2570,9 +2579,29 @@ function InlineCodeLink({
   );
 }
 
+function resolveLatestRunSession(run: ModelRunFromDB): { sessionId: string; sessionIndex: number } | null {
+  const sessions = Array.isArray(run.sessionList) ? run.sessionList : [];
+  for (let index = sessions.length - 1; index >= 0; index -= 1) {
+    const sessionId = sessions[index]?.sessionId?.trim();
+    if (sessionId) {
+      return { sessionId, sessionIndex: index };
+    }
+  }
+  const fallbackSessionId = run.sessionId?.trim();
+  if (fallbackSessionId) {
+    return {
+      sessionId: fallbackSessionId,
+      sessionIndex: Math.max(run.conversationRounds - 1, 0),
+    };
+  }
+  return null;
+}
+
 function CodePushControls({
   run,
   record,
+  records,
+  currentSessionId,
   actionKey,
   onCommitCode,
   onRedoCommit,
@@ -2580,6 +2609,8 @@ function CodePushControls({
 }: {
   run: ModelRunFromDB;
   record: CodePushRecord | null;
+  records: CodePushRecord[];
+  currentSessionId: string;
   actionKey: string | null;
   onCommitCode?: (run: ModelRunFromDB) => void | Promise<void>;
   onRedoCommit?: (record: CodePushRecord) => void | Promise<void>;
@@ -2594,6 +2625,9 @@ function CodePushControls({
   const isPushing = record ? actionKey === `push-${record.id}` : false;
   const isBusy = isCommiting || isRedoing || isPushing;
   const hasLocalPath = !!run.localPath?.trim();
+  const commitCount = records.length;
+  const pushCount = records.filter((item) => item.status === 'pushed' && item.pushedAt).length;
+  const latestRecord = records[0] ?? null;
   const statusTone =
     record?.status === 'pushed'
       ? 'success'
@@ -2607,6 +2641,8 @@ function CodePushControls({
         ? '待重新推送'
         : record
           ? '本地已提交'
+          : latestRecord
+            ? '新 session 未提交'
           : '未提交';
   const shortSha = record?.commitSha ? record.commitSha.slice(0, 12) : '';
 
@@ -2615,6 +2651,10 @@ function CodePushControls({
       <div className="flex items-center justify-between gap-2">
         <span className="text-[10px] font-medium text-zinc-500">代码提交</span>
         <WorkspaceBadge tone={statusTone}>{statusLabel}</WorkspaceBadge>
+      </div>
+      <div className="mt-1 flex items-center gap-2 text-[10px] text-zinc-500">
+        <span>提交 {commitCount} 次</span>
+        <span>推送 {pushCount} 次</span>
       </div>
 
       {record && (
@@ -2660,6 +2700,21 @@ function CodePushControls({
                 iconClassName="h-3 w-3"
               />
             </div>
+          )}
+        </div>
+      )}
+      {!record && latestRecord && (
+        <div className="mt-2 space-y-1 text-[11px] text-zinc-500">
+          <div className="flex items-center gap-1.5">
+            <span>上次提交</span>
+            <span className="font-mono text-zinc-400" title={latestRecord.commitSha}>
+              {latestRecord.commitSha ? latestRecord.commitSha.slice(0, 12) : '-'}
+            </span>
+          </div>
+          {currentSessionId && (
+            <p className="line-clamp-1" title={currentSessionId}>
+              当前 session 尚未提交
+            </p>
           )}
         </div>
       )}
