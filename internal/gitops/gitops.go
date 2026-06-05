@@ -288,6 +288,26 @@ func PushBranch(path, branch, username, token string) error {
 	return pushCmd.Run()
 }
 
+func PushBranchWithMode(path, branch, username, token string, forceWithLease bool) error {
+	cmd := exec.Command("git", "remote", "get-url", "origin")
+	cmd.Dir = path
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf(errs.FmtRemoteURLFail, err)
+	}
+	originURL := strings.TrimSpace(string(out))
+
+	args := []string{"push", "origin", branch + ":" + branch}
+	if forceWithLease {
+		args = append(args, "--force-with-lease")
+	}
+	pushCmd := exec.Command("git", args...)
+	pushCmd.Dir = path
+	pushCmd.Env = append(os.Environ(), buildGitAuthEnv(originURL, username, token, false)...)
+	pushCmd.Stderr = os.Stderr
+	return pushCmd.Run()
+}
+
 func WorkspaceRoot() string {
 	return filepath.Join(os.TempDir(), "pinru-github-pr")
 }

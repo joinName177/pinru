@@ -89,6 +89,16 @@ func SetDefaultBranch(targetRepo, branch, token string) error {
 	return checkStatus(resp)
 }
 
+func UpdateRepositoryDescription(targetRepo, token, description string) error {
+	body, _ := json.Marshal(map[string]string{"description": description})
+	resp, err := doRequest("PATCH", apiBase+"/repos/"+targetRepo, token, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return checkStatus(resp)
+}
+
 func EnsurePullRequest(targetRepo, repoOwner, headBranch, title, prBody, token string) (string, error) {
 	if existing, err := findExistingPR(targetRepo, repoOwner, headBranch, "main", token); err == nil && existing != "" {
 		return existing, nil

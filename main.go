@@ -16,6 +16,7 @@ import (
 
 	appchat "github.com/blueship581/pinru/app/chat"
 	appcli "github.com/blueship581/pinru/app/cli"
+	appcodepush "github.com/blueship581/pinru/app/codepush"
 	appconfig "github.com/blueship581/pinru/app/config"
 	appgit "github.com/blueship581/pinru/app/git"
 	appjob "github.com/blueship581/pinru/app/job"
@@ -49,6 +50,7 @@ func main() {
 	gitSvc := appgit.New(db)
 	taskSvc := apptask.New(db, gitSvc)
 	submitSvc := appsubmit.New(db)
+	codePushSvc := appcodepush.New(db)
 	cliSvc := appcli.New()
 	promptSvc := appprompt.New(db, cliSvc)
 	chatSvc := appchat.New(db, cliSvc)
@@ -69,6 +71,7 @@ func main() {
 			application.NewService(gitSvc),
 			application.NewService(promptSvc),
 			application.NewService(submitSvc),
+			application.NewService(codePushSvc),
 			application.NewService(cliSvc),
 			application.NewService(chatSvc),
 			application.NewService(jobSvc),

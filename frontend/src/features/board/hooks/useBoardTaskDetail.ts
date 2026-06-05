@@ -17,6 +17,13 @@ import {
   type LlmProviderConfig,
 } from '../../../api/llm';
 import {
+  commitCode,
+  listCodePushRecords,
+  pushCode,
+  redoCommit,
+  type CodePushRecord,
+} from '../../../api/codePush';
+import {
   submitJob,
   submitSessionSyncJob,
   type JobProgressEvent,
@@ -144,6 +151,21 @@ function humanizeTaskTypeChangeError(
   )}」，该任务类型的单题上限已满。请先调整已有同类型题卡，或切换到其他任务类型。`;
 }
 
+function resolveLatestSession(run: ModelRunFromDB): { sessionId: string; sessionIndex: number } | null {
+  const sessions = Array.isArray(run.sessionList) ? run.sessionList : [];
+  for (let index = sessions.length - 1; index >= 0; index -= 1) {
+    const sessionId = sessions[index]?.sessionId?.trim();
+    if (sessionId) {
+      return { sessionId, sessionIndex: index };
+    }
+  }
+  const fallbackSessionId = run.sessionId?.trim();
+  if (fallbackSessionId) {
+    return { sessionId: fallbackSessionId, sessionIndex: Math.max(run.conversationRounds - 1, 0) };
+  }
+  return null;
+}
+
 type UseBoardTaskDetailArgs = {
   activeProject: ProjectConfig | null;
   availableTaskTypes: string[];
@@ -170,6 +192,8 @@ export function useBoardTaskDetail({
   const [selectedTaskReadme, setSelectedTaskReadme] = useState<TaskReadme | null>(null);
   const [selectedModelRuns, setSelectedModelRuns] = useState<ModelRunFromDB[]>([]);
   const [selectedAiReviewRounds, setSelectedAiReviewRounds] = useState<AiReviewRoundFromDB[]>([]);
+  const [selectedCodePushRecords, setSelectedCodePushRecords] = useState<CodePushRecord[]>([]);
+  const [codePushActionKey, setCodePushActionKey] = useState<string | null>(null);
   const [selectedSessionModelName, setSelectedSessionModelName] = useState('');
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [drawerError, setDrawerError] = useState('');
@@ -327,11 +351,12 @@ export function useBoardTaskDetail({
   };
 
   const refreshTaskSessionSyncState = async (taskId: string) => {
-    const [taskDetail, taskReadme, modelRuns, aiReviewRounds] = await Promise.all([
+    const [taskDetail, taskReadme, modelRuns, aiReviewRounds, codePushRecords] = await Promise.all([
       getTask(taskId),
       getTaskReadme(taskId),
       listModelRuns(taskId),
       listAiReviewRounds(taskId),
+      listCodePushRecords(taskId),
     ]);
     const normalizedModelRuns = normalizeModelRunList(modelRuns);
     const normalizedAiReviewRounds = normalizeAiReviewRoundList(aiReviewRounds);
@@ -354,6 +379,7 @@ export function useBoardTaskDetail({
     setSelectedTaskReadme(normalizedTaskReadme);
     setSelectedModelRuns(normalizedModelRuns);
     setSelectedAiReviewRounds(normalizedAiReviewRounds);
+    setSelectedCodePushRecords(Array.isArray(codePushRecords) ? codePushRecords : []);
     const nextSessionModelName =
       normalizedModelRuns.some((run) => run.modelName === selectedSessionModelName)
         ? selectedSessionModelName
@@ -393,6 +419,8 @@ export function useBoardTaskDetail({
       setSelectedTaskReadme(null);
       setSelectedModelRuns([]);
       setSelectedAiReviewRounds([]);
+      setSelectedCodePushRecords([]);
+      setCodePushActionKey(null);
       setSelectedSessionModelName('');
       setDrawerError('');
       setSessionExtracting(false);
@@ -413,11 +441,12 @@ export function useBoardTaskDetail({
     setSessionExtracting(false);
 
     (async () => {
-      const [taskDetail, taskReadme, modelRuns, aiReviewRounds] = await Promise.all([
+      const [taskDetail, taskReadme, modelRuns, aiReviewRounds, codePushRecords] = await Promise.all([
         getTask(selected.id),
         getTaskReadme(selected.id),
         listModelRuns(selected.id),
         listAiReviewRounds(selected.id),
+        listCodePushRecords(selected.id),
       ]);
       const normalizedModelRuns = normalizeModelRunList(modelRuns);
       const normalizedAiReviewRounds = normalizeAiReviewRoundList(aiReviewRounds);
@@ -432,6 +461,7 @@ export function useBoardTaskDetail({
       setPromptCopied(false);
       setSelectedModelRuns(normalizedModelRuns);
       setSelectedAiReviewRounds(normalizedAiReviewRounds);
+      setSelectedCodePushRecords(Array.isArray(codePushRecords) ? codePushRecords : []);
       const initialSessionModelName =
         buildSessionModelOptions(normalizedModelRuns, sourceModelName)[0]?.modelName ?? '';
       setSelectedSessionModelName(initialSessionModelName);
@@ -568,13 +598,14 @@ export function useBoardTaskDetail({
       return;
     }
 
-    const [_, __, taskDetail, taskReadme, modelRuns, aiReviewRounds] = await Promise.all([
+    const [_, __, taskDetail, taskReadme, modelRuns, aiReviewRounds, codePushRecords] = await Promise.all([
       loadActiveProject(),
       loadTasks(),
       getTask(taskId),
       getTaskReadme(taskId),
       listModelRuns(taskId),
       listAiReviewRounds(taskId),
+      listCodePushRecords(taskId),
     ]);
     const normalizedModelRuns = normalizeModelRunList(modelRuns);
     const normalizedAiReviewRounds = normalizeAiReviewRoundList(aiReviewRounds);
@@ -590,6 +621,7 @@ export function useBoardTaskDetail({
     setSelectedTaskReadme(normalizedTaskReadme);
     setSelectedModelRuns(normalizedModelRuns);
     setSelectedAiReviewRounds(normalizedAiReviewRounds);
+    setSelectedCodePushRecords(Array.isArray(codePushRecords) ? codePushRecords : []);
     const nextSessionModelName =
       normalizedModelRuns.some((run) => run.modelName === selectedSessionModelName)
         ? selectedSessionModelName
@@ -1295,6 +1327,97 @@ export function useBoardTaskDetail({
     }, 1500);
   };
 
+  const refreshCodePushRecords = async (taskId: string) => {
+    const records = await listCodePushRecords(taskId);
+    if (selectedTaskIdRef.current === taskId) {
+      setSelectedCodePushRecords(Array.isArray(records) ? records : []);
+    }
+  };
+
+  const handleCommitCode = async (run: ModelRunFromDB) => {
+    if (!selected?.id) {
+      return;
+    }
+    const resolvedSession = resolveLatestSession(run);
+    if (!resolvedSession) {
+      setDrawerError('当前模型执行还没有可用 sessionId，不能提交代码');
+      return;
+    }
+    const actionKey = `commit-${run.id}`;
+    setCodePushActionKey(actionKey);
+    setDrawerError('');
+    try {
+      const record = await commitCode({
+        taskId: selected.id,
+        modelRunId: run.id,
+        sessionId: resolvedSession.sessionId,
+        sessionIndex: resolvedSession.sessionIndex,
+      });
+      setSelectedCodePushRecords((prev) => [
+        record,
+        ...prev.filter((item) => item.id !== record.id),
+      ]);
+    } catch (error) {
+      setDrawerError(error instanceof Error ? error.message : '提交代码失败');
+    } finally {
+      setCodePushActionKey(null);
+    }
+  };
+
+  const handleRedoCommit = async (record: CodePushRecord) => {
+    const confirmMessage =
+      record.status === 'pushed'
+        ? '这条记录已经推送到 GitHub。重做提交会改写本地 commit，后续重新推送时需要覆盖远端，确认继续？'
+        : '确认用当前目录改动重做这次提交？';
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
+
+    const actionKey = `redo-${record.id}`;
+    setCodePushActionKey(actionKey);
+    setDrawerError('');
+    try {
+      const nextRecord = await redoCommit({ recordId: record.id });
+      setSelectedCodePushRecords((prev) =>
+        prev.map((item) => (item.id === nextRecord.id ? nextRecord : item)),
+      );
+    } catch (error) {
+      setDrawerError(error instanceof Error ? error.message : '重做提交失败');
+    } finally {
+      setCodePushActionKey(null);
+    }
+  };
+
+  const handlePushCode = async (record: CodePushRecord) => {
+    const forceWithLease = record.status === 'needs_push';
+    if (
+      forceWithLease &&
+      !window.confirm('这次推送会用 --force-with-lease 覆盖远端同名分支，确认推送？')
+    ) {
+      return;
+    }
+
+    const actionKey = `push-${record.id}`;
+    setCodePushActionKey(actionKey);
+    setDrawerError('');
+    try {
+      const nextRecord = await pushCode({
+        recordId: record.id,
+        forceWithLease,
+      });
+      setSelectedCodePushRecords((prev) =>
+        prev.map((item) => (item.id === nextRecord.id ? nextRecord : item)),
+      );
+      if (selected?.id) {
+        void refreshCodePushRecords(selected.id);
+      }
+    } catch (error) {
+      setDrawerError(error instanceof Error ? error.message : '推送 GitHub 失败');
+    } finally {
+      setCodePushActionKey(null);
+    }
+  };
+
   const handleSessionEditorBlur = async () => {
     await handleSessionListSave({
       skipIfUnchanged: true,
@@ -1313,6 +1436,8 @@ export function useBoardTaskDetail({
     selectedTaskReadme,
     selectedModelRuns,
     selectedAiReviewRounds,
+    selectedCodePushRecords,
+    codePushActionKey,
     drawerLoading,
     drawerError,
     statusChanging,
@@ -1349,6 +1474,9 @@ export function useBoardTaskDetail({
     toggleSessionEditor,
     handleSessionEditorBlur,
     handleCopySessionId,
+    handleCommitCode,
+    handleRedoCommit,
+    handlePushCode,
     handleRemoveSession,
     handleResetSessions,
     handleSessionListSave,

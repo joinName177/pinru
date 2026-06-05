@@ -175,6 +175,8 @@ export function BoardLayerStack({
           selectedTaskReadme={detail.selectedTaskReadme}
           selectedModelRuns={detail.selectedModelRuns}
           selectedAiReviewRounds={detail.selectedAiReviewRounds}
+          selectedCodePushRecords={detail.selectedCodePushRecords}
+          codePushActionKey={detail.codePushActionKey}
           drawerLoading={detail.drawerLoading}
           drawerError={detail.drawerError}
           statusChanging={detail.statusChanging}
@@ -228,6 +230,9 @@ export function BoardLayerStack({
           promptGenerating={detail.promptGenerating}
           onGeneratePrompt={(config) => void detail.handleGeneratePrompt(config)}
           onAiReview={onAiReview}
+          onCommitCode={detail.handleCommitCode}
+          onRedoCommit={detail.handleRedoCommit}
+          onPushCode={detail.handlePushCode}
           onDeleteAiReviewRecord={onDeleteAiReviewRecord}
           onSubmitNextAiReviewRound={onSubmitNextAiReviewRound}
         />

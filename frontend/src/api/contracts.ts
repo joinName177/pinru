@@ -7,6 +7,12 @@ import type {
 } from './chat';
 import type { PollOutputResponse, SkillItem, StartClaudeRequest, StartClaudeResponse } from './cli';
 import type {
+  CodePushRecord,
+  CommitCodeRequest,
+  PushCodeRequest,
+  RedoCommitRequest,
+} from './codePush';
+import type {
   GitHubAccountConfig,
   GitLabSettings,
   CustomProjectSettings,
@@ -204,6 +210,12 @@ export type WailsServiceContract = {
     PublishSourceRepo: ServiceMethod<[request: PublishSourceRepoRequest], PublishSourceRepoResult>;
     SubmitModelRun: ServiceMethod<[request: SubmitModelRunRequest], SubmitModelRunResult>;
     SubmitAll: ServiceMethod<[request: SubmitAllRequest], SubmitAllResult>;
+  };
+  CodePushService: {
+    ListCodePushRecords: ServiceMethod<[taskId: string], CodePushRecord[]>;
+    CommitCode: ServiceMethod<[request: CommitCodeRequest], CodePushRecord>;
+    RedoCommit: ServiceMethod<[request: RedoCommitRequest], CodePushRecord>;
+    PushCode: ServiceMethod<[request: PushCodeRequest], CodePushRecord>;
   };
   JobService: {
     SubmitJob: ServiceMethod<[request: SubmitJobRequest], BackgroundJob>;

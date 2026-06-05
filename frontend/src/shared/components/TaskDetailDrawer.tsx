@@ -22,10 +22,12 @@ import {
   ThumbsDown,
   ThumbsUp,
   Trash2,
+  UploadCloud,
   Wand2,
   X,
 } from 'lucide-react';
 import { useAppStore, type Task, type TaskStatus } from '../../store';
+import type { CodePushRecord } from '../../api/codePush';
 import type { AiReviewPayload, AiReviewResult, BackgroundJob } from '../../api/job';
 import type { AiReviewRoundFromDB, ModelRunFromDB, PromptGenerationStatus, TaskFromDB } from '../../api/task';
 import { saveAiReviewRoundDissatisfactionSummary, saveAiReviewRoundNotes } from '../../api/task';
@@ -110,6 +112,8 @@ interface TaskDetailDrawerProps {
   selectedTaskReadme: import('../../api/task').TaskReadme | null;
   selectedModelRuns: ModelRunFromDB[];
   selectedAiReviewRounds?: AiReviewRoundFromDB[];
+  selectedCodePushRecords?: CodePushRecord[];
+  codePushActionKey?: string | null;
   drawerLoading: boolean;
   drawerError: string;
   statusChanging: boolean;
@@ -161,6 +165,9 @@ interface TaskDetailDrawerProps {
   promptGenerating: boolean;
   onGeneratePrompt: (config: Omit<GeneratePromptRequest, 'taskId'>) => void | Promise<void>;
   onAiReview?: (run: ModelRunFromDB) => void;
+  onCommitCode?: (run: ModelRunFromDB) => void | Promise<void>;
+  onRedoCommit?: (record: CodePushRecord) => void | Promise<void>;
+  onPushCode?: (record: CodePushRecord) => void | Promise<void>;
   onDeleteAiReviewRecord?: (jobId: string) => void | Promise<void>;
   onSubmitNextAiReviewRound?: (modelRunId: string, modelName: string, localPath: string, nextPromptOverride?: string, reviewRoundId?: string) => void | Promise<void>;
 }
@@ -178,6 +185,8 @@ export default function TaskDetailDrawer({
   selectedTaskDetail,
   selectedTaskReadme,
   selectedModelRuns,
+  selectedCodePushRecords = [],
+  codePushActionKey = null,
   drawerLoading,
   drawerError,
   statusChanging,
@@ -229,8 +238,11 @@ export default function TaskDetailDrawer({
   promptGenerating,
   onGeneratePrompt,
   onAiReview,
+  onCommitCode,
+  onRedoCommit,
+  onPushCode,
   onDeleteAiReviewRecord,
-  selectedAiReviewRounds,
+  selectedAiReviewRounds = [],
   onSubmitNextAiReviewRound,
 }: TaskDetailDrawerProps) {
   const aiReviewVisible = useAppStore((state) => state.aiReviewVisible);
@@ -288,6 +300,19 @@ export default function TaskDetailDrawer({
     () => (Array.isArray(selectedModelRuns) ? selectedModelRuns : []),
     [selectedModelRuns],
   );
+  const codePushRecordByRunId = useMemo(() => {
+    const map = new Map<string, CodePushRecord>();
+    const records = Array.isArray(selectedCodePushRecords) ? selectedCodePushRecords : [];
+    records
+      .slice()
+      .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+      .forEach((record) => {
+        if (record.modelRunId && !map.has(record.modelRunId)) {
+          map.set(record.modelRunId, record);
+        }
+      });
+    return map;
+  }, [selectedCodePushRecords]);
   const promptLlmProviders = useMemo(
     () => safeLlmProviders.filter((provider) => provider.providerType === 'claude_code_acp'),
     [safeLlmProviders],
@@ -1523,6 +1548,7 @@ export default function TaskDetailDrawer({
                   run.localPath,
                   sourceModelName,
                 );
+                const codePushRecord = codePushRecordByRunId.get(run.id) ?? null;
                 return (
                   <div
                     key={run.id}
@@ -1567,6 +1593,14 @@ export default function TaskDetailDrawer({
                         )}
                       </div>
                       <div className="flex flex-col items-start gap-2 lg:items-end">
+                        <CodePushControls
+                          run={run}
+                          record={codePushRecord}
+                          actionKey={codePushActionKey}
+                          onCommitCode={onCommitCode}
+                          onRedoCommit={onRedoCommit}
+                          onPushCode={onPushCode}
+                        />
                         {onAiReview && aiReviewVisible && (
                           <button
                             type="button"
@@ -2531,6 +2565,140 @@ function InlineCodeLink({
         >
           <ExternalLink className="h-3.5 w-3.5" />
         </a>
+      </div>
+    </div>
+  );
+}
+
+function CodePushControls({
+  run,
+  record,
+  actionKey,
+  onCommitCode,
+  onRedoCommit,
+  onPushCode,
+}: {
+  run: ModelRunFromDB;
+  record: CodePushRecord | null;
+  actionKey: string | null;
+  onCommitCode?: (run: ModelRunFromDB) => void | Promise<void>;
+  onRedoCommit?: (record: CodePushRecord) => void | Promise<void>;
+  onPushCode?: (record: CodePushRecord) => void | Promise<void>;
+}) {
+  if (!onCommitCode && !onRedoCommit && !onPushCode) {
+    return null;
+  }
+
+  const isCommiting = actionKey === `commit-${run.id}`;
+  const isRedoing = record ? actionKey === `redo-${record.id}` : false;
+  const isPushing = record ? actionKey === `push-${record.id}` : false;
+  const isBusy = isCommiting || isRedoing || isPushing;
+  const hasLocalPath = !!run.localPath?.trim();
+  const statusTone =
+    record?.status === 'pushed'
+      ? 'success'
+      : record?.status === 'needs_push'
+        ? 'warning'
+        : 'neutral';
+  const statusLabel =
+    record?.status === 'pushed'
+      ? '已推送'
+      : record?.status === 'needs_push'
+        ? '待重新推送'
+        : record
+          ? '本地已提交'
+          : '未提交';
+  const shortSha = record?.commitSha ? record.commitSha.slice(0, 12) : '';
+
+  return (
+    <div className="w-full min-w-[220px] rounded-xl border border-zinc-800/70 bg-black/20 px-3 py-2 lg:w-72">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[10px] font-medium text-zinc-500">代码提交</span>
+        <WorkspaceBadge tone={statusTone}>{statusLabel}</WorkspaceBadge>
+      </div>
+
+      {record && (
+        <div className="mt-2 space-y-1 text-[11px] text-zinc-400">
+          <div className="flex items-center gap-1.5">
+            <span className="shrink-0 text-zinc-600">Repo</span>
+            {record.repoUrl ? (
+              <a
+                href={record.repoUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="min-w-0 truncate font-mono text-zinc-300 transition hover:text-white"
+                title={record.repoUrl}
+              >
+                {record.repoName}
+              </a>
+            ) : (
+              <span className="min-w-0 truncate font-mono text-zinc-300">{record.repoName}</span>
+            )}
+          </div>
+          {record.commitSha && (
+            <div className="flex items-center gap-1.5">
+              <span className="shrink-0 text-zinc-600">SHA</span>
+              {record.commitUrl ? (
+                <a
+                  href={record.commitUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-mono text-zinc-300 transition hover:text-white"
+                  title={record.commitSha}
+                >
+                  {shortSha}
+                </a>
+              ) : (
+                <span className="font-mono text-zinc-300" title={record.commitSha}>
+                  {shortSha}
+                </span>
+              )}
+              <CopyIconButton
+                value={record.commitSha}
+                label="复制完整 commit SHA"
+                className="rounded p-0.5 text-zinc-500 transition hover:bg-zinc-800/50 hover:text-zinc-200"
+                iconClassName="h-3 w-3"
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {!record && (
+          <button
+            type="button"
+            disabled={!hasLocalPath || isBusy}
+            onClick={() => void onCommitCode?.(run)}
+            title={!hasLocalPath ? '需要先记录副本目录后才能提交代码' : undefined}
+            className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-2 py-1 text-[11px] font-medium text-emerald-200 transition hover:bg-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {isCommiting ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+            {isCommiting ? '提交中…' : '提交代码'}
+          </button>
+        )}
+        {record && (
+          <>
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={() => void onRedoCommit?.(record)}
+              className="inline-flex items-center gap-1 rounded-lg border border-zinc-700/70 bg-zinc-900/70 px-2 py-1 text-[11px] font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {isRedoing ? <RefreshCw className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+              {isRedoing ? '重做中…' : '重做提交'}
+            </button>
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={() => void onPushCode?.(record)}
+              className="inline-flex items-center gap-1 rounded-lg border border-sky-500/25 bg-sky-500/10 px-2 py-1 text-[11px] font-medium text-sky-200 transition hover:bg-sky-500/15 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {isPushing ? <RefreshCw className="h-3 w-3 animate-spin" /> : <UploadCloud className="h-3 w-3" />}
+              {isPushing ? '推送中…' : record.status === 'pushed' ? '重新推送' : '推送 GitHub'}
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

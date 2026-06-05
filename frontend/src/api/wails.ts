@@ -16,6 +16,7 @@ type ServiceResult<S extends ServiceName, M extends MethodName<S>> =
 const servicePrefixes: Record<ServiceName, readonly string[]> = {
   ChatService: ['github.com/blueship581/pinru/app/chat', 'main'],
   CliService: ['github.com/blueship581/pinru/app/cli', 'main'],
+  CodePushService: ['github.com/blueship581/pinru/app/codepush', 'main'],
   ConfigService: ['github.com/blueship581/pinru/app/config', 'main'],
   GitService: ['github.com/blueship581/pinru/app/git', 'main'],
   JobService: ['github.com/blueship581/pinru/app/job', 'main'],
