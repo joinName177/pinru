@@ -19,8 +19,6 @@ import (
 
 const (
 	mainBranch        = "main"
-	localAuthorName   = "PINRU"
-	localAuthorEmail  = "pinru@local"
 	statusCommitted   = "committed"
 	statusPushed      = "pushed"
 	statusNeedsPush   = "needs_push"
@@ -266,10 +264,7 @@ func commitWorkspace(path, sessionID string, amend bool) (string, error) {
 	if err := gitops.EnsureProjectGitignore(path); err != nil {
 		return "", err
 	}
-	if err := runGit(path, "config", "user.name", localAuthorName); err != nil {
-		return "", err
-	}
-	if err := runGit(path, "config", "user.email", localAuthorEmail); err != nil {
+	if err := ensureCommitAuthor(path); err != nil {
 		return "", err
 	}
 	if err := gitops.EnsureBranch(path, mainBranch); err != nil {
@@ -310,6 +305,28 @@ func ensureGitRepository(path string) error {
 		return err
 	}
 	return gitops.EnsureBranch(path, mainBranch)
+}
+
+func ensureCommitAuthor(path string) error {
+	name, _ := gitOutput(path, "config", "--get", "user.name")
+	email, _ := gitOutput(path, "config", "--get", "user.email")
+	if strings.TrimSpace(name) != "" && strings.TrimSpace(email) != "" {
+		return nil
+	}
+
+	globalName, _ := gitOutput(path, "config", "--global", "--get", "user.name")
+	globalEmail, _ := gitOutput(path, "config", "--global", "--get", "user.email")
+	if strings.TrimSpace(name) == "" && strings.TrimSpace(globalName) != "" {
+		if err := runGit(path, "config", "user.name", strings.TrimSpace(globalName)); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(email) == "" && strings.TrimSpace(globalEmail) != "" {
+		if err := runGit(path, "config", "user.email", strings.TrimSpace(globalEmail)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func hasWorkspaceChanges(path string) (bool, error) {

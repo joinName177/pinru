@@ -59,6 +59,33 @@ func TestCommitWorkspaceCreatesFullSHA(t *testing.T) {
 	}
 }
 
+func TestCommitWorkspaceKeepsConfiguredAuthor(t *testing.T) {
+	dir := t.TempDir()
+	if err := runGit(dir, "init", "-b", mainBranch); err != nil {
+		if err := runGit(dir, "init"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := runGit(dir, "config", "user.name", "zhouwei"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runGit(dir, "config", "user.email", "zhouwei@holdzone.cn"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := commitWorkspace(dir, "session-1", false); err != nil {
+		t.Fatal(err)
+	}
+
+	author := gitOutputForTest(t, dir, "log", "-1", "--pretty=%an <%ae>")
+	if strings.TrimSpace(author) != "zhouwei <zhouwei@holdzone.cn>" {
+		t.Fatalf("author = %q", author)
+	}
+}
+
 func commitAllForTest(dir, msg string) error {
 	if err := runGit(dir, "init", "-b", mainBranch); err != nil {
 		if err := runGit(dir, "init"); err != nil {
