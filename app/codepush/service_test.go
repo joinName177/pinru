@@ -86,6 +86,43 @@ func TestCommitWorkspaceKeepsConfiguredAuthor(t *testing.T) {
 	}
 }
 
+func TestCommitWorkspaceRewritesPinruAuthorFromGlobalConfig(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	if err := runGit(dir, "init", "-b", mainBranch); err != nil {
+		if err := runGit(dir, "init"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := runGit(dir, "config", "user.name", "PINRU"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runGit(dir, "config", "user.email", "pinru@local"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runGit(dir, "config", "--global", "user.name", "zhouwei"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runGit(dir, "config", "--global", "user.email", "zhouwei@holdzone.cn"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := commitWorkspace(dir, "session-1", false); err != nil {
+		t.Fatal(err)
+	}
+
+	author := gitOutputForTest(t, dir, "log", "-1", "--pretty=%an <%ae>")
+	if strings.TrimSpace(author) != "zhouwei <zhouwei@holdzone.cn>" {
+		t.Fatalf("author = %q", author)
+	}
+}
+
 func commitAllForTest(dir, msg string) error {
 	if err := runGit(dir, "init", "-b", mainBranch); err != nil {
 		if err := runGit(dir, "init"); err != nil {

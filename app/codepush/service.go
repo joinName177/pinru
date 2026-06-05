@@ -283,7 +283,7 @@ func commitWorkspace(path, sessionID string, amend bool) (string, error) {
 	}
 
 	if amend && hasHead(path) {
-		if err := runGit(path, "commit", "--amend", "-m", sessionID); err != nil {
+		if err := runGit(path, "commit", "--amend", "--reset-author", "-m", sessionID); err != nil {
 			return "", err
 		}
 	} else {
@@ -308,23 +308,24 @@ func ensureGitRepository(path string) error {
 }
 
 func ensureCommitAuthor(path string) error {
+	globalName, _ := gitOutput(path, "config", "--global", "--get", "user.name")
+	globalEmail, _ := gitOutput(path, "config", "--global", "--get", "user.email")
+	globalName = strings.TrimSpace(globalName)
+	globalEmail = strings.TrimSpace(globalEmail)
+	if globalName != "" && globalEmail != "" {
+		if err := runGit(path, "config", "user.name", globalName); err != nil {
+			return err
+		}
+		if err := runGit(path, "config", "user.email", globalEmail); err != nil {
+			return err
+		}
+		return nil
+	}
+
 	name, _ := gitOutput(path, "config", "--get", "user.name")
 	email, _ := gitOutput(path, "config", "--get", "user.email")
 	if strings.TrimSpace(name) != "" && strings.TrimSpace(email) != "" {
 		return nil
-	}
-
-	globalName, _ := gitOutput(path, "config", "--global", "--get", "user.name")
-	globalEmail, _ := gitOutput(path, "config", "--global", "--get", "user.email")
-	if strings.TrimSpace(name) == "" && strings.TrimSpace(globalName) != "" {
-		if err := runGit(path, "config", "user.name", strings.TrimSpace(globalName)); err != nil {
-			return err
-		}
-	}
-	if strings.TrimSpace(email) == "" && strings.TrimSpace(globalEmail) != "" {
-		if err := runGit(path, "config", "user.email", strings.TrimSpace(globalEmail)); err != nil {
-			return err
-		}
 	}
 	return nil
 }
