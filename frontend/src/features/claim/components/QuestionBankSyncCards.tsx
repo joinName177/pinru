@@ -342,7 +342,7 @@ export function SyncToolbar({
           <QuickAction
             icon={Sparkles}
             label="刷新自定义项目"
-            explain="扫描全局自定义项目根目录第一层的 zw* 文件夹，列出当前项目还没有的项目"
+            explain="扫描全局自定义项目根目录第一层匹配前缀的文件夹，列出当前项目还没有的项目"
             state={customProjectState}
             onClick={onScanCustomProjects}
           />
@@ -419,6 +419,7 @@ export function CustomProjectPickerModal({
   onImport: (projectNames: string[]) => void;
 }) {
   const candidates = scanResult?.candidates ?? [];
+  const prefixLabel = formatCustomProjectPrefixes(scanResult?.prefixes);
   const [selectedNames, setSelectedNames] = useState<string[]>([]);
   const selectedNameSet = useMemo(() => new Set(selectedNames), [selectedNames]);
 
@@ -449,7 +450,7 @@ export function CustomProjectPickerModal({
               选择要导入的自定义项目
             </h3>
             <p className="mt-1 text-xs leading-relaxed text-stone-500 dark:text-stone-400">
-              已扫描 {scanResult.totalCount} 个 zw* 文件夹，当前项目还可导入 {candidates.length} 个。
+              已扫描 {scanResult.totalCount} 个 {prefixLabel} 文件夹，当前项目还可导入 {candidates.length} 个。
             </p>
             <p className="mt-1 truncate text-[11px] text-stone-400 dark:text-stone-500">
               {scanResult.rootPath}
@@ -739,6 +740,15 @@ export function CustomPromptPreviewModal({
       </div>
     </div>
   );
+}
+
+function formatCustomProjectPrefixes(prefixes: string | null | undefined) {
+  const parts = String(prefixes || 'zw')
+    .split(/[,\s，；;]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const unique = Array.from(new Set(parts.length > 0 ? parts : ['zw']));
+  return unique.map((item) => `${item}*`).join('、');
 }
 
 // 旧的 LocalScanCard/GitLabSyncCard/NormalizeCard 已被 SyncToolbar 取代，为避免其它模块直接引用时的破坏性改动，此处仅导出新组件。

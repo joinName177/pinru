@@ -94,6 +94,7 @@ export default function Settings() {
   const [traeDefaultLogsPath, setTraeDefaultLogsPath] = useState('');
   const [traePathSaveStatus, setTraePathSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle');
   const [customProjectRootPath, setCustomProjectRootPath] = useState('');
+  const [customProjectPrefixes, setCustomProjectPrefixes] = useState('zw');
   const [customProjectPathSaveStatus, setCustomProjectPathSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle');
 
   const [showGithubModal, setShowGithubModal] = useState(false);
@@ -173,6 +174,7 @@ export default function Settings() {
         const settings = await getCustomProjectSettings();
         if (cancelled) return;
         setCustomProjectRootPath(settings.rootPath ?? '');
+        setCustomProjectPrefixes(settings.prefixes ?? 'zw');
       } catch {
         // non-critical; silently ignore
       }
@@ -558,13 +560,13 @@ export default function Settings() {
 
   const handleSaveCustomProjectPath = useCallback(async () => {
     try {
-      await saveCustomProjectSettings(customProjectRootPath.trim());
+      await saveCustomProjectSettings(customProjectRootPath.trim(), customProjectPrefixes.trim());
       flashStatus(setCustomProjectPathSaveStatus, 'saved');
     } catch (error) {
       console.error('Save custom project path failed:', error);
       flashStatus(setCustomProjectPathSaveStatus, 'error', 3000);
     }
-  }, [customProjectRootPath]);
+  }, [customProjectRootPath, customProjectPrefixes]);
 
   const handlePickCustomProjectPath = useCallback(async () => {
     try {
@@ -752,11 +754,13 @@ export default function Settings() {
                 traeDefaultLogsPath={traeDefaultLogsPath}
                 traePathSaveStatus={traePathSaveStatus}
                 customProjectRootPath={customProjectRootPath}
+                customProjectPrefixes={customProjectPrefixes}
                 customProjectPathSaveStatus={customProjectPathSaveStatus}
                 onTraeWorkspaceStoragePathChange={setTraeWorkspaceStoragePath}
                 onTraeLogsPathChange={setTraeLogsPath}
                 onTraePathsSave={handleSaveTraePaths}
                 onCustomProjectRootPathChange={setCustomProjectRootPath}
+                onCustomProjectPrefixesChange={setCustomProjectPrefixes}
                 onCustomProjectRootPathPick={handlePickCustomProjectPath}
                 onCustomProjectPathSave={handleSaveCustomProjectPath}
               />

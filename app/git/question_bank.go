@@ -47,6 +47,7 @@ type CustomProjectCandidateScanResult struct {
 	ProjectID    string                   `json:"projectId"`
 	ProjectName  string                   `json:"projectName"`
 	RootPath     string                   `json:"rootPath"`
+	Prefixes     string                   `json:"prefixes"`
 	TotalCount   int                      `json:"totalCount"`
 	SkippedCount int                      `json:"skippedCount"`
 	Candidates   []CustomProjectCandidate `json:"candidates"`
@@ -247,7 +248,7 @@ func (s *GitService) ScanCustomProjectCandidates(projectID string) (*CustomProje
 		return nil, errors.New(errs.MsgProjectRequired)
 	}
 
-	project, rootPath, err := s.loadCustomProjectContext(projectID)
+	project, rootPath, prefixes, err := s.loadCustomProjectContext(projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +257,7 @@ func (s *GitService) ScanCustomProjectCandidates(projectID string) (*CustomProje
 	if err != nil {
 		return nil, err
 	}
-	candidates, err := discoverCustomProjectCandidates(rootPath)
+	candidates, err := discoverCustomProjectCandidates(rootPath, prefixes)
 	if err != nil {
 		return nil, err
 	}
@@ -265,6 +266,7 @@ func (s *GitService) ScanCustomProjectCandidates(projectID string) (*CustomProje
 		ProjectID:   project.ID,
 		ProjectName: project.Name,
 		RootPath:    rootPath,
+		Prefixes:    strings.Join(prefixes, ","),
 		TotalCount:  len(candidates),
 		Candidates:  make([]CustomProjectCandidate, 0, len(candidates)),
 	}
@@ -295,7 +297,7 @@ func (s *GitService) ImportSelectedCustomProjects(projectID string, projectNames
 		return nil, errors.New("未选择任何自定义项目")
 	}
 
-	project, rootPath, err := s.loadCustomProjectContext(projectID)
+	project, rootPath, prefixes, err := s.loadCustomProjectContext(projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +306,7 @@ func (s *GitService) ImportSelectedCustomProjects(projectID string, projectNames
 	if err != nil {
 		return nil, err
 	}
-	allCandidates, err := discoverCustomProjectCandidates(rootPath)
+	allCandidates, err := discoverCustomProjectCandidates(rootPath, prefixes)
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +328,7 @@ func (s *GitService) ImportSelectedCustomProjects(projectID string, projectNames
 				Name:    selectedName,
 				Kind:    "custom_directory",
 				Status:  "error",
-				Message: "自定义项目不存在，或不是根目录第一层的 zw* 文件夹",
+				Message: fmt.Sprintf("自定义项目不存在，或不是根目录第一层匹配前缀 %s 的文件夹", formatCustomProjectPrefixPattern(prefixes)),
 			})
 			result.ErrorCount++
 			continue
@@ -406,17 +408,17 @@ func (s *GitService) ScanCustomProjects(projectID string) (*ImportLocalSourcesRe
 	return s.ImportSelectedCustomProjects(projectID, names)
 }
 
-func (s *GitService) loadCustomProjectContext(projectID string) (*store.Project, string, error) {
+func (s *GitService) loadCustomProjectContext(projectID string) (*store.Project, string, []string, error) {
 	if s.store == nil {
-		return nil, "", errors.New("存储服务未初始化")
+		return nil, "", nil, errors.New("存储服务未初始化")
 	}
 
 	project, err := s.store.GetProject(projectID)
 	if err != nil {
-		return nil, "", err
+		return nil, "", nil, err
 	}
 	if project == nil {
-		return nil, "", fmt.Errorf(errs.FmtStoreProjectNotFound, projectID)
+		return nil, "", nil, fmt.Errorf(errs.FmtStoreProjectNotFound, projectID)
 	}
 
 	rootPath, err := s.store.GetConfig("custom_project_root_path")
@@ -425,9 +427,13 @@ func (s *GitService) loadCustomProjectContext(projectID string) (*store.Project,
 	}
 	rootPath = util.NormalizePath(rootPath)
 	if rootPath == "" {
-		return nil, "", errors.New("请先在设置中配置自定义项目根目录")
+		return nil, "", nil, errors.New("请先在设置中配置自定义项目根目录")
 	}
-	return project, rootPath, nil
+	prefixConfig, err := s.store.GetConfig("custom_project_prefixes")
+	if err != nil {
+		prefixConfig = ""
+	}
+	return project, rootPath, normalizeCustomProjectPrefixes(prefixConfig), nil
 }
 
 func (s *GitService) customProjectCandidateExists(
@@ -472,7 +478,7 @@ func normalizeSelectedCustomProjectNames(projectNames []string) []string {
 	return result
 }
 
-func discoverCustomProjectCandidates(rootPath string) ([]localSourceCandidate, error) {
+func discoverCustomProjectCandidates(rootPath string, prefixes []string) ([]localSourceCandidate, error) {
 	entries, err := os.ReadDir(util.ExpandTilde(rootPath))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -482,12 +488,13 @@ func discoverCustomProjectCandidates(rootPath string) ([]localSourceCandidate, e
 	}
 
 	candidates := make([]localSourceCandidate, 0)
+	prefixes = normalizeCustomProjectPrefixes(strings.Join(prefixes, ","))
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
 		name := strings.TrimSpace(entry.Name())
-		if name == "" || strings.HasPrefix(name, ".") || !strings.HasPrefix(strings.ToLower(name), "zw") {
+		if name == "" || strings.HasPrefix(name, ".") || !matchesCustomProjectPrefix(name, prefixes) {
 			continue
 		}
 		normalizedPath := util.NormalizePath(filepath.Join(rootPath, name))
@@ -505,6 +512,48 @@ func discoverCustomProjectCandidates(rootPath string) ([]localSourceCandidate, e
 		return strings.ToLower(candidates[i].Name) < strings.ToLower(candidates[j].Name)
 	})
 	return candidates, nil
+}
+
+func normalizeCustomProjectPrefixes(value string) []string {
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == '，' || r == ';' || r == '；' || r == '\n' || r == '\t' || r == ' '
+	})
+	seen := make(map[string]struct{}, len(parts))
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		prefix := strings.ToLower(strings.TrimSpace(part))
+		if prefix == "" {
+			continue
+		}
+		if _, ok := seen[prefix]; ok {
+			continue
+		}
+		seen[prefix] = struct{}{}
+		result = append(result, prefix)
+	}
+	if len(result) == 0 {
+		return []string{"zw"}
+	}
+	return result
+}
+
+func matchesCustomProjectPrefix(name string, prefixes []string) bool {
+	lowerName := strings.ToLower(strings.TrimSpace(name))
+	for _, prefix := range prefixes {
+		if prefix != "" && strings.HasPrefix(lowerName, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func formatCustomProjectPrefixPattern(prefixes []string) string {
+	normalized := normalizeCustomProjectPrefixes(strings.Join(prefixes, ","))
+	parts := make([]string, 0, len(normalized))
+	for _, prefix := range normalized {
+		parts = append(parts, prefix+"*")
+	}
+	return strings.Join(parts, "、")
 }
 
 // PickQuestionBankArchives opens a native file picker for selecting

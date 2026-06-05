@@ -109,6 +109,7 @@ export type WailsServiceContract = {
     SaveGitLabSettings: ServiceMethod<[url: string, username: string, token: string, skipTlsVerify: boolean], void>;
     GetCustomProjectSettings: ServiceMethod<[], CustomProjectSettings>;
     SaveCustomProjectSettings: ServiceMethod<[rootPath: string], void>;
+    SaveCustomProjectSettingsWithPrefixes: ServiceMethod<[rootPath: string, prefixes: string], void>;
     PickCustomProjectRootDirectory: ServiceMethod<[], string>;
     ListProjects: ServiceMethod<[], ProjectConfig[]>;
     CreateProject: ServiceMethod<[project: ProjectConfig], void>;

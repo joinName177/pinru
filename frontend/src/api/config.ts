@@ -108,6 +108,7 @@ export interface TraeSettings {
 
 export interface CustomProjectSettings {
   rootPath: string;
+  prefixes: string;
 }
 
 export async function getConfig(key: string): Promise<string> {
@@ -163,8 +164,8 @@ export async function getCustomProjectSettings(): Promise<CustomProjectSettings>
   return callService('ConfigService', 'GetCustomProjectSettings');
 }
 
-export async function saveCustomProjectSettings(rootPath: string): Promise<void> {
-  return callService('ConfigService', 'SaveCustomProjectSettings', rootPath);
+export async function saveCustomProjectSettings(rootPath: string, prefixes = 'zw'): Promise<void> {
+  return callService('ConfigService', 'SaveCustomProjectSettingsWithPrefixes', rootPath, prefixes);
 }
 
 export async function pickCustomProjectRootDirectory(): Promise<string> {

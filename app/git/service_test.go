@@ -731,6 +731,53 @@ func TestScanCustomProjectsCopiesTopLevelZwDirectories(t *testing.T) {
 	}
 }
 
+func TestScanCustomProjectsUsesConfiguredPrefixes(t *testing.T) {
+	testStore := testutil.OpenTestStore(t)
+	defer testStore.Close()
+
+	project := store.Project{
+		ID:                "project-custom-prefix",
+		Name:              "Demo",
+		GitLabURL:         "https://gitlab.example.com",
+		GitLabToken:       "glpat-test",
+		CloneBasePath:     t.TempDir(),
+		Models:            "ORIGIN",
+		SourceModelFolder: "ORIGIN",
+	}
+	if err := testStore.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	customRoot := t.TempDir()
+	for _, name := range []string{"label-001", "cotv-demo", "zw-ignored"} {
+		if err := os.MkdirAll(filepath.Join(customRoot, name), 0o755); err != nil {
+			t.Fatalf("MkdirAll(%s) error = %v", name, err)
+		}
+	}
+	if err := testStore.SetConfig("custom_project_root_path", customRoot); err != nil {
+		t.Fatalf("SetConfig(custom_project_root_path) error = %v", err)
+	}
+	if err := testStore.SetConfig("custom_project_prefixes", "label,cotv"); err != nil {
+		t.Fatalf("SetConfig(custom_project_prefixes) error = %v", err)
+	}
+
+	s := &GitService{store: testStore}
+	scanResult, err := s.ScanCustomProjectCandidates(project.ID)
+	if err != nil {
+		t.Fatalf("ScanCustomProjectCandidates() error = %v", err)
+	}
+	if scanResult.Prefixes != "label,cotv" {
+		t.Fatalf("Prefixes = %q, want label,cotv", scanResult.Prefixes)
+	}
+	got := make([]string, 0, len(scanResult.Candidates))
+	for _, candidate := range scanResult.Candidates {
+		got = append(got, candidate.Name)
+	}
+	if strings.Join(got, ",") != "cotv-demo,label-001" {
+		t.Fatalf("candidate names = %v", got)
+	}
+}
+
 func TestImportLocalSourcesSkipsTrackedHiddenAndModelDirectories(t *testing.T) {
 	testStore := testutil.OpenTestStore(t)
 	defer testStore.Close()

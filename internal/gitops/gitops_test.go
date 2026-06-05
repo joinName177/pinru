@@ -182,6 +182,9 @@ func TestRemoveManagedWorkspaceDeletesManagedWorkspace(t *testing.T) {
 
 func TestCopyProjectDirectoryInitializesGitRepoForGitSource(t *testing.T) {
 	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	src := filepath.Join(root, "source")
 	dst := filepath.Join(root, "copy")
 	if err := os.MkdirAll(src, 0o755); err != nil {
@@ -192,6 +195,8 @@ func TestCopyProjectDirectoryInitializesGitRepoForGitSource(t *testing.T) {
 	}
 
 	initTestGitRepo(t, src, "review-base")
+	gitInDir(t, src, "config", "--global", "user.name", "zhouwei")
+	gitInDir(t, src, "config", "--global", "user.email", "zhouwei@holdzone.cn")
 	gitInDir(t, src, "add", "README.md")
 	gitInDir(t, src, "commit", "-m", "initial source snapshot")
 
@@ -216,6 +221,11 @@ func TestCopyProjectDirectoryInitializesGitRepoForGitSource(t *testing.T) {
 	message := gitOutput(t, dst, "log", "-1", "--pretty=%s")
 	if message != localSnapshotCommitMsg {
 		t.Fatalf("last commit message = %q, want %q", message, localSnapshotCommitMsg)
+	}
+
+	author := gitOutput(t, dst, "log", "-1", "--pretty=%an <%ae>")
+	if author != "zhouwei <zhouwei@holdzone.cn>" {
+		t.Fatalf("last commit author = %q", author)
 	}
 }
 

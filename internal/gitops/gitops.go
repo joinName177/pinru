@@ -28,9 +28,7 @@ var excludedFiles = map[string]bool{
 }
 
 const (
-	localSnapshotAuthorName  = "PINRU Local"
-	localSnapshotAuthorEmail = "pinru@local"
-	localSnapshotCommitMsg   = "chore: 初始化模型副本基线"
+	localSnapshotCommitMsg   = "初始化项目"
 	fallbackBranchName       = "main"
 )
 
@@ -584,16 +582,30 @@ func initializeSnapshotRepository(ctx context.Context, sourcePath, destinationPa
 	if err := initGitRepository(ctx, destinationPath, branch); err != nil {
 		return err
 	}
-	if err := runGitCtx(ctx, destinationPath, "config", "user.name", localSnapshotAuthorName); err != nil {
-		return err
-	}
-	if err := runGitCtx(ctx, destinationPath, "config", "user.email", localSnapshotAuthorEmail); err != nil {
+	if err := configureSnapshotAuthor(ctx, destinationPath); err != nil {
 		return err
 	}
 	if err := runGitCtx(ctx, destinationPath, "add", "-A"); err != nil {
 		return err
 	}
 	return runGitCtx(ctx, destinationPath, "commit", "--allow-empty", "-m", localSnapshotCommitMsg)
+}
+
+func configureSnapshotAuthor(ctx context.Context, path string) error {
+	name, _ := runGitOutput(path, "config", "--global", "--get", "user.name")
+	email, _ := runGitOutput(path, "config", "--global", "--get", "user.email")
+	name = strings.TrimSpace(name)
+	email = strings.TrimSpace(email)
+	if name == "" {
+		name = "PINRU Local"
+	}
+	if email == "" {
+		email = "pinru@local"
+	}
+	if err := runGitCtx(ctx, path, "config", "user.name", name); err != nil {
+		return err
+	}
+	return runGitCtx(ctx, path, "config", "user.email", email)
 }
 
 func initGitRepository(ctx context.Context, path, branch string) error {

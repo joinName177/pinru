@@ -97,6 +97,7 @@ export interface CustomProjectCandidateScanResult {
   projectId: string;
   projectName: string;
   rootPath: string;
+  prefixes: string;
   totalCount: number;
   skippedCount: number;
   candidates: CustomProjectCandidate[];

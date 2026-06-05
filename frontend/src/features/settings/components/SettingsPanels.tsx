@@ -688,11 +688,13 @@ export function GeneralSettingsPanel({
   traeDefaultLogsPath,
   traePathSaveStatus,
   customProjectRootPath,
+  customProjectPrefixes,
   customProjectPathSaveStatus,
   onTraeWorkspaceStoragePathChange,
   onTraeLogsPathChange,
   onTraePathsSave,
   onCustomProjectRootPathChange,
+  onCustomProjectPrefixesChange,
   onCustomProjectRootPathPick,
   onCustomProjectPathSave,
 }: {
@@ -704,11 +706,13 @@ export function GeneralSettingsPanel({
   traeDefaultLogsPath: string;
   traePathSaveStatus: 'idle' | 'saved' | 'error';
   customProjectRootPath: string;
+  customProjectPrefixes: string;
   customProjectPathSaveStatus: 'idle' | 'saved' | 'error';
   onTraeWorkspaceStoragePathChange: (value: string) => void;
   onTraeLogsPathChange: (value: string) => void;
   onTraePathsSave: () => void;
   onCustomProjectRootPathChange: (value: string) => void;
+  onCustomProjectPrefixesChange: (value: string) => void;
   onCustomProjectRootPathPick: () => void;
   onCustomProjectPathSave: () => void;
 }) {
@@ -741,7 +745,7 @@ export function GeneralSettingsPanel({
             自定义项目目录
           </p>
           <p className="text-xs text-stone-500 dark:text-stone-400 mb-4">
-            题库刷新会扫描该目录第一层中以 zw 开头的文件夹，并复制入本地题库。
+            题库刷新会扫描该目录第一层中匹配项目名前缀的文件夹，并复制入本地题库。
           </p>
 
           <div className="space-y-4">
@@ -764,6 +768,17 @@ export function GeneralSettingsPanel({
                   选择
                 </button>
               </div>
+            </Field>
+
+            <Field label="项目名前缀">
+              <input
+                type="text"
+                value={customProjectPrefixes}
+                onChange={(event) => onCustomProjectPrefixesChange(event.target.value)}
+                placeholder="zw，可用逗号或空格填写多个"
+                className={inputCls}
+              />
+              <InfoText label="匹配规则">默认 zw。支持多个前缀，例如：zw label cotv。</InfoText>
             </Field>
 
             <div className="flex items-center justify-end gap-3">

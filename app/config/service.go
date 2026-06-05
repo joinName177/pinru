@@ -27,6 +27,7 @@ type TraeSettings struct {
 // local projects into the question bank.
 type CustomProjectSettings struct {
 	RootPath string `json:"rootPath"`
+	Prefixes string `json:"prefixes"`
 }
 
 // Service manages application configuration, projects, LLM providers, and
@@ -147,11 +148,25 @@ func (s *ConfigService) GetCustomProjectSettings() (*CustomProjectSettings, erro
 	if err != nil {
 		rootPath = ""
 	}
-	return &CustomProjectSettings{RootPath: util.NormalizePath(rootPath)}, nil
+	prefixes, err := s.store.GetConfig("custom_project_prefixes")
+	if err != nil || strings.TrimSpace(prefixes) == "" {
+		prefixes = "zw"
+	}
+	return &CustomProjectSettings{
+		RootPath: util.NormalizePath(rootPath),
+		Prefixes: normalizeCustomProjectPrefixesForConfig(prefixes),
+	}, nil
 }
 
 func (s *ConfigService) SaveCustomProjectSettings(rootPath string) error {
-	return s.store.SetConfig("custom_project_root_path", util.NormalizePath(rootPath))
+	return s.SaveCustomProjectSettingsWithPrefixes(rootPath, "zw")
+}
+
+func (s *ConfigService) SaveCustomProjectSettingsWithPrefixes(rootPath string, prefixes string) error {
+	if err := s.store.SetConfig("custom_project_root_path", util.NormalizePath(rootPath)); err != nil {
+		return err
+	}
+	return s.store.SetConfig("custom_project_prefixes", normalizeCustomProjectPrefixesForConfig(prefixes))
 }
 
 func (s *ConfigService) PickCustomProjectRootDirectory() (string, error) {
@@ -170,6 +185,29 @@ func (s *ConfigService) PickCustomProjectRootDirectory() (string, error) {
 		return "", err
 	}
 	return util.NormalizePath(path), nil
+}
+
+func normalizeCustomProjectPrefixesForConfig(value string) string {
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == '，' || r == ';' || r == '；' || r == '\n' || r == '\t' || r == ' '
+	})
+	seen := make(map[string]struct{}, len(parts))
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		prefix := strings.ToLower(strings.TrimSpace(part))
+		if prefix == "" {
+			continue
+		}
+		if _, ok := seen[prefix]; ok {
+			continue
+		}
+		seen[prefix] = struct{}{}
+		result = append(result, prefix)
+	}
+	if len(result) == 0 {
+		return "zw"
+	}
+	return strings.Join(result, ",")
 }
 
 func (s *ConfigService) getGitLabSkipTLSVerify() (bool, error) {
