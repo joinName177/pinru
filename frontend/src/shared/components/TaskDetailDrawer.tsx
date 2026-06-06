@@ -146,6 +146,7 @@ interface TaskDetailDrawerProps {
   onStatusChange: (taskId: string, nextStatus: TaskStatus) => void;
   onTabChange: (tab: TaskDetailDrawerTab) => void;
   onAddSession: () => void;
+  onCompleteCurrentSessionAndAdd?: () => void | Promise<void>;
   onAutoExtractSessions: () => void | Promise<void>;
   onSessionChange: (localId: string, patch: SessionPatch) => void;
   onToggleSessionEditor: (localId: string) => void;
@@ -219,6 +220,7 @@ export default function TaskDetailDrawer({
   onStatusChange,
   onTabChange,
   onAddSession,
+  onCompleteCurrentSessionAndAdd,
   onAutoExtractSessions,
   onSessionChange,
   onToggleSessionEditor,
@@ -815,6 +817,18 @@ export default function TaskDetailDrawer({
                   <Plus className="h-3.5 w-3.5" />
                   新增
                 </button>
+                {onCompleteCurrentSessionAndAdd && (
+                  <button
+                    type="button"
+                    onClick={() => void onCompleteCurrentSessionAndAdd()}
+                    disabled={sessionExtracting || sessionListSaving}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-medium text-emerald-200 transition hover:bg-emerald-500/15 disabled:opacity-60"
+                    title="检查当前轮代码提交后再新增下一轮"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    完成
+                  </button>
+                )}
               </div>
             </div>
             {sessionModelOptions.length > 0 && (

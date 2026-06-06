@@ -209,6 +209,7 @@ export function BoardLayerStack({
           onStatusChange={detail.handleStatusChange}
           onTabChange={detail.setActiveDrawerTab}
           onAddSession={detail.handleAddSession}
+          onCompleteCurrentSessionAndAdd={() => void detail.handleCompleteCurrentSessionAndAdd()}
           onAutoExtractSessions={() => void detail.handleAutoExtractSessions()}
           onSessionChange={detail.handleSessionChange}
           onToggleSessionEditor={detail.toggleSessionEditor}

@@ -1014,6 +1014,89 @@ export function useBoardTaskDetail({
     setSessionSaveState('idle');
   };
 
+  const commitCurrentSessionCode = async (
+    run: ModelRunFromDB,
+    sessionId: string,
+    sessionIndex: number,
+  ): Promise<boolean> => {
+    if (!selected?.id) {
+      return false;
+    }
+
+    const actionKey = `commit-${run.id}`;
+    setCodePushActionKey(actionKey);
+    setDrawerError('');
+    try {
+      const record = await commitCode({
+        taskId: selected.id,
+        modelRunId: run.id,
+        sessionId,
+        sessionIndex,
+      });
+      setSelectedCodePushRecords((prev) => [
+        record,
+        ...prev.filter((item) => item.id !== record.id),
+      ]);
+      return true;
+    } catch (error) {
+      setDrawerError(error instanceof Error ? error.message : '提交代码失败');
+      return false;
+    } finally {
+      setCodePushActionKey(null);
+    }
+  };
+
+  const handleCompleteCurrentSessionAndAdd = async () => {
+    const run = selectedSessionModelRun;
+    if (!run) {
+      setDrawerError('当前模型没有可提交的执行目录');
+      return;
+    }
+    if (!run.localPath?.trim()) {
+      setDrawerError('当前模型缺少本地目录，不能提交代码');
+      return;
+    }
+
+    const currentSession = sessionListDraft[sessionListDraft.length - 1] ?? null;
+    const sessionId = currentSession?.sessionId?.trim() ?? '';
+    const sessionIndex = Math.max(sessionListDraft.length - 1, 0);
+    if (!sessionId) {
+      setDrawerError(`第 ${sessionIndex + 1} 轮还没有 sessionId，请先填写后再完成本轮`);
+      return;
+    }
+
+    const saved = await handleSessionListSave({
+      skipIfUnchanged: true,
+      modelRunId: run.id,
+    });
+    if (!saved) {
+      return;
+    }
+
+    const existingRecord = selectedCodePushRecords.find(
+      (record) => record.modelRunId === run.id && record.sessionId === sessionId,
+    );
+    if (existingRecord) {
+      handleAddSession();
+      return;
+    }
+
+    const confirmMessage =
+      `当前第 ${sessionIndex + 1} 轮已有 sessionId，但还没有提交代码。\n\n` +
+      '点击“确定”会先提交当前轮代码，提交成功后新增下一轮。\n' +
+      '点击“取消”后可以选择是否仅新增下一轮。';
+    if (window.confirm(confirmMessage)) {
+      const committed = await commitCurrentSessionCode(run, sessionId, sessionIndex);
+      if (!committed) {
+        return;
+      }
+    } else if (!window.confirm('不提交当前轮代码，直接新增下一轮？')) {
+      return;
+    }
+
+    handleAddSession();
+  };
+
   const handleSessionChange = (
     localId: string,
     patch: Partial<
@@ -1469,6 +1552,7 @@ export function useBoardTaskDetail({
     handleTaskTypeChange,
     handleResetAiReview,
     handleAddSession,
+    handleCompleteCurrentSessionAndAdd,
     handleAutoExtractSessions,
     handleSessionChange,
     toggleSessionEditor,
