@@ -1228,6 +1228,48 @@ func TestSyncTaskPromptFromArtifactPreservesSubmittedStatus(t *testing.T) {
 	}
 }
 
+func TestFindCodePushRecordForReviewPrefersSessionIndex(t *testing.T) {
+	store := openTestStore(t)
+	defer store.Close()
+
+	taskID := "task-code-push-review"
+	modelRunID := "run-code-push-review"
+	if err := store.CreateTaskWithModelRuns(Task{
+		ID:              taskID,
+		GitLabProjectID: 1001,
+		ProjectName:     "zw-001",
+		TaskType:        "Feature迭代",
+	}, []ModelRun{{ID: modelRunID, TaskID: taskID, ModelName: "ORIGIN"}}); err != nil {
+		t.Fatalf("CreateTaskWithModelRuns() error = %v", err)
+	}
+
+	records := []CodePushRecord{
+		{ID: "push-0", TaskID: taskID, ModelRunID: modelRunID, SessionID: "s0", SessionIndex: 0, LocalPath: "/tmp/demo", RepoName: "zw-1-1", CommitSHA: "commit0", Branch: "main"},
+		{ID: "push-1", TaskID: taskID, ModelRunID: modelRunID, SessionID: "s1", SessionIndex: 1, LocalPath: "/tmp/demo", RepoName: "zw-1-1", CommitSHA: "commit1", Branch: "main"},
+	}
+	for _, record := range records {
+		if err := store.UpsertCodePushRecord(record); err != nil {
+			t.Fatalf("UpsertCodePushRecord(%s) error = %v", record.ID, err)
+		}
+	}
+
+	record, err := store.FindCodePushRecordForReview(taskID, modelRunID, 0)
+	if err != nil {
+		t.Fatalf("FindCodePushRecordForReview() error = %v", err)
+	}
+	if record == nil || record.CommitSHA != "commit0" {
+		t.Fatalf("round 1 record = %#v, want commit0", record)
+	}
+
+	record, err = store.FindCodePushRecordForReview(taskID, modelRunID, 1)
+	if err != nil {
+		t.Fatalf("FindCodePushRecordForReview() error = %v", err)
+	}
+	if record == nil || record.CommitSHA != "commit1" {
+		t.Fatalf("round 2 record = %#v, want commit1", record)
+	}
+}
+
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
 

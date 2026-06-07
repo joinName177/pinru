@@ -1092,9 +1092,38 @@ func (s *JobService) executeAiReview(
 	}
 	ch := make(chan reviewOut, 1)
 
+	var reviewCommit *store.CodePushRecord
+	if modelRunID != "" {
+		record, err := s.store.FindCodePushRecordForReview(req.TaskID, modelRunID, roundNumber-1)
+		if err != nil {
+			slog.Warn("failed to load code push record for ai review",
+				"task_id", req.TaskID,
+				"model_run_id", modelRunID,
+				"round_number", roundNumber,
+				"error", err,
+			)
+		} else {
+			reviewCommit = record
+		}
+	}
+
 	go func() {
+		commitSHA := ""
+		commitURL := ""
+		repoURL := ""
+		if reviewCommit != nil {
+			commitSHA = strings.TrimSpace(reviewCommit.CommitSHA)
+			commitURL = strings.TrimSpace(reviewCommit.CommitURL)
+			repoURL = strings.TrimSpace(reviewCommit.RepoURL)
+		}
 		res, err := s.cliSvc.RunCodexReview(ctx, appcli.CodexReviewRequest{
 			LocalPath:         payload.LocalPath,
+			TaskID:            req.TaskID,
+			ModelRunID:        modelRunID,
+			ReviewRound:       roundNumber,
+			CommitSHA:         commitSHA,
+			CommitURL:         commitURL,
+			RepoURL:           repoURL,
 			OriginalPrompt:    strings.TrimSpace(round.OriginalPrompt),
 			CurrentPrompt:     strings.TrimSpace(round.PromptText),
 			ParentReviewNotes: "", // 线性模型不再有父节点

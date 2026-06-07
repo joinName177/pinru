@@ -49,6 +49,52 @@ func (s *Store) ListCodePushRecords(taskID string) ([]CodePushRecord, error) {
 	return records, rows.Err()
 }
 
+func (s *Store) FindCodePushRecordForReview(taskID, modelRunID string, sessionIndex int) (*CodePushRecord, error) {
+	rows, err := s.DB.Query(
+		`SELECT `+codePushRecordColumns+`
+		   FROM code_push_records
+		  WHERE task_id = ?
+		    AND model_run_id = ?
+		    AND session_index = ?
+		    AND commit_sha <> ''
+		  ORDER BY updated_at DESC, created_at DESC
+		  LIMIT 1`,
+		taskID, modelRunID, sessionIndex,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if rows.Next() {
+		record, err := scanCodePushRecordRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		return &record, rows.Err()
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	record, err := scanCodePushRecord(s.DB.QueryRow(
+		`SELECT `+codePushRecordColumns+`
+		   FROM code_push_records
+		  WHERE task_id = ?
+		    AND model_run_id = ?
+		    AND commit_sha <> ''
+		  ORDER BY session_index DESC, updated_at DESC, created_at DESC
+		  LIMIT 1`,
+		taskID, modelRunID,
+	))
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &record, nil
+}
+
 func (s *Store) GetCodePushRecord(id string) (*CodePushRecord, error) {
 	record, err := scanCodePushRecord(s.DB.QueryRow(
 		`SELECT `+codePushRecordColumns+` FROM code_push_records WHERE id = ?`,

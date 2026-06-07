@@ -644,6 +644,12 @@ type CodexReviewResult struct {
 
 type CodexReviewRequest struct {
 	LocalPath         string `json:"localPath"`
+	TaskID            string `json:"taskId"`
+	ModelRunID        string `json:"modelRunId"`
+	ReviewRound       int    `json:"reviewRound"`
+	CommitSHA         string `json:"commitSha"`
+	CommitURL         string `json:"commitUrl"`
+	RepoURL           string `json:"repoUrl"`
 	OriginalPrompt    string `json:"originalPrompt"`
 	CurrentPrompt     string `json:"currentPrompt"`
 	ParentReviewNotes string `json:"parentReviewNotes"`
@@ -678,6 +684,7 @@ type pgCodeProjectContext struct {
 	Exists         bool                 `json:"exists"`
 	ProjectIDGuess string               `json:"project_id_guess"`
 	Git            pgCodeGitContext     `json:"git"`
+	ReviewCommit   *pgCodeCommitContext `json:"review_commit,omitempty"`
 	RecentFiles    []pgCodeRecentFile   `json:"recent_files"`
 	Summary        pgCodeProjectSummary `json:"summary"`
 }
@@ -688,6 +695,20 @@ type pgCodeGitContext struct {
 	StatusLines     []string `json:"status_lines"`
 	ChangedFiles    []string `json:"changed_files"`
 	ChangedFilesRaw []string `json:"changed_files_repo_relative"`
+}
+
+type pgCodeCommitContext struct {
+	CommitSHA       string   `json:"commit_sha"`
+	CommitURL       string   `json:"commit_url,omitempty"`
+	RepoURL         string   `json:"repo_url,omitempty"`
+	Found           bool     `json:"found"`
+	RepoRoot        *string  `json:"repo_root,omitempty"`
+	Subject         string   `json:"subject,omitempty"`
+	ChangedFiles    []string `json:"changed_files"`
+	ChangedFilesRaw []string `json:"changed_files_repo_relative"`
+	NameStatusLines []string `json:"name_status_lines"`
+	Stat            string   `json:"stat,omitempty"`
+	Error           string   `json:"error,omitempty"`
 }
 
 type pgCodeRecentFile struct {
@@ -720,6 +741,9 @@ func (s *CliService) RunCodexReview(ctx context.Context, req CodexReviewRequest,
 	reviewContext, ctxErr := s.collectPgCodeReviewContext(ctx, localPath)
 	if ctxErr != nil {
 		slog.Warn("collectPgCodeReviewContext failed", "localPath", localPath, "error", ctxErr)
+	}
+	if reviewContext != nil {
+		attachReviewCommitContext(ctx, reviewContext, localPath, req)
 	}
 	reviewPrompt := buildCodexReviewPrompt(req, reviewContext)
 	if runtime.GOOS == "windows" {
@@ -1174,6 +1198,116 @@ func collectNativeGitContext(ctx context.Context, scope string, changedLimit int
 	return context
 }
 
+func attachReviewCommitContext(ctx context.Context, project *pgCodeProjectContext, localPath string, req CodexReviewRequest) {
+	commitSHA := strings.TrimSpace(req.CommitSHA)
+	if project == nil || commitSHA == "" || ctx.Err() != nil {
+		return
+	}
+	scope := strings.TrimSpace(localPath)
+	if scope == "" {
+		scope = project.ResolvedPath
+	}
+	if scope == "" {
+		scope = project.InputPath
+	}
+	if scope == "" {
+		return
+	}
+
+	commitContext := collectReviewCommitContext(ctx, scope, commitSHA, strings.TrimSpace(req.CommitURL), strings.TrimSpace(req.RepoURL), 80)
+	project.ReviewCommit = &commitContext
+	if !commitContext.Found {
+		return
+	}
+
+	project.Git.ChangedFilesRaw = limitStrings(uniqueStrings(commitContext.ChangedFilesRaw), 80)
+	project.Git.ChangedFiles = limitStrings(uniqueStrings(commitContext.ChangedFiles), 80)
+	if project.Git.RepoRoot == nil && commitContext.RepoRoot != nil {
+		project.Git.RepoRoot = commitContext.RepoRoot
+	}
+	project.Git.InGit = true
+	project.Summary = summarizeNativeProjectFiles(scope, project.Git.ChangedFiles, project.RecentFiles)
+}
+
+func collectReviewCommitContext(ctx context.Context, scope, commitSHA, commitURL, repoURL string, changedLimit int) pgCodeCommitContext {
+	result := pgCodeCommitContext{
+		CommitSHA:       commitSHA,
+		CommitURL:       commitURL,
+		RepoURL:         repoURL,
+		Found:           false,
+		ChangedFiles:    []string{},
+		ChangedFilesRaw: []string{},
+		NameStatusLines: []string{},
+	}
+	if ctx.Err() != nil {
+		return result
+	}
+
+	rootResult := runNativeCommand(ctx, "git", "-C", scope, "rev-parse", "--show-toplevel")
+	if rootResult.code != 0 || strings.TrimSpace(rootResult.stdout) == "" {
+		result.Error = strings.TrimSpace(rootResult.stderr)
+		if result.Error == "" {
+			result.Error = "当前目录不是 Git 仓库，无法读取本轮 commit"
+		}
+		return result
+	}
+	repoRoot := strings.TrimSpace(rootResult.stdout)
+	if absRoot, err := filepath.Abs(repoRoot); err == nil {
+		repoRoot = absRoot
+	}
+	result.RepoRoot = &repoRoot
+
+	verifyResult := runNativeCommand(ctx, "git", "-C", repoRoot, "rev-parse", "--verify", commitSHA+"^{commit}")
+	if verifyResult.code != 0 || strings.TrimSpace(verifyResult.stdout) == "" {
+		result.Error = strings.TrimSpace(verifyResult.stderr)
+		if result.Error == "" {
+			result.Error = "本地仓库中找不到该 commit，无法读取本轮改动"
+		}
+		return result
+	}
+	result.CommitSHA = strings.TrimSpace(verifyResult.stdout)
+	result.Found = true
+
+	subjectResult := runNativeCommand(ctx, "git", "-C", repoRoot, "show", "-s", "--format=%s", result.CommitSHA)
+	if subjectResult.code == 0 {
+		result.Subject = strings.TrimSpace(subjectResult.stdout)
+	}
+
+	nameStatusResult := runNativeCommand(ctx, "git", "-C", repoRoot, "show", "--name-status", "--format=", result.CommitSHA)
+	if nameStatusResult.code == 0 {
+		result.NameStatusLines = limitStrings(nonEmptyLines(nameStatusResult.stdout), changedLimit)
+		result.ChangedFilesRaw = limitStrings(uniqueStrings(commitNameStatusPaths(result.NameStatusLines)), changedLimit)
+		result.ChangedFiles = repoRelativeToProjectRelative(repoRoot, scope, result.ChangedFilesRaw)
+	} else {
+		result.Error = strings.TrimSpace(nameStatusResult.stderr)
+	}
+
+	statResult := runNativeCommand(ctx, "git", "-C", repoRoot, "show", "--stat", "--oneline", "--no-renames", "--format=short", result.CommitSHA)
+	if statResult.code == 0 {
+		result.Stat = limitText(statResult.stdout, 6000)
+	}
+
+	return result
+}
+
+func commitNameStatusPaths(lines []string) []string {
+	paths := make([]string, 0, len(lines))
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if len(fields) >= 3 && (strings.HasPrefix(fields[0], "R") || strings.HasPrefix(fields[0], "C")) {
+			paths = append(paths, normalizeNativeStatusPath(fields[len(fields)-1]))
+			continue
+		}
+		if len(fields) >= 2 {
+			paths = append(paths, normalizeNativeStatusPath(fields[len(fields)-1]))
+		}
+	}
+	return paths
+}
+
 func normalizeNativeStatusPath(raw string) string {
 	if strings.Contains(raw, " -> ") {
 		parts := strings.Split(raw, " -> ")
@@ -1354,6 +1488,17 @@ func limitStrings(values []string, limit int) []string {
 	return values
 }
 
+func limitText(value string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(strings.TrimSpace(value))
+	if len(runes) <= limit {
+		return string(runes)
+	}
+	return string(runes[:limit]) + "\n...<truncated>"
+}
+
 func topNamesByCount(counts map[string]int, limit int) []string {
 	items := sortCountKeys(counts)
 	if len(items) > limit {
@@ -1393,11 +1538,11 @@ func buildCodexReviewPrompt(req CodexReviewRequest, project *pgCodeProjectContex
 	parts = append(parts, "/pg-code")
 	parts = append(parts, strings.TrimSpace(`
 补充规则：
-1. 【严格限制】只能基于任务提示词、git 变更、最近更新文件以及你实际读取过的文件下结论。允许主动读取和评审的仓库文件仍限于 git 变更文件（git status / git diff 列出的文件）以及最近更新文件。
+1. 【严格限制】只能基于任务提示词、本轮代码变更、最近更新文件以及你实际读取过的文件下结论。若项目上下文包含 review_commit，说明本轮代码已先提交，必须优先以 review_commit.changed_files / review_commit.name_status_lines / review_commit.stat 作为本轮变更依据；不要再用当前工作区 git status/git diff 为空来判断“未发现变更”。没有 review_commit 时，才使用 git status / git diff 列出的文件。
 2. 严禁猜测运行效果、页面视觉、接口返回、测试结果或用户体验。
 3. keyLocations 只能填写 git 变更文件或最近更新文件中 1 到 3 个你实际核验过的代码位置，写不出时可留空。
 4. isCompleted 和 isSatisfied 必须分开判断：核心交付物出现、主流程大体落地时，isCompleted 可填 true；只有主要求覆盖接近 90 分、没有明确主链路缺口、关键边界不影响验收时，isSatisfied 才能填 true。80% 左右只能算“完成但不满意”，不能直接满意通过。
-5. 找不到任务提示词或有效改动时，reviewNotes 注明”依据不足”，isCompleted 和 isSatisfied 均填 false。
+5. 找不到任务提示词或有效改动时，reviewNotes 注明”依据不足”，isCompleted 和 isSatisfied 均填 false；但当 review_commit.found=true 且 changed_files 不为空时，不得把当前工作区 clean 当作无有效改动。
 6. projectType 和 changeScope 按最符合实际情况的选项填写。
 7. 任务提示词以“当前复核节点上下文”里的 original_prompt/current_prompt 为唯一来源，只把其中明确写出的要求作为验收标准；不要再去读取本地提示词文件，也不要把未写明的扩展点、常识性联想、顺手优化项记为未完成或不满意。parent_review_notes 仅作辅助上下文，不能替代任务提示词本身。
 8. 当 isCompleted=false 或 isSatisfied=false 时，reviewNotes 必须回指 original_prompt/current_prompt 中对应的具体句子、短语或明确要求；若拆分到 issues，则每条 issues[*].reviewNotes 也必须分别回指对应 prompt 语句。回指不到的内容不能作为主缺口，不得据此判定未完成或不满意。

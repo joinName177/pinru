@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -106,6 +107,17 @@ func createMockPythonExecutable(t *testing.T, mode string) string {
 		t.Fatalf("os.WriteFile(%s) error = %v", path, err)
 	}
 	return path
+}
+
+func runGitForCliTest(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s error = %v\n%s", strings.Join(args, " "), err, string(out))
+	}
+	return string(out)
 }
 
 func TestValidatePermissionMode(t *testing.T) {
@@ -463,9 +475,52 @@ func TestCollectPgCodeReviewContextUsesResolvedPythonPath(t *testing.T) {
 	}
 }
 
+func TestAttachReviewCommitContextUsesCommittedDiffWhenWorkingTreeClean(t *testing.T) {
+	repoDir := t.TempDir()
+	runGitForCliTest(t, repoDir, "init", "-b", "main")
+	runGitForCliTest(t, repoDir, "config", "user.name", "PINRU Test")
+	runGitForCliTest(t, repoDir, "config", "user.email", "pinru@example.com")
+
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(main.go) error = %v", err)
+	}
+	runGitForCliTest(t, repoDir, "add", "-A")
+	runGitForCliTest(t, repoDir, "commit", "-m", "初始化项目")
+
+	if err := os.WriteFile(filepath.Join(repoDir, "feature.go"), []byte("package main\nfunc feature() {}\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(feature.go) error = %v", err)
+	}
+	runGitForCliTest(t, repoDir, "add", "-A")
+	runGitForCliTest(t, repoDir, "commit", "-m", "feat: add feature")
+	commitSHA := strings.TrimSpace(runGitForCliTest(t, repoDir, "rev-parse", "HEAD"))
+
+	project, err := collectNativePgCodeReviewContext(context.Background(), repoDir)
+	if err != nil {
+		t.Fatalf("collectNativePgCodeReviewContext() error = %v", err)
+	}
+	if got := project.Git.ChangedFiles; len(got) != 0 {
+		t.Fatalf("precondition changed files = %#v, want clean working tree", got)
+	}
+
+	attachReviewCommitContext(context.Background(), project, repoDir, CodexReviewRequest{
+		CommitSHA: commitSHA,
+	})
+
+	if project.ReviewCommit == nil || !project.ReviewCommit.Found {
+		t.Fatalf("ReviewCommit = %#v, want found commit", project.ReviewCommit)
+	}
+	if !reflect.DeepEqual(project.Git.ChangedFiles, []string{"feature.go"}) {
+		t.Fatalf("Git.ChangedFiles = %#v, want committed feature.go", project.Git.ChangedFiles)
+	}
+	if !strings.Contains(project.ReviewCommit.Stat, "feature.go") {
+		t.Fatalf("ReviewCommit.Stat = %q, want feature.go", project.ReviewCommit.Stat)
+	}
+}
+
 func TestBuildCodexReviewPromptIncludesEvidenceGuardrails(t *testing.T) {
 	prompt := buildCodexReviewPrompt(CodexReviewRequest{
 		LocalPath:         "/tmp/demo",
+		CommitSHA:         "abc123",
 		OriginalPrompt:    "实现每日任务与奖励记录",
 		CurrentPrompt:     "修复奖励记录漏记问题",
 		ParentReviewNotes: "奖励记录路径缺少空值保护",
@@ -483,8 +538,14 @@ func TestBuildCodexReviewPromptIncludesEvidenceGuardrails(t *testing.T) {
 	if !strings.Contains(prompt, "/pg-code") {
 		t.Fatalf("prompt = %q, want /pg-code prefix", prompt)
 	}
-	if !strings.Contains(prompt, "只能基于任务提示词、git 变更、最近更新文件以及你实际读取过的文件下结论") {
+	if !strings.Contains(prompt, "只能基于任务提示词、本轮代码变更、最近更新文件以及你实际读取过的文件下结论") {
 		t.Fatalf("prompt missing evidence guardrail: %q", prompt)
+	}
+	if !strings.Contains(prompt, "必须优先以 review_commit.changed_files") {
+		t.Fatalf("prompt missing review commit priority rule: %q", prompt)
+	}
+	if !strings.Contains(prompt, "不要再用当前工作区 git status/git diff 为空来判断") {
+		t.Fatalf("prompt missing clean working tree warning: %q", prompt)
 	}
 	if !strings.Contains(prompt, "original_prompt/current_prompt 为唯一来源") {
 		t.Fatalf("prompt missing db-only prompt guidance: %q", prompt)
