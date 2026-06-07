@@ -1546,7 +1546,7 @@ func buildCodexReviewPrompt(req CodexReviewRequest, project *pgCodeProjectContex
 6. projectType 和 changeScope 按最符合实际情况的选项填写。
 7. 任务提示词以“当前复核节点上下文”里的 original_prompt/current_prompt 为唯一来源，只把其中明确写出的要求作为验收标准；不要再去读取本地提示词文件，也不要把未写明的扩展点、常识性联想、顺手优化项记为未完成或不满意。parent_review_notes 仅作辅助上下文，不能替代任务提示词本身。
 8. 当 isCompleted=false 或 isSatisfied=false 时，reviewNotes 必须回指 original_prompt/current_prompt 中对应的具体句子、短语或明确要求；若拆分到 issues，则每条 issues[*].reviewNotes 也必须分别回指对应 prompt 语句。回指不到的内容不能作为主缺口，不得据此判定未完成或不满意。
-9. nextPrompt 只能围绕主缺口补充最小修复指令，必须与已回指的 prompt 要求直接对应，不得扩展额外需求；若拆分到 issues，则每条 issues[*].nextPrompt 也遵守同样规则。
+9. nextPrompt 只能围绕主缺口补充最小修复指令，必须与已回指的 prompt 要求直接对应，不得扩展额外需求；若拆分到 issues，则每条 issues[*].nextPrompt 也遵守同样规则。Bug修复类 nextPrompt 必须像用户可执行的 bug 修复提示词：写清触发场景、当前异常、期望修复后的业务结果和必要验收点；不要直接写“把 A 放到 B 前面”“修改某函数”“调整某字段”“在某文件里...”这类实现方案，除非 current_prompt 本身就是代码级修复要求。
 10. 当本轮发现多个独立问题时，必须通过 issues 数组分别列出；不要把多个问题揉成一条。
 11. nextPromptTaskType 根据 nextPrompt 的任务性质填写，只能在“Bug修复、Feature迭代、0-1代码生成、代码理解、代码重构、工程化、代码测试、未归类”中选择；满意且 nextPrompt 为“无”时填“未归类”。
 12. issues[*].issueType 默认填“Bug修复”，除非证据明确表明是其他类型。
@@ -1555,7 +1555,7 @@ func buildCodexReviewPrompt(req CodexReviewRequest, project *pgCodeProjectContex
 15. Bug修复类必须说明原 bug 的触发条件、修复后对应条件为什么不会再复现，以及相邻边界是否覆盖；如果只看到相关文件被修改，但无法证明原触发条件被闭环处理，isCompleted 可为 true，但 isSatisfied 必须为 false。
 16. 高风险场景默认加严：权限/角色隔离、金额/优惠/计费、状态流转、导出下载、文件上传、WebSocket/通知、路由匹配、异步刷新、并发或库存容量。只要没有把请求到响应、状态落库到页面回显、异常边界到用户反馈核清楚，就不能判定满意。
 17. “未运行页面或接口、仅静态取证”不是自动失败，但对 Feature/Bug/0-1 的跨文件或跨前后端主流程，只能在代码证据已经完整闭环且无关键边界缺口时满意；否则默认完成但不满意，并在 reviewNotes 说明缺少哪段链路证据。
-18. 若 isSatisfied=false，reviewNotes 必须给出可核验的具体不满意原因，nextPrompt 必须给出围绕该缺口的最小修复词；不能只写“证据不足”“测试不足”“未运行页面”这类泛化结论。
+18. 若 isSatisfied=false，reviewNotes 必须给出可核验的具体不满意原因，nextPrompt 必须给出围绕该缺口的最小修复词；不能只写“证据不足”“测试不足”“未运行页面”这类泛化结论。nextPrompt 要描述要修复的用户可感知问题和修复后的验收结果，不要把复审里的代码根因原样改写成代码操作步骤。
 19. 若本轮已通过，issues 返回空数组，但 reviewNotes 不能只填“无”；必须用一两句话说明已经核验哪些核心要求、关键代码位置和主链路闭环依据，作为通过依据。
 `))
 

@@ -11,7 +11,7 @@ import type { MouseEvent } from 'react';
 import type { Task, TaskStatus } from '../../../store';
 import { getTaskTypePresentation } from '../../../api/config';
 import type { PromptGenerationStatus, ReviewStatus } from '../../../api/task';
-import { formatTaskDisplayId } from '../../../shared/lib/taskId';
+import { extractTaskClaimSequence, formatTaskDisplayId } from '../../../shared/lib/taskId';
 import type { TaskTypeOverviewSummary } from '../../../shared/lib/taskTypeOverview';
 
 export type CardSize = 'sm' | 'md' | 'lg';
@@ -129,6 +129,29 @@ export function TaskRoundBadge({
   );
 }
 
+function TaskSequenceBadge({
+  sequence,
+  compact = false,
+}: {
+  sequence: number | null;
+  compact?: boolean;
+}) {
+  if (!sequence) {
+    return null;
+  }
+
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border border-stone-200 bg-stone-50 font-mono font-semibold tabular-nums text-stone-500 dark:border-stone-700 dark:bg-stone-800/60 dark:text-stone-300 ${
+        compact ? 'px-2 py-0.5 text-[10px]' : 'px-2.5 py-1 text-[11px]'
+      }`}
+      title={`第 ${sequence} 题`}
+    >
+      #{sequence}
+    </span>
+  );
+}
+
 function TaskAiReviewBadge({
   rounds,
   status,
@@ -191,6 +214,7 @@ export function TaskCard({
   const promptGenerationMeta = PROMPT_GENERATION_STATUS[promptGenerationStatus];
   const showPromptBadge =
     promptGenerationStatus === 'running' || promptGenerationStatus === 'error';
+  const taskSequence = extractTaskClaimSequence(task.id);
 
   if (size === 'sm') {
     return (
@@ -227,6 +251,7 @@ export function TaskCard({
             <span className={`text-[10px] px-2 py-0.5 rounded-lg font-bold border ${cfg.badgeCls}`}>
               {cfg.label}
             </span>
+            <TaskSequenceBadge sequence={taskSequence} compact />
             {!selectionMode && (
               <button
                 onClick={(event) => {
@@ -319,17 +344,20 @@ export function TaskCard({
             <TaskRoundBadge rounds={task.executionRounds} />
             <TaskAiReviewBadge rounds={task.aiReviewRounds} status={task.aiReviewStatus} />
           </div>
-          {!selectionMode && (
-            <button
-              onClick={(event) => {
-                event.stopPropagation();
-                onDelete();
-              }}
-              className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg text-stone-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 cursor-default"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-          )}
+          <div className="ml-auto flex items-center gap-2">
+            <TaskSequenceBadge sequence={taskSequence} />
+            {!selectionMode && (
+              <button
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDelete();
+                }}
+                className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg text-stone-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 cursor-default"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         </div>
         <p className="font-semibold text-base text-stone-900 dark:text-stone-50 leading-snug line-clamp-2 mb-1">
           {task.projectName}
@@ -391,6 +419,7 @@ export function TaskCard({
           <div className={`w-1.5 h-1.5 rounded-full ${cfg.dotCls}`} />
         )}
         <div className="flex items-center gap-2">
+          <TaskSequenceBadge sequence={taskSequence} />
           <span className="text-[11px] text-stone-400 dark:text-stone-500 flex items-center gap-1">
             <Clock className="w-3 h-3" />
             {new Date(task.createdAt * 1000).toLocaleDateString('zh-CN')}

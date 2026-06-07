@@ -323,6 +323,9 @@ func TestPgCodeReviewSchemaDescriptionsEnforcePromptScopedReview(t *testing.T) {
 	if !strings.Contains(nextPromptDesc, "只允许围绕 reviewNotes 已回指的主缺口") {
 		t.Fatalf("nextPrompt description = %q, want focused-fix rule", nextPromptDesc)
 	}
+	if !strings.Contains(nextPromptDesc, "触发场景、当前异常、期望修复后的业务结果和必要验收点") {
+		t.Fatalf("nextPrompt description = %q, want bug prompt shape rule", nextPromptDesc)
+	}
 
 	issues, ok := properties["issues"].(map[string]interface{})
 	if !ok {
@@ -358,6 +361,9 @@ func TestPgCodeReviewSchemaDescriptionsEnforcePromptScopedReview(t *testing.T) {
 	issueNextPromptDesc, _ := issueNextPrompt["description"].(string)
 	if !strings.Contains(issueNextPromptDesc, "只修复当前子问题对应的主缺口") {
 		t.Fatalf("issues.items.nextPrompt description = %q, want focused-fix rule", issueNextPromptDesc)
+	}
+	if !strings.Contains(issueNextPromptDesc, "不要直接写代码实现步骤") {
+		t.Fatalf("issues.items.nextPrompt description = %q, want no implementation-step rule", issueNextPromptDesc)
 	}
 }
 
@@ -564,6 +570,12 @@ func TestBuildCodexReviewPromptIncludesEvidenceGuardrails(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "nextPrompt 只能围绕主缺口补充最小修复指令") {
 		t.Fatalf("prompt missing focused nextPrompt rule: %q", prompt)
+	}
+	if !strings.Contains(prompt, "Bug修复类 nextPrompt 必须像用户可执行的 bug 修复提示词") {
+		t.Fatalf("prompt missing bug nextPrompt shape rule: %q", prompt)
+	}
+	if !strings.Contains(prompt, "不要直接写“把 A 放到 B 前面”") {
+		t.Fatalf("prompt missing no implementation-step nextPrompt rule: %q", prompt)
 	}
 	if !strings.Contains(prompt, "代码理解类可以按文档交付物判断") {
 		t.Fatalf("prompt missing code-understanding relaxed rule: %q", prompt)

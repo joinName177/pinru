@@ -52,4 +52,18 @@ describe('TaskCard', () => {
 
     expect(screen.getByText('复审通过 · 第 2 轮')).toBeInTheDocument();
   });
+
+  it('shows the task sequence on the task card', () => {
+    render(
+      <TaskCard
+        task={createTask({ id: 'p1780327557517__feat__label-8232846794780805-17' })}
+        size="md"
+        onClick={vi.fn()}
+        onContextMenu={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('#17')).toBeInTheDocument();
+  });
 });
