@@ -1526,6 +1526,7 @@ export function useBoardTaskDetail({
     codePushActionKey,
     drawerLoading,
     drawerError,
+    setDrawerError,
     statusChanging,
     taskTypeChanging,
     aiReviewResetting,

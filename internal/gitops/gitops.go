@@ -130,8 +130,15 @@ func copyProjectDirectoryWithOptions(ctx context.Context, src, dst string, inclu
 	}
 	expandedSrc := util.ExpandTilde(src)
 	expandedDst := util.ExpandTilde(dst)
-	if _, err := os.Stat(expandedSrc); os.IsNotExist(err) {
+	srcInfo, err := os.Stat(expandedSrc)
+	if os.IsNotExist(err) {
 		return fmt.Errorf(errs.FmtSourceDirNotExist, expandedSrc)
+	}
+	if err != nil {
+		return err
+	}
+	if !srcInfo.IsDir() {
+		return fmt.Errorf("源路径不是文件夹：%s", expandedSrc)
 	}
 	if _, err := os.Stat(expandedDst); err == nil {
 		return fmt.Errorf(errs.FmtTargetDirExists, filepath.Base(expandedDst))

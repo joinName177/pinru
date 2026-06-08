@@ -659,14 +659,15 @@ type CodexReviewRequest struct {
 }
 
 type DissatisfactionSummaryRequest struct {
-	LocalPath      string `json:"localPath"`
-	ModelName      string `json:"modelName"`
-	OriginalPrompt string `json:"originalPrompt"`
-	CurrentPrompt  string `json:"currentPrompt"`
-	ReviewNotes    string `json:"reviewNotes"`
-	ProjectType    string `json:"projectType"`
-	ChangeScope    string `json:"changeScope"`
-	KeyLocations   string `json:"keyLocations"`
+	LocalPath        string `json:"localPath"`
+	ModelName        string `json:"modelName"`
+	OriginalPrompt   string `json:"originalPrompt"`
+	CurrentPrompt    string `json:"currentPrompt"`
+	ReviewNotes      string `json:"reviewNotes"`
+	ProjectType      string `json:"projectType"`
+	ChangeScope      string `json:"changeScope"`
+	KeyLocations     string `json:"keyLocations"`
+	ProductSatisfied bool   `json:"productSatisfied"`
 }
 
 type DissatisfactionSummaryResult struct {
@@ -1558,6 +1559,11 @@ func buildCodexReviewPrompt(req CodexReviewRequest, project *pgCodeProjectContex
 17. “未运行页面或接口、仅静态取证”不是自动失败，但对 Feature/Bug/0-1 的跨文件或跨前后端主流程，只能在代码证据已经完整闭环且无关键边界缺口时满意；否则默认完成但不满意，并在 reviewNotes 说明缺少哪段链路证据。
 18. 若 isSatisfied=false，reviewNotes 必须给出可核验的具体不满意原因，nextPrompt 必须给出围绕该缺口的最小修复词；不能只写“证据不足”“测试不足”“未运行页面”这类泛化结论。nextPrompt 要描述要修复的用户可感知问题和修复后的业务结果，不要把复审里的代码根因原样改写成代码操作步骤，也不要用复审报告口吻。
 19. 若本轮已通过，issues 返回空数组，但 reviewNotes 不能只填“无”；必须用一两句话说明已经核验哪些核心要求、关键代码位置和主链路闭环依据，作为通过依据。
+20. 如果产物已经满足 current_prompt 的主要交付要求，但处理过程存在不满意，可以保持 isSatisfied=true、nextPrompt=“无”、nextPromptTaskType=“未归类”，并在 reviewNotes 中明确写出“过程不满意：...”；过程不满意只描述处理过程漏掉的验证、拆分或确认动作，不要伪造成产物缺陷。
+21. 红线：只要 isSatisfied=false，nextPrompt 一定不能和 current_prompt/上一轮会话提示词雷同，不能复述上一轮提示词、照抄原句或只替换少量词；必须基于本轮 reviewNotes 中的问题现状重新组织成新的修复提示词。
+22. nextPrompt 必须使用自然语言清晰、顺畅、连贯地描述问题现状和修复后验收结果；不要写废话，不要描述问题原因、代码原因或“为什么会这样”，直接描述当前哪里不对、用户或业务会遇到什么、修复后应达到什么状态。
+22.1 修复提示词尽量不包含代码，不写代码片段、文件、文件名、文件路径、类名、方法名、变量名或命令等代码细节；除非 current_prompt 本身就是代码级修复要求，否则要把代码细节改写成用户可感知的问题现状和验收结果。
+23. 如果 nextPromptTaskType 或 issues[*].issueType 是 Bug修复，对应 nextPrompt 前面一定要加“修复”两个字。
 `))
 
 	reviewInput := map[string]string{
@@ -1586,13 +1592,14 @@ func buildDissatisfactionSummaryPrompt(req DissatisfactionSummaryRequest) string
 	var parts []string
 	parts = append(parts, strings.TrimSpace(dissatisfactionSummaryPromptTemplate))
 	summaryInput := map[string]string{
-		"model_name":      strings.TrimSpace(req.ModelName),
-		"original_prompt": strings.TrimSpace(req.OriginalPrompt),
-		"current_prompt":  strings.TrimSpace(req.CurrentPrompt),
-		"review_notes":    strings.TrimSpace(req.ReviewNotes),
-		"project_type":    strings.TrimSpace(req.ProjectType),
-		"change_scope":    strings.TrimSpace(req.ChangeScope),
-		"key_locations":   strings.TrimSpace(req.KeyLocations),
+		"model_name":        strings.TrimSpace(req.ModelName),
+		"original_prompt":   strings.TrimSpace(req.OriginalPrompt),
+		"current_prompt":    strings.TrimSpace(req.CurrentPrompt),
+		"review_notes":      strings.TrimSpace(req.ReviewNotes),
+		"project_type":      strings.TrimSpace(req.ProjectType),
+		"change_scope":      strings.TrimSpace(req.ChangeScope),
+		"key_locations":     strings.TrimSpace(req.KeyLocations),
+		"product_satisfied": strconv.FormatBool(req.ProductSatisfied),
 	}
 	if inputJSON, err := json.MarshalIndent(summaryInput, "", "  "); err == nil {
 		parts = append(parts, "现有复审证据如下，只能基于这些内容整理：\n"+string(inputJSON))

@@ -31,6 +31,7 @@ const (
 	gitCloneRetryAttempts          = 3
 	gitCloneRetryBackoff           = 2 * time.Second
 	gitCloneIdleTimeout            = 30 * time.Second
+	msgAiReviewCommitRequired      = "请先提交代码，再发起 AI 复审"
 )
 
 var errGitCloneIdleTimeout = fmt.Errorf(errs.FmtJobGitCloneIdleTimeout, gitCloneIdleTimeout)
@@ -104,6 +105,17 @@ func (s *JobService) SubmitJob(req SubmitJobRequest) (*store.BackgroundJob, erro
 		if !ok {
 			return nil, errors.New(errs.MsgJobAiReviewParseFail)
 		}
+		s.mu.Lock()
+		existing, err := s.findActiveJobLocked(req)
+		if err != nil {
+			s.mu.Unlock()
+			return nil, err
+		}
+		if existing != nil {
+			s.mu.Unlock()
+			return existing, nil
+		}
+		s.mu.Unlock()
 		preparedPayload, err := s.prepareAiReviewPayload(req.TaskID, payload)
 		if err != nil {
 			return nil, err
@@ -1032,10 +1044,6 @@ func (s *JobService) executeAiReview(
 	jobID string,
 	req SubmitJobRequest,
 ) (jobExecutionResult, error) {
-	if s.cliSvc == nil {
-		return jobExecutionResult{}, errors.New(errs.MsgJobCliUninitialized)
-	}
-
 	var payload AiReviewPayload
 	if err := json.Unmarshal([]byte(req.InputPayload), &payload); err != nil {
 		return jobExecutionResult{}, fmt.Errorf("%s：%w", errs.MsgJobAiReviewParseFail, err)
@@ -1043,6 +1051,9 @@ func (s *JobService) executeAiReview(
 	payload, err := s.prepareAiReviewPayload(req.TaskID, payload)
 	if err != nil {
 		return jobExecutionResult{}, err
+	}
+	if s.cliSvc == nil {
+		return jobExecutionResult{}, errors.New(errs.MsgJobCliUninitialized)
 	}
 	if payload.ReviewRoundID == nil || strings.TrimSpace(*payload.ReviewRoundID) == "" {
 		return jobExecutionResult{}, errors.New(errs.MsgJobAiReviewNoRound)
@@ -1187,21 +1198,25 @@ func (s *JobService) executeAiReview(
 		finalIsCompleted = false
 	}
 
+	nextPromptTaskType := resolveNextPromptTaskType(lastResult.NextPrompt, lastResult.NextPromptTaskType)
+	nextPrompt := ensureBugFixRepairPromptPrefix(lastResult.NextPrompt, nextPromptTaskType)
+
 	dissatisfactionSummary := ""
-	if !passed {
+	if shouldGenerateDissatisfactionSummary(passed, lastResult.ReviewNotes) {
 		s.emitProgress(jobID, req.JobType, req.TaskID, "running", 82,
 			strPtr(fmt.Sprintf("[%s] 正在整理不满意原因…", label)),
 			nil,
 		)
 		summary, err := s.cliSvc.RunCodexDissatisfactionSummary(ctx, appcli.DissatisfactionSummaryRequest{
-			LocalPath:      payload.LocalPath,
-			ModelName:      strings.TrimSpace(round.ModelName),
-			OriginalPrompt: strings.TrimSpace(round.OriginalPrompt),
-			CurrentPrompt:  strings.TrimSpace(round.PromptText),
-			ReviewNotes:    strings.TrimSpace(lastResult.ReviewNotes),
-			ProjectType:    strings.TrimSpace(lastResult.ProjectType),
-			ChangeScope:    strings.TrimSpace(lastResult.ChangeScope),
-			KeyLocations:   strings.TrimSpace(lastResult.KeyLocations),
+			LocalPath:        payload.LocalPath,
+			ModelName:        strings.TrimSpace(round.ModelName),
+			OriginalPrompt:   strings.TrimSpace(round.OriginalPrompt),
+			CurrentPrompt:    strings.TrimSpace(round.PromptText),
+			ReviewNotes:      strings.TrimSpace(lastResult.ReviewNotes),
+			ProjectType:      strings.TrimSpace(lastResult.ProjectType),
+			ChangeScope:      strings.TrimSpace(lastResult.ChangeScope),
+			KeyLocations:     strings.TrimSpace(lastResult.KeyLocations),
+			ProductSatisfied: passed,
 		}, func(line string) {
 			if isStructuredAiReviewLine(line) {
 				return
@@ -1236,8 +1251,8 @@ func (s *JobService) executeAiReview(
 		boolPtr(lastResult.IsSatisfied),
 		strings.TrimSpace(lastResult.ReviewNotes),
 		dissatisfactionSummary,
-		strings.TrimSpace(lastResult.NextPrompt),
-		resolveNextPromptTaskType(lastResult.NextPrompt, lastResult.NextPromptTaskType),
+		nextPrompt,
+		nextPromptTaskType,
 		strings.TrimSpace(lastResult.ProjectType),
 		strings.TrimSpace(lastResult.ChangeScope),
 		strings.TrimSpace(lastResult.KeyLocations),
@@ -1276,7 +1291,6 @@ func (s *JobService) executeAiReview(
 		}
 	}
 
-	nextPromptTaskType := resolveNextPromptTaskType(lastResult.NextPrompt, lastResult.NextPromptTaskType)
 	result := AiReviewResult{
 		ReviewRoundID:          round.ID,
 		ModelRunID:             modelRunID,
@@ -1286,7 +1300,7 @@ func (s *JobService) executeAiReview(
 		ReviewRound:            roundNumber,
 		ReviewNotes:            strings.TrimSpace(lastResult.ReviewNotes),
 		DissatisfactionSummary: dissatisfactionSummary,
-		NextPrompt:             strings.TrimSpace(lastResult.NextPrompt),
+		NextPrompt:             nextPrompt,
 		NextPromptTaskType:     nextPromptTaskType,
 		IsCompleted:            finalIsCompleted,
 		IsSatisfied:            lastResult.IsSatisfied,
@@ -1321,6 +1335,13 @@ func (s *JobService) prepareAiReviewPayload(taskID string, payload AiReviewPaylo
 			payload.ModelRunID = &trimmed
 		}
 	}
+	if payload.ModelRunID == nil {
+		modelRunID, err := s.resolveAiReviewModelRunID(taskID, payload.LocalPath)
+		if err != nil {
+			return AiReviewPayload{}, err
+		}
+		payload.ModelRunID = modelRunID
+	}
 	// 兼容旧版前端: reviewNodeId → reviewRoundId
 	if payload.ReviewRoundID == nil && payload.ReviewNodeID != nil {
 		payload.ReviewRoundID = payload.ReviewNodeID
@@ -1333,9 +1354,20 @@ func (s *JobService) prepareAiReviewPayload(taskID string, payload AiReviewPaylo
 			payload.ReviewRoundID = &trimmed
 		}
 	}
+	if payload.ReviewRoundID == nil {
+		if payload.LocalPath == "" {
+			return AiReviewPayload{}, errors.New(errs.MsgJobAiReviewNoLocalPath)
+		}
+		if _, err := s.requireCommittedCodeForAiReviewTarget(taskID, payload.ModelRunID, payload.LocalPath); err != nil {
+			return AiReviewPayload{}, err
+		}
+	}
 
 	round, err := s.ensureAiReviewRound(taskID, payload)
 	if err != nil {
+		return AiReviewPayload{}, err
+	}
+	if _, err := s.requireCommittedCodeForAiReviewRound(taskID, round); err != nil {
 		return AiReviewPayload{}, err
 	}
 
@@ -1354,6 +1386,67 @@ func (s *JobService) prepareAiReviewPayload(taskID string, payload AiReviewPaylo
 	}
 	payload.RoundSnapshot = &snapshot
 	return payload, nil
+}
+
+func (s *JobService) resolveAiReviewModelRunID(taskID, localPath string) (*string, error) {
+	normalizedTaskID := strings.TrimSpace(taskID)
+	normalizedPath := normalizeAiReviewPath(localPath)
+	if normalizedTaskID == "" || normalizedPath == "" {
+		return nil, nil
+	}
+
+	runs, err := s.store.ListModelRuns(normalizedTaskID)
+	if err != nil {
+		return nil, err
+	}
+	for _, run := range runs {
+		if run.LocalPath == nil {
+			continue
+		}
+		if normalizeAiReviewPath(*run.LocalPath) != normalizedPath {
+			continue
+		}
+		modelRunID := strings.TrimSpace(run.ID)
+		if modelRunID == "" {
+			return nil, nil
+		}
+		return &modelRunID, nil
+	}
+	return nil, nil
+}
+
+func (s *JobService) requireCommittedCodeForAiReviewTarget(taskID string, modelRunID *string, localPath string) (*store.CodePushRecord, error) {
+	roundNumber, err := s.store.GetNextRoundNumber(modelRunID, localPath)
+	if err != nil {
+		return nil, fmt.Errorf(errs.FmtJobNextRoundFail, err)
+	}
+	return s.findCommittedCodeForAiReview(taskID, modelRunID, roundNumber)
+}
+
+func (s *JobService) requireCommittedCodeForAiReviewRound(taskID string, round *store.AiReviewRound) (*store.CodePushRecord, error) {
+	if round == nil {
+		return nil, errors.New(errs.MsgJobAiReviewNoRound)
+	}
+	return s.findCommittedCodeForAiReview(taskID, round.ModelRunID, round.RoundNumber)
+}
+
+func (s *JobService) findCommittedCodeForAiReview(taskID string, modelRunID *string, roundNumber int) (*store.CodePushRecord, error) {
+	if modelRunID == nil || strings.TrimSpace(*modelRunID) == "" {
+		return nil, errors.New(msgAiReviewCommitRequired)
+	}
+	normalizedTaskID := strings.TrimSpace(taskID)
+	if normalizedTaskID == "" {
+		return nil, errors.New(errs.MsgJobAiReviewNoTask)
+	}
+	normalizedModelRunID := strings.TrimSpace(*modelRunID)
+	record, err := s.store.FindCodePushRecordForReview(normalizedTaskID, normalizedModelRunID, roundNumber-1)
+	if err != nil {
+		return nil, fmt.Errorf("读取代码提交记录失败：%w", err)
+	}
+	if record == nil || strings.TrimSpace(record.CommitSHA) == "" {
+		return nil, errors.New(msgAiReviewCommitRequired)
+	}
+	return record, nil
 }
 
 func parseAiReviewPayloadForDedup(raw string) (AiReviewPayload, bool) {
@@ -1547,6 +1640,32 @@ func resolveNextPromptTaskType(nextPrompt, explicitTaskType string) string {
 		return normalized
 	}
 	return inferReviewTaskTypeFromPrompt(nextPrompt)
+}
+
+func shouldGenerateDissatisfactionSummary(passed bool, reviewNotes string) bool {
+	if !passed {
+		return true
+	}
+	return containsProcessDissatisfaction(reviewNotes)
+}
+
+func containsProcessDissatisfaction(value string) bool {
+	text := strings.TrimSpace(value)
+	return strings.Contains(text, "过程不满意")
+}
+
+func ensureBugFixRepairPromptPrefix(nextPrompt, nextPromptTaskType string) string {
+	trimmed := strings.TrimSpace(nextPrompt)
+	if trimmed == "" || trimmed == "无" {
+		return trimmed
+	}
+	if normalizeReviewTaskType(nextPromptTaskType) != "Bug修复" {
+		return trimmed
+	}
+	if strings.HasPrefix(trimmed, "修复") {
+		return trimmed
+	}
+	return "修复" + strings.TrimLeft(trimmed, " ：:，,。.")
 }
 
 func inferReviewTaskTypeFromPrompt(prompt string) string {

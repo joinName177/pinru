@@ -11,7 +11,7 @@ import type { MouseEvent } from 'react';
 import type { Task, TaskStatus } from '../../../store';
 import { getTaskTypePresentation } from '../../../api/config';
 import type { PromptGenerationStatus, ReviewStatus } from '../../../api/task';
-import { extractTaskClaimSequence, formatTaskDisplayId } from '../../../shared/lib/taskId';
+import { extractTaskClaimSequence, formatTaskDisplayId, formatTaskSubtitle } from '../../../shared/lib/taskId';
 import type { TaskTypeOverviewSummary } from '../../../shared/lib/taskTypeOverview';
 
 export type CardSize = 'sm' | 'md' | 'lg';
@@ -215,6 +215,7 @@ export function TaskCard({
   const showPromptBadge =
     promptGenerationStatus === 'running' || promptGenerationStatus === 'error';
   const taskSequence = extractTaskClaimSequence(task.id);
+  const taskSubtitle = formatTaskSubtitle(task);
 
   if (size === 'sm') {
     return (
@@ -268,8 +269,11 @@ export function TaskCard({
         <p className="text-sm font-semibold text-stone-900 dark:text-stone-50 leading-snug line-clamp-1 mb-0.5">
           {task.projectName}
         </p>
-        <p className="font-mono text-[11px] text-stone-400 dark:text-stone-500 mb-1.5">
-          #{task.projectId}
+        <p
+          className="font-mono text-[11px] text-stone-400 dark:text-stone-500 mb-1.5 truncate"
+          title={`主编号：${taskSubtitle}；GitLab ID：${task.projectId}`}
+        >
+          {taskSubtitle}
         </p>
         <div className="flex flex-wrap items-center gap-1.5">
           <span
@@ -362,7 +366,12 @@ export function TaskCard({
         <p className="font-semibold text-base text-stone-900 dark:text-stone-50 leading-snug line-clamp-2 mb-1">
           {task.projectName}
         </p>
-        <p className="font-mono text-xs text-stone-400 dark:text-stone-500 mb-4">#{task.projectId}</p>
+        <p
+          className="font-mono text-xs text-stone-400 dark:text-stone-500 mb-4 truncate"
+          title={`主编号：${taskSubtitle}；GitLab ID：${task.projectId}`}
+        >
+          {taskSubtitle}
+        </p>
         <div className="flex items-center justify-between text-xs text-stone-500 dark:text-stone-400">
           <div className="flex items-center gap-1.5">
             <Clock className="w-3.5 h-3.5" />
@@ -440,7 +449,12 @@ export function TaskCard({
       <p className="font-semibold text-sm text-stone-900 dark:text-stone-50 mb-1 leading-snug line-clamp-2">
         {task.projectName}
       </p>
-      <p className="font-mono text-xs text-stone-400 dark:text-stone-500 mb-2">#{task.projectId}</p>
+      <p
+        className="font-mono text-xs text-stone-400 dark:text-stone-500 mb-2 truncate"
+        title={`主编号：${taskSubtitle}；GitLab ID：${task.projectId}`}
+      >
+        {taskSubtitle}
+      </p>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <span
           className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${typePresentation.badge}`}
