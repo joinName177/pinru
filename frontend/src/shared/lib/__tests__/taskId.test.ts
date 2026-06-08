@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractTaskClaimSequence, formatTaskDisplayId } from '../taskId';
+import { extractTaskClaimSequence, formatTaskDisplayId, formatTaskSubtitle } from '../taskId';
 
 describe('taskId helpers', () => {
   it('extracts claim sequence from long project-scoped task ids', () => {
@@ -47,5 +47,16 @@ describe('taskId helpers', () => {
         taskType: '代码生成',
       }),
     ).toBe('B-715-1');
+  });
+
+  it('builds a card subtitle from project name and claim sequence', () => {
+    expect(
+      formatTaskSubtitle({
+        id: 'pproject-1710000000001__bug__label-01849-2',
+        projectId: '1849',
+        projectName: 'czq-1',
+        taskType: 'Bug修复',
+      }),
+    ).toBe('czq-1-2');
   });
 });

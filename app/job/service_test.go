@@ -103,6 +103,35 @@ func TestHelperProcess(t *testing.T) {
 	}
 }
 
+func TestShouldGenerateDissatisfactionSummaryAllowsProcessOnlyPass(t *testing.T) {
+	if !shouldGenerateDissatisfactionSummary(false, "产物不满意：入口打不开") {
+		t.Fatalf("shouldGenerateDissatisfactionSummary(false, ...) = false, want true")
+	}
+	if !shouldGenerateDissatisfactionSummary(true, "过程不满意：只检查了静态列表，没有验证实时刷新。产物已满足要求。") {
+		t.Fatalf("shouldGenerateDissatisfactionSummary(true, process dissatisfaction) = false, want true")
+	}
+	if shouldGenerateDissatisfactionSummary(true, "已核验核心入口、状态回显和用户反馈，本轮通过。") {
+		t.Fatalf("shouldGenerateDissatisfactionSummary(true, pass notes) = true, want false")
+	}
+}
+
+func TestEnsureBugFixRepairPromptPrefix(t *testing.T) {
+	got := ensureBugFixRepairPromptPrefix("订单提交失败时页面没有给出错误提示，请补齐用户可见反馈。", "Bug修复")
+	if !strings.HasPrefix(got, "修复") {
+		t.Fatalf("ensureBugFixRepairPromptPrefix() = %q, want 修复 prefix", got)
+	}
+
+	got = ensureBugFixRepairPromptPrefix("修复订单提交失败时页面没有给出错误提示。", "Bug修复")
+	if strings.Count(got, "修复") != 1 {
+		t.Fatalf("ensureBugFixRepairPromptPrefix() = %q, want single 修复 prefix", got)
+	}
+
+	got = ensureBugFixRepairPromptPrefix("补充订单导出入口。", "Feature迭代")
+	if strings.HasPrefix(got, "修复") {
+		t.Fatalf("ensureBugFixRepairPromptPrefix() = %q, want no bug prefix for feature", got)
+	}
+}
+
 // createMockCodexExecutable returns a path to a platform-appropriate executable
 // that behaves according to mode when invoked as "codex". extraEnv entries are
 // set as environment variables in the subprocess. On Unix it creates a shell
@@ -124,23 +153,8 @@ func createMockCodexExecutable(t *testing.T, mode string, extraEnv map[string]st
 		for k, v := range extraEnv {
 			fmt.Fprintf(&sb, "set %s=%s\r\n", k, v)
 		}
-		// The codex args are: exec <reviewPrompt> -C <path> --dangerously-bypass-approvals-and-sandbox
-		//   --output-schema <schema> -o <outPath> --ephemeral
-		// reviewPrompt (arg 2) can contain literal newlines, which break cmd.exe command-line
-		// parsing when expanded. Skip it with a fixed SHIFT before entering the search loop.
-		sb.WriteString("shift /1\r\n") // skip 'exec'
-		sb.WriteString("shift /1\r\n") // skip reviewPrompt (may contain newlines — do NOT expand)
-		// Remaining args are all clean strings; find -o <outPath>.
-		sb.WriteString(":findout\r\n")
-		sb.WriteString("if \"%~1\"==\"\" goto endfind\r\n")
-		sb.WriteString("if \"%~1\"==\"-o\" (\r\n")
-		sb.WriteString("  set \"GO_TEST_OUT_PATH=%~2\"\r\n")
-		sb.WriteString("  goto endfind\r\n")
-		sb.WriteString(")\r\n")
-		sb.WriteString("shift /1\r\n")
-		sb.WriteString("goto findout\r\n")
-		sb.WriteString(":endfind\r\n")
-		// Call test binary without forwarding the problematic args.
+		// RunCodexReview passes output paths via env vars, so the Windows
+		// wrapper avoids parsing JSON schema / prompt args through cmd.exe.
 		fmt.Fprintf(&sb, "\"%s\" -test.run=TestHelperProcess\r\n", exe)
 		sb.WriteString("exit /b %errorlevel%\r\n")
 		if err := os.WriteFile(path, []byte(sb.String()), 0o755); err != nil {
@@ -288,6 +302,7 @@ func TestExecuteAiReviewRunsSingleRoundPerSubmission(t *testing.T) {
 	if err := testStore.CreateTaskWithModelRuns(task, modelRuns); err != nil {
 		t.Fatalf("CreateTaskWithModelRuns() error = %v", err)
 	}
+	createCommittedReviewRecord(t, testStore, taskID, "run-task-1", 0)
 	if err := testStore.CreateBackgroundJob(store.BackgroundJob{
 		ID:             "job-1",
 		JobType:        "ai_review",
@@ -381,6 +396,54 @@ func TestExecuteAiReviewRunsSingleRoundPerSubmission(t *testing.T) {
 	}
 }
 
+func TestExecuteAiReviewRequiresCommittedCode(t *testing.T) {
+	testStore := testutil.OpenTestStore(t)
+
+	taskID := "task-review-needs-commit"
+	workDir := t.TempDir()
+	modelRunID := "run-review-needs-commit"
+	if err := testStore.CreateTaskWithModelRuns(store.Task{
+		ID:               taskID,
+		GitLabProjectID:  1849,
+		ProjectName:      "label-01849",
+		TaskType:         "Bug修复",
+		PromptDifficulty: "困难",
+	}, []store.ModelRun{{
+		ID:        modelRunID,
+		TaskID:    taskID,
+		ModelName: "cotv21-pro",
+		LocalPath: &workDir,
+	}}); err != nil {
+		t.Fatalf("CreateTaskWithModelRuns() error = %v", err)
+	}
+
+	jobSvc := &JobService{store: testStore}
+	payloadJSON, err := json.Marshal(AiReviewPayload{
+		ModelRunID: strPtr(modelRunID),
+		ModelName:  "cotv21-pro",
+		LocalPath:  workDir,
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal(payload) error = %v", err)
+	}
+
+	_, err = jobSvc.executeAiReview(context.Background(), "job-review-needs-commit", SubmitJobRequest{
+		JobType:      "ai_review",
+		TaskID:       taskID,
+		InputPayload: string(payloadJSON),
+	})
+	if err == nil || !strings.Contains(err.Error(), msgAiReviewCommitRequired) {
+		t.Fatalf("executeAiReview() error = %v, want commit required", err)
+	}
+	rounds, err := testStore.ListAiReviewRoundsByModelRun(modelRunID)
+	if err != nil {
+		t.Fatalf("ListAiReviewRoundsByModelRun() error = %v", err)
+	}
+	if len(rounds) != 0 {
+		t.Fatalf("round count = %d, want 0 before code commit", len(rounds))
+	}
+}
+
 func TestExecuteAiReviewFailureMarksRoundNotCompletedOrSatisfied(t *testing.T) {
 	testStore := testutil.OpenTestStore(t)
 
@@ -403,6 +466,7 @@ func TestExecuteAiReviewFailureMarksRoundNotCompletedOrSatisfied(t *testing.T) {
 	if err := testStore.CreateTaskWithModelRuns(task, modelRuns); err != nil {
 		t.Fatalf("CreateTaskWithModelRuns() error = %v", err)
 	}
+	createCommittedReviewRecord(t, testStore, taskID, "run-review-fail", 0)
 
 	mockPath := createMockCodexExecutable(t, "codex_fail", nil)
 	cliSvc := appcli.NewWithResolver(func(name string) (string, error) {
@@ -601,19 +665,9 @@ func TestExecuteQuestionBankMaterializeCleansResidualDirectoriesAfterFailure(t *
 
 	root := t.TempDir()
 	bankSourcePath := filepath.Join(root, "broken-source")
-	if err := os.MkdirAll(bankSourcePath, 0o755); err != nil {
-		t.Fatalf("MkdirAll(bankSourcePath) error = %v", err)
+	if err := os.WriteFile(bankSourcePath, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("WriteFile(bankSourcePath) error = %v", err)
 	}
-	brokenFilePath := filepath.Join(bankSourcePath, "secret.txt")
-	if err := os.WriteFile(brokenFilePath, []byte("no access"), 0o600); err != nil {
-		t.Fatalf("WriteFile(brokenFilePath) error = %v", err)
-	}
-	if err := os.Chmod(brokenFilePath, 0); err != nil {
-		t.Fatalf("Chmod(brokenFilePath) error = %v", err)
-	}
-	t.Cleanup(func() {
-		_ = os.Chmod(brokenFilePath, 0o600)
-	})
 
 	targetSourcePath := filepath.Join(root, "label-01872-bug修复-1", "01872-bug修复-1")
 	copyPath := filepath.Join(root, "label-01872-bug修复-1", "cotv21-pro")
@@ -679,6 +733,7 @@ func TestExecuteAiReviewIncrementsReviewRoundAcrossSubmissions(t *testing.T) {
 	if err := testStore.UpdateModelRunReview("run-review-round", "warning", 2, nil); err != nil {
 		t.Fatalf("UpdateModelRunReview() error = %v", err)
 	}
+	createCommittedReviewRecord(t, testStore, taskID, "run-review-round", 2)
 
 	// Pre-create 2 completed rounds so the next round will be 3
 	modelRunIDPtr := "run-review-round"
@@ -1336,5 +1391,21 @@ func TestCleanupGitCloneTargetsRemovesCreatedPaths(t *testing.T) {
 		if _, err := os.Stat(util.NormalizePath(path)); !os.IsNotExist(err) {
 			t.Fatalf("expected %s to be removed, stat err = %v", path, err)
 		}
+	}
+}
+
+func createCommittedReviewRecord(t *testing.T, st *store.Store, taskID, modelRunID string, sessionIndex int) {
+	t.Helper()
+	record := store.CodePushRecord{
+		ID:           fmt.Sprintf("code-review-%s-%d", modelRunID, sessionIndex),
+		TaskID:       taskID,
+		ModelRunID:   modelRunID,
+		SessionID:    fmt.Sprintf("session-%d", sessionIndex+1),
+		SessionIndex: sessionIndex,
+		CommitSHA:    strings.Repeat("a", 40),
+		Status:       "committed",
+	}
+	if err := st.UpsertCodePushRecord(record); err != nil {
+		t.Fatalf("UpsertCodePushRecord() error = %v", err)
 	}
 }

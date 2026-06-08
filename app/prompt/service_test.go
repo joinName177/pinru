@@ -58,7 +58,7 @@ func TestGenerateCustomProjectPromptDocumentsWritesMarkdownToCustomRoot(t *testi
 		"",
 		"**代码理解**",
 		"",
-		"1. 【一般】梳理发布流程从填写到提交完成的关键状态流和失败分支。",
+		"1. 【简单】梳理发布流程从填写到提交完成的关键状态流和失败分支，并沉淀为 README 文档。",
 	}, "\n")
 	svc := &PromptService{
 		store:  testStore,
@@ -106,15 +106,18 @@ func TestGenerateCustomProjectPromptDocumentsWritesMarkdownToCustomRoot(t *testi
 	}
 }
 
-func TestBuildCustomProjectPromptDocumentPromptUsesBalancedDifficultyRules(t *testing.T) {
+func TestBuildCustomProjectPromptDocumentPromptUsesFixedBatchRules(t *testing.T) {
 	prompt := buildCustomProjectPromptDocumentPrompt("zw-001", nil)
 
 	requiredSnippets := []string{
-		"简单约 3 条、一般约 10 条、困难约 8 条",
-		"默认不要生成地狱",
+		"只生成 11 条，其中 0-1代码生成 5 条，Feature迭代 5 条，代码理解 1 条",
+		"代码理解必须是【简单】",
+		"整批精确控制为【一般】3 条、【困难】7 条",
+		"不要生成【地狱】",
 		"一般题必须带一个真实链路压力",
 		"困难题必须同时包含两个以上压力点",
-		"简单题建议 40-80 字，一般题建议 70-110 字，困难题建议 90-140 字",
+		"要求把梳理结果沉淀为 README 文档",
+		"代码理解简单题建议 40-80 字，一般题建议 70-110 字，困难题建议 90-140 字",
 	}
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(prompt, snippet) {
@@ -122,8 +125,16 @@ func TestBuildCustomProjectPromptDocumentPromptUsesBalancedDifficultyRules(t *te
 		}
 	}
 
-	if strings.Contains(prompt, "简单约 8 条") || strings.Contains(prompt, "困难约 3 条") {
-		t.Fatalf("custom prompt document prompt still contains old low-complexity distribution:\n%s", prompt)
+	staleSnippets := []string{
+		"只生成 21 条",
+		"0-1代码生成 10 条",
+		"Feature迭代 10 条",
+		"简单约 3 条、一般约 10 条、困难约 8 条",
+	}
+	for _, snippet := range staleSnippets {
+		if strings.Contains(prompt, snippet) {
+			t.Fatalf("custom prompt document prompt still contains stale rule %q:\n%s", snippet, prompt)
+		}
 	}
 }
 

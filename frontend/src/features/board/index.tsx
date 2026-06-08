@@ -21,6 +21,7 @@ import {
   type JobProgressEvent,
 } from '../../api/job';
 import type { ModelRunFromDB, ReviewStatus, TaskChildDirectory } from '../../api/task';
+import { listCodePushRecords, type CodePushRecord } from '../../api/codePush';
 import {
   BatchActionBar,
 } from './components/BatchActionBar';
@@ -56,6 +57,7 @@ const DRAWER_ESC_CONFIRM_WINDOW_MS = 1600;
 const BOARD_EXPANDED_GROUPS_STORAGE_KEY = 'pinru.board.expandedGroups.v1';
 const BOARD_CARD_SIZE_STORAGE_KEY = 'pinru.board.cardSize.v1';
 const BOARD_CARD_SIZES: CardSize[] = ['sm', 'md', 'lg'];
+const AI_REVIEW_COMMIT_REQUIRED_MESSAGE = '请先提交代码，再发起 AI 复审';
 
 function loadExpandedGroupsFromStorage() {
   try {
@@ -101,6 +103,46 @@ function normalizeTaskChildDirectoryList(
   directories: TaskChildDirectory[] | null | undefined,
 ): TaskChildDirectory[] {
   return Array.isArray(directories) ? directories : [];
+}
+
+function resolveLatestModelRunSession(run: ModelRunFromDB | null | undefined) {
+  if (!run) return null;
+  const sessions = Array.isArray(run.sessionList) ? run.sessionList : [];
+  for (let index = sessions.length - 1; index >= 0; index -= 1) {
+    const sessionId = sessions[index]?.sessionId?.trim();
+    if (sessionId) {
+      return { sessionId, sessionIndex: index };
+    }
+  }
+  const fallbackSessionId = run.sessionId?.trim();
+  if (fallbackSessionId) {
+    return {
+      sessionId: fallbackSessionId,
+      sessionIndex: Math.max(run.conversationRounds - 1, 0),
+    };
+  }
+  return null;
+}
+
+function hasCommittedCodeForAiReview(
+  records: CodePushRecord[],
+  modelRunId: string | null | undefined,
+  sessionId?: string | null,
+) {
+  const normalizedModelRunId = modelRunId?.trim();
+  if (!normalizedModelRunId) {
+    return false;
+  }
+
+  return records.some((record) => {
+    if (record.modelRunId?.trim() !== normalizedModelRunId) {
+      return false;
+    }
+    if (!record.commitSha?.trim()) {
+      return false;
+    }
+    return sessionId ? record.sessionId?.trim() === sessionId : true;
+  });
 }
 
 export default function Board() {
@@ -177,6 +219,39 @@ export default function Board() {
 
   const toggleReviewStatus = (status: ReviewStatus) =>
     setActiveReviewStatuses(prev => { const n = new Set(prev); n.has(status) ? n.delete(status) : n.add(status); return n; });
+
+  const ensureAiReviewCodeCommitted = async ({
+    taskId,
+    modelRunId,
+    run,
+    onMessage,
+  }: {
+    taskId: string;
+    modelRunId: string | null | undefined;
+    run?: ModelRunFromDB | null;
+    onMessage: (message: string) => void;
+  }) => {
+    const session = resolveLatestModelRunSession(run);
+    if (run && !session) {
+      onMessage('当前模型执行还没有可用 sessionId，请先保存 session 并提交代码');
+      return false;
+    }
+
+    let records: CodePushRecord[] = [];
+    try {
+      records = await listCodePushRecords(taskId);
+    } catch (error) {
+      onMessage(error instanceof Error ? error.message : '读取代码提交记录失败');
+      return false;
+    }
+
+    if (!hasCommittedCodeForAiReview(records, modelRunId, session?.sessionId ?? null)) {
+      onMessage(AI_REVIEW_COMMIT_REQUIRED_MESSAGE);
+      return false;
+    }
+    onMessage('');
+    return true;
+  };
 
   const toggleGroupCollapse = (groupKey: string) =>
     setExpandedGroups((prev) => {
@@ -541,6 +616,15 @@ export default function Board() {
     if (!localPath) return;
     void (async () => {
       try {
+        const committed = await ensureAiReviewCodeCommitted({
+          taskId,
+          modelRunId: run.id,
+          run,
+          onMessage: detail.setDrawerError,
+        });
+        if (!committed) {
+          return;
+        }
         await submitAiReviewJob(taskId, {
           modelRunId: run.id ?? null,
           modelName: run.modelName,
@@ -552,7 +636,7 @@ export default function Board() {
           void detail.refreshModelRuns();
         }
       } catch (error) {
-        console.error('提交 AI 复审失败', error);
+        detail.setDrawerError(error instanceof Error ? error.message : '提交 AI 复审失败');
       }
     })();
     window.setTimeout(() => {
@@ -575,6 +659,16 @@ export default function Board() {
 
     void (async () => {
       try {
+        const matchingRun = detail.selectedModelRuns.find((run) => run.id === modelRunId) ?? null;
+        const committed = await ensureAiReviewCodeCommitted({
+          taskId,
+          modelRunId,
+          run: matchingRun,
+          onMessage: detail.setDrawerError,
+        });
+        if (!committed) {
+          return;
+        }
         await submitAiReviewJob(taskId, {
           reviewRoundId: reviewRoundId ?? null,
           modelRunId: modelRunId ?? null,
@@ -586,7 +680,7 @@ export default function Board() {
         detail.setActiveDrawerTab('ai-review');
         void detail.refreshModelRuns();
       } catch (error) {
-        console.error('提交下一轮 AI 复审失败', error);
+        detail.setDrawerError(error instanceof Error ? error.message : '提交下一轮 AI 复审失败');
       }
     })();
 
@@ -605,6 +699,14 @@ export default function Board() {
     setTaskCardQuickActionLoadingPath(localPath);
     void (async () => {
       try {
+        const committed = await ensureAiReviewCodeCommitted({
+          taskId,
+          modelRunId: directory.modelRunId ?? null,
+          onMessage: setTaskCardContextMenuError,
+        });
+        if (!committed) {
+          return;
+        }
         await submitAiReviewJob(taskId, {
           modelRunId: directory.modelRunId ?? null,
           modelName: directory.modelName?.trim() || directory.name,
