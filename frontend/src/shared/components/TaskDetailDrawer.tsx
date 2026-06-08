@@ -2715,6 +2715,14 @@ function CodePushControls({
               />
             </div>
           )}
+          {record.errorMessage && (
+            <div className="flex items-start gap-1.5 rounded-lg border border-red-500/20 bg-red-500/10 px-2 py-1.5 text-red-200">
+              <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+              <span className="line-clamp-3 break-words" title={record.errorMessage}>
+                {record.errorMessage}
+              </span>
+            </div>
+          )}
         </div>
       )}
       {!record && latestRecord && (

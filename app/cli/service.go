@@ -845,6 +845,7 @@ func (s *CliService) RunCodexReview(ctx context.Context, req CodexReviewRequest,
 		return nil, fmt.Errorf(errs.FmtCodexParseJSONFail, err)
 	}
 	applyCodexReviewEvidenceGuards(localPath, reviewContext, &result)
+	polishReviewNextPrompt(&result)
 	return &result, nil
 }
 
@@ -1546,7 +1547,7 @@ func buildCodexReviewPrompt(req CodexReviewRequest, project *pgCodeProjectContex
 6. projectType 和 changeScope 按最符合实际情况的选项填写。
 7. 任务提示词以“当前复核节点上下文”里的 original_prompt/current_prompt 为唯一来源，只把其中明确写出的要求作为验收标准；不要再去读取本地提示词文件，也不要把未写明的扩展点、常识性联想、顺手优化项记为未完成或不满意。parent_review_notes 仅作辅助上下文，不能替代任务提示词本身。
 8. 当 isCompleted=false 或 isSatisfied=false 时，reviewNotes 必须回指 original_prompt/current_prompt 中对应的具体句子、短语或明确要求；若拆分到 issues，则每条 issues[*].reviewNotes 也必须分别回指对应 prompt 语句。回指不到的内容不能作为主缺口，不得据此判定未完成或不满意。
-9. nextPrompt 只能围绕主缺口补充最小修复指令，必须与已回指的 prompt 要求直接对应，不得扩展额外需求；若拆分到 issues，则每条 issues[*].nextPrompt 也遵守同样规则。Bug修复类 nextPrompt 必须像用户可执行的 bug 修复提示词：写清触发场景、当前异常、期望修复后的业务结果和必要验收点；不要直接写“把 A 放到 B 前面”“修改某函数”“调整某字段”“在某文件里...”这类实现方案，除非 current_prompt 本身就是代码级修复要求。
+9. nextPrompt 只能围绕主缺口补充最小修复指令，必须与已回指的 prompt 要求直接对应，不得扩展额外需求；若拆分到 issues，则每条 issues[*].nextPrompt 也遵守同样规则。Bug修复类 nextPrompt 必须像用户可执行的 bug 修复提示词：写清触发场景、当前异常、修复后的业务结果和必要边界；不要直接写“把 A 放到 B 前面”“修改某函数”“调整某字段”“在某文件里...”这类实现方案，也不要写“验收时确认”“补齐链路”“核验闭环”这类复审口吻，除非 current_prompt 本身就是代码级修复要求。
 10. 当本轮发现多个独立问题时，必须通过 issues 数组分别列出；不要把多个问题揉成一条。
 11. nextPromptTaskType 根据 nextPrompt 的任务性质填写，只能在“Bug修复、Feature迭代、0-1代码生成、代码理解、代码重构、工程化、代码测试、未归类”中选择；满意且 nextPrompt 为“无”时填“未归类”。
 12. issues[*].issueType 默认填“Bug修复”，除非证据明确表明是其他类型。
@@ -1555,7 +1556,7 @@ func buildCodexReviewPrompt(req CodexReviewRequest, project *pgCodeProjectContex
 15. Bug修复类必须说明原 bug 的触发条件、修复后对应条件为什么不会再复现，以及相邻边界是否覆盖；如果只看到相关文件被修改，但无法证明原触发条件被闭环处理，isCompleted 可为 true，但 isSatisfied 必须为 false。
 16. 高风险场景默认加严：权限/角色隔离、金额/优惠/计费、状态流转、导出下载、文件上传、WebSocket/通知、路由匹配、异步刷新、并发或库存容量。只要没有把请求到响应、状态落库到页面回显、异常边界到用户反馈核清楚，就不能判定满意。
 17. “未运行页面或接口、仅静态取证”不是自动失败，但对 Feature/Bug/0-1 的跨文件或跨前后端主流程，只能在代码证据已经完整闭环且无关键边界缺口时满意；否则默认完成但不满意，并在 reviewNotes 说明缺少哪段链路证据。
-18. 若 isSatisfied=false，reviewNotes 必须给出可核验的具体不满意原因，nextPrompt 必须给出围绕该缺口的最小修复词；不能只写“证据不足”“测试不足”“未运行页面”这类泛化结论。nextPrompt 要描述要修复的用户可感知问题和修复后的验收结果，不要把复审里的代码根因原样改写成代码操作步骤。
+18. 若 isSatisfied=false，reviewNotes 必须给出可核验的具体不满意原因，nextPrompt 必须给出围绕该缺口的最小修复词；不能只写“证据不足”“测试不足”“未运行页面”这类泛化结论。nextPrompt 要描述要修复的用户可感知问题和修复后的业务结果，不要把复审里的代码根因原样改写成代码操作步骤，也不要用复审报告口吻。
 19. 若本轮已通过，issues 返回空数组，但 reviewNotes 不能只填“无”；必须用一两句话说明已经核验哪些核心要求、关键代码位置和主链路闭环依据，作为通过依据。
 `))
 
@@ -1663,7 +1664,7 @@ func applyCodexReviewEvidenceGuards(localPath string, project *pgCodeProjectCont
 			result.ReviewNotes = note + "；" + guardNote
 		}
 		if prompt := strings.TrimSpace(result.NextPrompt); prompt == "" || prompt == "无" {
-			result.NextPrompt = "先补齐可核验的提示词和关键代码位置，再重新复审。"
+			result.NextPrompt = "重新处理这轮任务前，先确认任务提示词和本轮改动位置都能被正常读取，否则复审无法判断这次改动是否真的覆盖了需求。"
 		}
 		return
 	}
@@ -1672,7 +1673,7 @@ func applyCodexReviewEvidenceGuards(localPath string, project *pgCodeProjectCont
 		downgradeCodexReviewWithGuard(
 			result,
 			"通过依据不足：isSatisfied=true 时 reviewNotes 不能只填“无”，需要说明已核验的核心要求和关键代码证据；当前无法确认主链路已被充分复审。",
-			"请重新核验本轮改动，明确补充已覆盖的核心要求、关键代码位置和主链路闭环依据；如果发现入口、接口、状态或页面反馈存在缺口，请按实际缺口完成最小修复。",
+			"重新检查本轮改动时，需要说明已经覆盖了哪些核心要求和关键代码位置；如果入口、接口、状态或页面反馈还有缺口，就按实际缺口继续修复。",
 			"未归类",
 		)
 	}
@@ -1741,7 +1742,7 @@ func strictCodexReviewPassGuard(result *CodexReviewResult) *codexReviewPassGuard
 			!hasAnyKeyword(combined, "连接地址", "代理", "订阅", "重新拉取", "回读", "接口回读", "收到事件") {
 			return &codexReviewPassGuard{
 				reviewNotes:        "自动同步链路证据不足：当前结论承认未运行页面或接口，但没有把 WebSocket/通知的连接地址、代理配置、事件订阅和页面刷新或回读链路核清楚；高风险异步刷新场景不能判定满意。",
-				nextPrompt:         "请补齐并核验自动同步链路：确认前端能连到后端 WebSocket/通知入口，收到事件后能刷新或回读最新数据，并让页面无需手动刷新即可展示最新状态。",
+				nextPrompt:         "修复自动同步不可靠的问题：页面收到 WebSocket 或通知事件后，应能重新拉取最新数据并更新展示，用户不用手动刷新也能看到最新状态。",
 				nextPromptTaskType: "Bug修复",
 			}
 		}
@@ -1749,7 +1750,7 @@ func strictCodexReviewPassGuard(result *CodexReviewResult) *codexReviewPassGuard
 			!hasAnyKeyword(combined, "按钮", "页面", "接口调用", "用户维度", "角色级", "后端接口") {
 			return &codexReviewPassGuard{
 				reviewNotes:        "权限链路证据不足：当前结论承认未运行页面或接口，但没有同时核清前端入口/按钮/接口调用和后端角色校验是否一致；权限或角色隔离场景不能只凭局部代码改动判定满意。",
-				nextPrompt:         "请补齐角色权限链路：按 prompt 要求核清前端入口、按钮可见性、接口调用和后端权限校验，确保不同角色只能看到并执行自己允许的操作。",
+				nextPrompt:         "修复角色权限不一致的问题：不同角色进入页面、点击按钮或调用接口时，只能看到并执行自己被允许的操作，前端入口和后端校验要保持一致。",
 				nextPromptTaskType: "Bug修复",
 			}
 		}
@@ -1757,12 +1758,53 @@ func strictCodexReviewPassGuard(result *CodexReviewResult) *codexReviewPassGuard
 			!hasAnyKeyword(combined, "边界", "不能超过", "最小", "最大", "负数", "Decimal", "实付金额") {
 			return &codexReviewPassGuard{
 				reviewNotes:        "金额链路证据不足：当前结论承认未运行页面或接口，但没有核清优惠/计费边界和实付金额是否始终有效；金额类高风险场景不能在边界缺口未说明时判定满意。",
-				nextPrompt:         "请补齐金额边界校验：核验优惠、计费或实付金额在最小值、最大值、超额抵扣和异常输入下仍正确，并把最终金额正确返回或展示给用户。",
+				nextPrompt:         "修复金额边界处理不完整的问题：优惠、计费和实付金额在最小值、最大值、超额抵扣或异常输入下都要给出正确结果，页面展示和最终提交金额不能互相冲突。",
 				nextPromptTaskType: "Bug修复",
 			}
 		}
 	}
 	return nil
+}
+
+func polishReviewNextPrompt(result *CodexReviewResult) {
+	if result == nil {
+		return
+	}
+	result.NextPrompt = polishReviewNextPromptText(result.NextPrompt)
+	for i := range result.Issues {
+		result.Issues[i].NextPrompt = polishReviewNextPromptText(result.Issues[i].NextPrompt)
+	}
+}
+
+func polishReviewNextPromptText(value string) string {
+	text := strings.TrimSpace(value)
+	if text == "" || text == "无" {
+		return text
+	}
+	replacer := strings.NewReplacer(
+		"请补齐并核验", "修复",
+		"请补齐", "修复",
+		"补齐并核验", "修复",
+		"补齐", "处理",
+		"核验", "确认",
+		"核清", "确认",
+		"验通", "确认能正常使用",
+		"闭环", "完整流程",
+		"主链路", "主流程",
+		"链路", "流程",
+		"验收时需确认", "需要确认",
+		"验收时确认", "需要确认",
+		"验收时", "需要",
+		"验证时需确认", "需要确认",
+		"验证时确认", "需要确认",
+		"验证时", "需要",
+	)
+	text = replacer.Replace(text)
+	text = strings.ReplaceAll(text, "：需要确认", "：确认")
+	text = strings.ReplaceAll(text, "；需要确认", "；确认")
+	text = strings.ReplaceAll(text, "，需要确认", "，确认")
+	text = strings.ReplaceAll(text, "需要需要", "需要")
+	return strings.TrimSpace(text)
 }
 
 func normalizeReviewTaskType(value string) string {

@@ -28,8 +28,8 @@ var excludedFiles = map[string]bool{
 }
 
 const (
-	localSnapshotCommitMsg   = "初始化项目"
-	fallbackBranchName       = "main"
+	localSnapshotCommitMsg = "初始化项目"
+	fallbackBranchName     = "main"
 )
 
 func CheckPathsExist(paths []string) []string {
@@ -282,8 +282,11 @@ func PushBranch(path, branch, username, token string) error {
 	pushCmd := exec.Command("git", "push", "origin", branch+":"+branch, "--force")
 	pushCmd.Dir = path
 	pushCmd.Env = append(os.Environ(), buildGitAuthEnv(originURL, username, token, false)...)
-	pushCmd.Stderr = os.Stderr
-	return pushCmd.Run()
+	output, err := pushCmd.CombinedOutput()
+	if err != nil {
+		return formatGitCommandError(err, output, username, token)
+	}
+	return nil
 }
 
 func PushBranchWithMode(path, branch, username, token string, forceWithLease bool) error {
@@ -302,8 +305,30 @@ func PushBranchWithMode(path, branch, username, token string, forceWithLease boo
 	pushCmd := exec.Command("git", args...)
 	pushCmd.Dir = path
 	pushCmd.Env = append(os.Environ(), buildGitAuthEnv(originURL, username, token, false)...)
-	pushCmd.Stderr = os.Stderr
-	return pushCmd.Run()
+	output, err := pushCmd.CombinedOutput()
+	if err != nil {
+		return formatGitCommandError(err, output, username, token)
+	}
+	return nil
+}
+
+func formatGitCommandError(err error, output []byte, secrets ...string) error {
+	message := strings.TrimSpace(string(output))
+	for _, secret := range secrets {
+		secret = strings.TrimSpace(secret)
+		if secret == "" {
+			continue
+		}
+		message = strings.ReplaceAll(message, secret, "***")
+	}
+	if message == "" {
+		return err
+	}
+	const maxLen = 2000
+	if len(message) > maxLen {
+		message = message[len(message)-maxLen:]
+	}
+	return fmt.Errorf("%w: %s", err, message)
 }
 
 func WorkspaceRoot() string {

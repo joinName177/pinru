@@ -133,26 +133,26 @@ func (s *CodePushService) PushCode(req PushCodeRequest) (*store.CodePushRecord, 
 
 	account, err := s.resolveGitHubAccount(req.GitHubAccountID)
 	if err != nil {
-		return nil, err
+		return nil, s.markPushFailed(record, err)
 	}
 
 	targetRepo := strings.TrimSpace(account.Username) + "/" + record.RepoName
 	description := ""
 	repo, err := github.EnsureRepository(targetRepo, account.Token, &description)
 	if err != nil {
-		return nil, fmt.Errorf("创建或读取 GitHub 仓库失败：%w", err)
+		return nil, s.markPushFailed(record, fmt.Errorf("创建或读取 GitHub 仓库失败：%w", err))
 	}
 	_ = github.UpdateRepositoryDescription(targetRepo, account.Token, "")
 
 	remoteURL := fmt.Sprintf("https://github.com/%s.git", targetRepo)
 	if err := ensureRemote(record.LocalPath, remoteURL); err != nil {
-		return nil, fmt.Errorf("设置 GitHub remote 失败：%w", err)
+		return nil, s.markPushFailed(record, fmt.Errorf("设置 GitHub remote 失败：%w", err))
 	}
 	if err := gitops.EnsureBranch(record.LocalPath, mainBranch); err != nil {
-		return nil, fmt.Errorf("切换 main 分支失败：%w", err)
+		return nil, s.markPushFailed(record, fmt.Errorf("切换 main 分支失败：%w", err))
 	}
 	if err := gitops.PushBranchWithMode(record.LocalPath, mainBranch, account.Username, account.Token, req.ForceWithLease); err != nil {
-		return nil, fmt.Errorf("推送 GitHub 失败：%w", err)
+		return nil, s.markPushFailed(record, fmt.Errorf("推送 GitHub 失败：%w", err))
 	}
 	_ = github.SetDefaultBranch(targetRepo, mainBranch, account.Token)
 
@@ -166,6 +166,31 @@ func (s *CodePushService) PushCode(req PushCodeRequest) (*store.CodePushRecord, 
 		return nil, err
 	}
 	return s.store.GetCodePushRecord(record.ID)
+}
+
+func (s *CodePushService) markPushFailed(record *store.CodePushRecord, cause error) error {
+	if record == nil || cause == nil {
+		return cause
+	}
+	record.ErrorMessage = trimErrorMessage(cause.Error())
+	if record.Status == statusPushed {
+		record.Status = statusNeedsPush
+	} else {
+		record.Status = statusCommitted
+	}
+	if err := s.store.UpsertCodePushRecord(*record); err != nil {
+		return fmt.Errorf("%w；失败原因写入本地记录也失败：%v", cause, err)
+	}
+	return cause
+}
+
+func trimErrorMessage(message string) string {
+	message = strings.TrimSpace(message)
+	const maxLen = 2000
+	if len(message) <= maxLen {
+		return message
+	}
+	return message[len(message)-maxLen:]
 }
 
 type commitTarget struct {

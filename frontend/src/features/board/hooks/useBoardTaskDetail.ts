@@ -1496,6 +1496,9 @@ export function useBoardTaskDetail({
       }
     } catch (error) {
       setDrawerError(error instanceof Error ? error.message : '推送 GitHub 失败');
+      if (selected?.id) {
+        void refreshCodePushRecords(selected.id);
+      }
     } finally {
       setCodePushActionKey(null);
     }

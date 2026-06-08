@@ -135,6 +135,26 @@ func TestBuildGitAuthEnvCanDisableTLSVerification(t *testing.T) {
 	}
 }
 
+func TestFormatGitCommandErrorIncludesOutputAndMasksSecrets(t *testing.T) {
+	err := formatGitCommandError(
+		errors.New("exit status 128"),
+		[]byte("remote: token secret-token rejected\nfatal: Authentication failed\n"),
+		"alice",
+		"secret-token",
+	)
+
+	message := err.Error()
+	if !strings.Contains(message, "exit status 128") {
+		t.Fatalf("error = %q, want exit status", message)
+	}
+	if !strings.Contains(message, "Authentication failed") {
+		t.Fatalf("error = %q, want git output", message)
+	}
+	if strings.Contains(message, "secret-token") {
+		t.Fatalf("error leaked token: %q", message)
+	}
+}
+
 func TestCloneWithProgressHonorsContextCancellation(t *testing.T) {
 	root := t.TempDir()
 	fakeBin := createMockGitExecutable(t)

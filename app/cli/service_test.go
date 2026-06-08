@@ -323,8 +323,11 @@ func TestPgCodeReviewSchemaDescriptionsEnforcePromptScopedReview(t *testing.T) {
 	if !strings.Contains(nextPromptDesc, "只允许围绕 reviewNotes 已回指的主缺口") {
 		t.Fatalf("nextPrompt description = %q, want focused-fix rule", nextPromptDesc)
 	}
-	if !strings.Contains(nextPromptDesc, "触发场景、当前异常、期望修复后的业务结果和必要验收点") {
+	if !strings.Contains(nextPromptDesc, "触发场景、当前异常、修复后的业务结果和必要边界") {
 		t.Fatalf("nextPrompt description = %q, want bug prompt shape rule", nextPromptDesc)
+	}
+	if strings.Contains(nextPromptDesc, "必要验收点") {
+		t.Fatalf("nextPrompt description = %q, should not encourage acceptance-check wording", nextPromptDesc)
 	}
 
 	issues, ok := properties["issues"].(map[string]interface{})
@@ -364,6 +367,9 @@ func TestPgCodeReviewSchemaDescriptionsEnforcePromptScopedReview(t *testing.T) {
 	}
 	if !strings.Contains(issueNextPromptDesc, "不要直接写代码实现步骤") {
 		t.Fatalf("issues.items.nextPrompt description = %q, want no implementation-step rule", issueNextPromptDesc)
+	}
+	if !strings.Contains(issueNextPromptDesc, "不要写成“验收时确认”“补齐链路”“核验闭环”") {
+		t.Fatalf("issues.items.nextPrompt description = %q, want no review-tone rule", issueNextPromptDesc)
 	}
 }
 
@@ -730,7 +736,18 @@ func TestApplyCodexReviewEvidenceGuardsDowngradesHighRiskStaticPassWithPrompt(t 
 	if !strings.Contains(result.ReviewNotes, "自动同步链路证据不足") {
 		t.Fatalf("ReviewNotes = %q, want concrete high-risk reason", result.ReviewNotes)
 	}
-	if !strings.Contains(result.NextPrompt, "自动同步链路") || !strings.Contains(result.NextPrompt, "WebSocket") {
+	if !strings.Contains(result.NextPrompt, "自动同步不可靠") || !strings.Contains(result.NextPrompt, "WebSocket") {
 		t.Fatalf("NextPrompt = %q, want concrete repair prompt", result.NextPrompt)
+	}
+}
+
+func TestPolishReviewNextPromptTextRemovesReviewTone(t *testing.T) {
+	got := polishReviewNextPromptText("请补齐并核验自动同步链路：验收时确认前端收到事件后能回读最新数据。")
+
+	if strings.Contains(got, "请补齐") || strings.Contains(got, "核验") || strings.Contains(got, "链路") || strings.Contains(got, "验收时") {
+		t.Fatalf("polishReviewNextPromptText() = %q, still contains review-tone wording", got)
+	}
+	if !strings.Contains(got, "修复自动同步流程") && !strings.Contains(got, "修复自动同步") {
+		t.Fatalf("polishReviewNextPromptText() = %q, want natural repair wording", got)
 	}
 }
