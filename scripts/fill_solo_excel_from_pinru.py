@@ -136,6 +136,30 @@ def first_present(headers: dict[str, int], names: tuple[str, ...]) -> str | None
     return None
 
 
+def ensure_repo_commit_headers(ws) -> dict[str, int]:
+    headers = workbook_headers(ws)
+    has_repo_url = first_present(headers, ("RepoURL", "Repo URL")) is not None
+    has_commit_id = first_present(headers, ("CommitId", "Commit ID")) is not None
+    if has_repo_url and has_commit_id:
+        return headers
+
+    anchor = headers.get("User Prompt")
+    if anchor is None:
+        raise RuntimeError("Excel 表头缺少 User Prompt，无法插入 RepoURL / CommitId")
+
+    insert_at = anchor + 1
+    missing_headers: list[str] = []
+    if not has_repo_url:
+        missing_headers.append("RepoURL")
+    if not has_commit_id:
+        missing_headers.append("CommitId")
+
+    ws.insert_cols(insert_at, len(missing_headers))
+    for offset, header in enumerate(missing_headers):
+        ws.cell(row=1, column=insert_at + offset).value = header
+    return workbook_headers(ws)
+
+
 def review_bool_value(review: sqlite3.Row | None, field: str) -> int | None:
     if review is None:
         return None
@@ -216,6 +240,7 @@ def load_pinru_rows(
     exclude_project_ids: set[int] | None = None,
     include_review_ids: set[str] | None = None,
     exclude_report_ids: set[str] | None = None,
+    exclude_session_ids: set[str] | None = None,
 ) -> list[list[str | int | None]]:
     start = datetime.combine(start_day.date(), time.min)
     if end_day is None:
@@ -225,6 +250,7 @@ def load_pinru_rows(
     exclude_project_ids = exclude_project_ids or set()
     include_review_ids = include_review_ids or set()
     exclude_report_ids = {normalize_report_id(item) for item in (exclude_report_ids or set())}
+    exclude_session_ids = {item.strip() for item in (exclude_session_ids or set()) if item.strip()}
 
     conn, tmp_db_path = connect_sqlite(db_path)
     conn.row_factory = sqlite3.Row
@@ -261,6 +287,7 @@ def load_pinru_rows(
         reviews.setdefault((row["task_id"], row["model_run_id"]), []).append(row)
 
     code_push_records: dict[tuple[str, str, int], sqlite3.Row] = {}
+    code_push_records_by_session_id: dict[str, sqlite3.Row] = {}
     repo_urls_by_name: dict[str, str] = {}
     github_username = ""
     account = conn.execute(
@@ -278,6 +305,9 @@ def load_pinru_rows(
     ):
         key = (row["task_id"], row["model_run_id"], int(row["session_index"]))
         code_push_records.setdefault(key, row)
+        session_id = (row["session_id"] or "").strip()
+        if session_id:
+            code_push_records_by_session_id.setdefault(session_id, row)
         repo_name = (row["repo_name"] or "").strip()
         repo_url = (row["repo_url"] or "").strip()
         if repo_name and repo_url:
@@ -315,6 +345,8 @@ def load_pinru_rows(
             session_dt = parse_session_time(session_id)
             if not session_id or session_dt is None or not (start <= session_dt < end):
                 continue
+            if session_id in exclude_session_ids:
+                continue
             if session.get("consumeQuota") is False:
                 continue
             effective_sessions.append((source_index, session, session_dt))
@@ -348,7 +380,9 @@ def load_pinru_rows(
             if not change_scope:
                 change_scope = (row["task_change_scope"] or "").strip()
 
-            code_push = code_push_records.get((row["task_id"], row["model_run_id"], source_index))
+            code_push = code_push_records_by_session_id.get(session_id)
+            if code_push is None:
+                code_push = code_push_records.get((row["task_id"], row["model_run_id"], source_index))
             repo_name = (code_push["repo_name"] or "").strip() if code_push else repo_id
             repo_url = (code_push["repo_url"] or "").strip() if code_push else ""
             if not repo_url:
@@ -452,7 +486,7 @@ def append_rows_to_workbook(input_path: Path, output_path: Path, rows: list[list
 def write_rows_by_header(input_path: Path, output_path: Path, rows: list[dict], replace_data: bool) -> None:
     wb = load_workbook(input_path)
     ws = wb.active
-    headers = workbook_headers(ws)
+    headers = ensure_repo_commit_headers(ws)
     if "Repo ID" not in headers or "Trae Session ID" not in headers:
         raise RuntimeError("Excel 表头缺少 Repo ID 或 Trae Session ID")
 
@@ -502,6 +536,7 @@ def main() -> None:
     parser.add_argument("--end-date")
     parser.add_argument("--exclude-project-id", action="append", type=int, default=[])
     parser.add_argument("--exclude-report-id", action="append", default=[])
+    parser.add_argument("--exclude-session-id", action="append", default=[])
     parser.add_argument("--review-id", action="append", default=[])
     parser.add_argument("--input", default="/Users/tory/Downloads/Solo coder-0417.xlsx")
     parser.add_argument("--output", default="/Users/tory/Documents/trae_projects/PINRU/Solo coder-0417-session-filled-20260428.xlsx")
@@ -523,6 +558,7 @@ def main() -> None:
             set(args.exclude_project_id),
             set(args.review_id),
             set(args.exclude_report_id),
+            set(args.exclude_session_id),
         )
     else:
         rows = load_pinru_rows(
@@ -531,6 +567,7 @@ def main() -> None:
             exclude_project_ids=set(args.exclude_project_id),
             include_review_ids=set(args.review_id),
             exclude_report_ids=set(args.exclude_report_id),
+            exclude_session_ids=set(args.exclude_session_id),
         )
     if args.expected_rows is not None and len(rows) != args.expected_rows:
         raise RuntimeError(f"expected {args.expected_rows} rows for {args.date}, got {len(rows)}")
