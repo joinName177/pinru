@@ -694,6 +694,15 @@ func TestBuildDissatisfactionSummaryPromptAllowsProcessOnlyWhenProductSatisfied(
 	if !strings.Contains(prompt, "可以只整理过程不满意，产物段写“无”") {
 		t.Fatalf("prompt missing pass-with-process-dissatisfaction rule: %q", prompt)
 	}
+	if !strings.Contains(prompt, "发生在哪个环节（When）、具体做错或漏掉什么（What）、会造成什么实际影响（Impact）") {
+		t.Fatalf("prompt missing dissatisfaction problem-chain rule: %q", prompt)
+	}
+	if !strings.Contains(prompt, "指令遵循、任务规划、工具使用、幻觉、验证缺失") {
+		t.Fatalf("prompt missing dissatisfaction problem-finding checklist: %q", prompt)
+	}
+	if !strings.Contains(prompt, "不要把“证据不足”当成结论本身") {
+		t.Fatalf("prompt missing concrete evidence-insufficiency rule: %q", prompt)
+	}
 }
 
 func TestCompactPromptForWindowsCommandLine(t *testing.T) {
