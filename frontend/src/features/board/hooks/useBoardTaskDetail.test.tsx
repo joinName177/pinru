@@ -14,6 +14,7 @@ const {
   mockListModelRuns,
   mockListAiReviewNodes,
   mockListAiReviewRounds,
+  mockListCodePushRecords,
   mockUpdateTaskType,
 } = vi.hoisted(() => ({
   mockGetLlmProviders: vi.fn(),
@@ -24,6 +25,7 @@ const {
   mockListModelRuns: vi.fn(),
   mockListAiReviewNodes: vi.fn(),
   mockListAiReviewRounds: vi.fn(),
+  mockListCodePushRecords: vi.fn(),
   mockUpdateTaskType: vi.fn(),
 }));
 
@@ -60,6 +62,16 @@ vi.mock('../../../api/task', async () => {
     listAiReviewNodes: mockListAiReviewNodes,
     listAiReviewRounds: mockListAiReviewRounds,
     updateTaskType: mockUpdateTaskType,
+  };
+});
+
+vi.mock('../../../api/codePush', async () => {
+  const actual = await vi.importActual<typeof import('../../../api/codePush')>(
+    '../../../api/codePush',
+  );
+  return {
+    ...actual,
+    listCodePushRecords: mockListCodePushRecords,
   };
 });
 
@@ -117,6 +129,7 @@ describe('useBoardTaskDetail prompt generation', () => {
     mockGetTaskReadme.mockResolvedValue(null);
     mockListAiReviewNodes.mockResolvedValue([]);
     mockListAiReviewRounds.mockResolvedValue([]);
+    mockListCodePushRecords.mockResolvedValue([]);
     useAppStore.setState({ tasks: [] });
   });
 

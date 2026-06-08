@@ -36,3 +36,14 @@ export function formatTaskDisplayId(task: TaskIdentityLike): string {
 
   return sequence ? `${projectId}-${taskType}-${sequence}` : `${projectId}-${taskType}`;
 }
+
+export function formatTaskSubtitle(task: TaskIdentityLike): string {
+  const projectName = task.projectName?.trim();
+  const sequence = extractTaskClaimSequence(task.id);
+
+  if (projectName && sequence) {
+    return `${projectName}-${sequence}`;
+  }
+
+  return formatTaskDisplayId(task);
+}

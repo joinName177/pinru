@@ -715,7 +715,7 @@ export function CustomPromptPreviewModal({
 
         <div className="flex items-center justify-between gap-3 border-t border-stone-100 px-5 py-4 dark:border-stone-850">
           <div className="text-xs text-stone-500 dark:text-stone-400">
-            共 {docs.length} 个文档，确认前请保存修改。
+            共 {docs.length} 个提示词就绪文档，确认前请保存修改。
           </div>
           <div className="flex items-center gap-2">
             <button

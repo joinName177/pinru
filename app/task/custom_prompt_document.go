@@ -254,6 +254,11 @@ func (s *TaskService) prepareCustomPromptTaskJobsFromSingleDocument(
 		detail.Message = "文档里没有解析到提示词条目"
 		return detail, nil
 	}
+	if err := validateCustomPromptDocumentBatch(entries); err != nil {
+		detail.Status = "error"
+		detail.Message = err.Error()
+		return detail, nil
+	}
 
 	plansByType, err := s.planCustomPromptDocumentClaims(project, item, entries)
 	if err != nil {
@@ -501,6 +506,54 @@ func splitCustomPromptDifficulty(value string) (string, string) {
 		return matches[1], strings.TrimSpace(matches[2])
 	}
 	return store.DefaultPromptDifficulty, trimmed
+}
+
+func validateCustomPromptDocumentBatch(entries []customPromptEntry) error {
+	if len(entries) != 11 {
+		return fmt.Errorf("提示词文档必须正好包含 11 条：0-1代码生成 5 条、Feature迭代 5 条、代码理解 1 条；当前解析到 %d 条", len(entries))
+	}
+
+	typeCounts := map[string]int{}
+	nonUnderstandingDifficultyCounts := map[string]int{}
+	for index, entry := range entries {
+		taskType := internalprompt.NormalizeTaskType(entry.TaskType)
+		difficulty := strings.TrimSpace(entry.PromptDifficulty)
+		typeCounts[taskType]++
+
+		switch taskType {
+		case "0-1代码生成", "Feature迭代":
+			if difficulty != "一般" && difficulty != "困难" {
+				return fmt.Errorf("第 %d 条 %s 题难度必须是【一般】或【困难】，当前为【%s】", index+1, taskType, difficulty)
+			}
+			nonUnderstandingDifficultyCounts[difficulty]++
+		case "代码理解":
+			if difficulty != "简单" {
+				return fmt.Errorf("代码理解题必须是【简单】，当前为【%s】", difficulty)
+			}
+			if !strings.Contains(strings.ToLower(entry.PromptText), "readme") {
+				return errors.New("代码理解题必须明确要求生成 README 文档")
+			}
+		default:
+			return fmt.Errorf("提示词文档只允许 0-1代码生成、Feature迭代、代码理解，发现：%s", taskType)
+		}
+	}
+
+	if typeCounts["0-1代码生成"] != 5 || typeCounts["Feature迭代"] != 5 || typeCounts["代码理解"] != 1 {
+		return fmt.Errorf(
+			"提示词文档题型数量必须是 0-1代码生成 5 条、Feature迭代 5 条、代码理解 1 条，当前为 0-1代码生成 %d 条、Feature迭代 %d 条、代码理解 %d 条",
+			typeCounts["0-1代码生成"],
+			typeCounts["Feature迭代"],
+			typeCounts["代码理解"],
+		)
+	}
+	if nonUnderstandingDifficultyCounts["一般"] != 3 || nonUnderstandingDifficultyCounts["困难"] != 7 {
+		return fmt.Errorf(
+			"除代码理解外的 10 条难度必须是【一般】3 条、【困难】7 条，当前为【一般】%d 条、【困难】%d 条",
+			nonUnderstandingDifficultyCounts["一般"],
+			nonUnderstandingDifficultyCounts["困难"],
+		)
+	}
+	return nil
 }
 
 func ensureCustomPromptSourceDependencies(ctx context.Context, sourcePath string) error {

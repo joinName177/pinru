@@ -1,6 +1,7 @@
 package task
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,6 +46,42 @@ func TestParseCustomPromptDocumentEntries(t *testing.T) {
 	}
 }
 
+func TestValidateCustomPromptDocumentBatchRules(t *testing.T) {
+	entries := []customPromptEntry{
+		{TaskType: "0-1代码生成", PromptDifficulty: "一般", PromptText: "新增发布审核台，支持管理员查看待审核内容并批量处理。"},
+		{TaskType: "0-1代码生成", PromptDifficulty: "一般", PromptText: "新增模板配置页，让运营维护发布模板并在发布流程复用。"},
+		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增跨角色协作发布流程，覆盖草稿、提交、撤回和管理员处理。"},
+		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增批量导入发布素材能力，处理重复数据、失败明细和结果回显。"},
+		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增运营复盘看板，串联筛选、统计口径、明细跳转和空态展示。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "一般", PromptText: "在现有发布流程里补充草稿自动保存和恢复能力。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "扩展审核流程的多状态流转，兼容撤回、驳回、重新提交和列表回显。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "增强发布列表筛选统计，保持详情、导出和刷新后的口径一致。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "补齐异常恢复提示，覆盖提交失败、重复操作和历史草稿兼容。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "优化多角色可见范围，处理权限边界、空态提示和详情返回同步。"},
+		{TaskType: "代码理解", PromptDifficulty: "简单", PromptText: "梳理发布流程从填写到提交完成的关键状态流，并生成 README 文档。"},
+	}
+	if err := validateCustomPromptDocumentBatch(entries); err != nil {
+		t.Fatalf("validateCustomPromptDocumentBatch() error = %v", err)
+	}
+
+	withoutReadme := append([]customPromptEntry(nil), entries...)
+	withoutReadme[10].PromptText = "梳理发布流程从填写到提交完成的关键状态流。"
+	if err := validateCustomPromptDocumentBatch(withoutReadme); err == nil || !strings.Contains(err.Error(), "README") {
+		t.Fatalf("validate without README error = %v, want README error", err)
+	}
+
+	wrongDifficulty := append([]customPromptEntry(nil), entries...)
+	wrongDifficulty[0].PromptDifficulty = "简单"
+	if err := validateCustomPromptDocumentBatch(wrongDifficulty); err == nil || !strings.Contains(err.Error(), "一般】或【困难") {
+		t.Fatalf("validate wrong difficulty error = %v, want difficulty error", err)
+	}
+
+	tooFew := entries[:10]
+	if err := validateCustomPromptDocumentBatch(tooFew); err == nil || !strings.Contains(err.Error(), "11 条") {
+		t.Fatalf("validate too few error = %v, want count error", err)
+	}
+}
+
 func TestCreateTasksFromCustomPromptDocumentsCreatesTasksAndPromptArtifacts(t *testing.T) {
 	testStore := testutil.OpenTestStore(t)
 	defer testStore.Close()
@@ -84,16 +121,23 @@ func TestCreateTasksFromCustomPromptDocumentsCreatesTasksAndPromptArtifacts(t *t
 	docContent := strings.Join([]string{
 		"**0-1代码生成**",
 		"",
-		"1. 【简单】新增完整地址簿能力，让用户维护常用地址并在发布流程复用。",
-		"2. 【一般】新增发布审核台，支持管理员查看待审核内容并批量处理。",
+		"1. 【一般】新增发布审核台，支持管理员查看待审核内容并批量处理。",
+		"2. 【一般】新增模板配置页，让运营维护发布模板并在发布流程复用。",
+		"3. 【困难】新增跨角色协作发布流程，覆盖草稿、提交、撤回和管理员处理。",
+		"4. 【困难】新增批量导入发布素材能力，处理重复数据、失败明细和结果回显。",
+		"5. 【困难】新增运营复盘看板，串联筛选、统计口径、明细跳转和空态展示。",
 		"",
 		"**Feature迭代**",
 		"",
-		"1. 【困难】在现有发布流程里补充草稿自动保存和恢复能力。",
+		"1. 【一般】在现有发布流程里补充草稿自动保存和恢复能力。",
+		"2. 【困难】扩展审核流程的多状态流转，兼容撤回、驳回、重新提交和列表回显。",
+		"3. 【困难】增强发布列表筛选统计，保持详情、导出和刷新后的口径一致。",
+		"4. 【困难】补齐异常恢复提示，覆盖提交失败、重复操作和历史草稿兼容。",
+		"5. 【困难】优化多角色可见范围，处理权限边界、空态提示和详情返回同步。",
 		"",
 		"**代码理解**",
 		"",
-		"1. 【一般】梳理发布流程从填写到提交完成的关键状态流。",
+		"1. 【简单】梳理发布流程从填写到提交完成的关键状态流，并生成 README 文档。",
 	}, "\n")
 	if err := os.WriteFile(docPath, []byte(docContent), 0o644); err != nil {
 		t.Fatalf("WriteFile(doc) error = %v", err)
@@ -107,10 +151,10 @@ func TestCreateTasksFromCustomPromptDocumentsCreatesTasksAndPromptArtifacts(t *t
 	if err != nil {
 		t.Fatalf("CreateTasksFromCustomPromptDocuments() error = %v", err)
 	}
-	if result.CreatedCount != 4 || result.ErrorCount != 0 {
+	if result.CreatedCount != 11 || result.ErrorCount != 0 {
 		t.Fatalf("unexpected result: %+v", result)
 	}
-	if len(result.Details) != 1 || result.Details[0].ParsedCount != 4 {
+	if len(result.Details) != 1 || result.Details[0].ParsedCount != 11 {
 		t.Fatalf("unexpected detail: %+v", result.Details)
 	}
 
@@ -118,13 +162,21 @@ func TestCreateTasksFromCustomPromptDocumentsCreatesTasksAndPromptArtifacts(t *t
 	if err != nil {
 		t.Fatalf("ListTasks() error = %v", err)
 	}
-	if len(tasks) != 4 {
-		t.Fatalf("tasks len = %d, want 4", len(tasks))
+	if len(tasks) != 11 {
+		t.Fatalf("tasks len = %d, want 11", len(tasks))
 	}
 
 	seenTypes := map[string]int{}
+	seenDifficulties := map[string]int{}
 	for _, task := range tasks {
 		seenTypes[task.TaskType]++
+		if task.TaskType == "代码理解" {
+			if task.PromptDifficulty != "简单" {
+				t.Fatalf("code understanding difficulty = %q, want 简单", task.PromptDifficulty)
+			}
+		} else {
+			seenDifficulties[task.PromptDifficulty]++
+		}
 		if task.Status != "PromptReady" {
 			t.Fatalf("task %s status = %q, want PromptReady", task.ID, task.Status)
 		}
@@ -154,8 +206,11 @@ func TestCreateTasksFromCustomPromptDocumentsCreatesTasksAndPromptArtifacts(t *t
 			t.Fatalf("model copy should not exist for custom prompt task %s", task.ID)
 		}
 	}
-	if seenTypes["0-1代码生成"] != 2 || seenTypes["Feature迭代"] != 1 || seenTypes["代码理解"] != 1 {
+	if seenTypes["0-1代码生成"] != 5 || seenTypes["Feature迭代"] != 5 || seenTypes["代码理解"] != 1 {
 		t.Fatalf("seenTypes = %+v", seenTypes)
+	}
+	if seenDifficulties["一般"] != 3 || seenDifficulties["困难"] != 7 {
+		t.Fatalf("seenDifficulties = %+v", seenDifficulties)
 	}
 }
 
@@ -197,26 +252,23 @@ func TestCreateTasksFromCustomPromptDocumentsCopiesExistingNodeModules(t *testin
 		t.Fatalf("UpsertQuestionBankItem() error = %v", err)
 	}
 
-	docPath := filepath.Join(t.TempDir(), "zw-node_提示词_0602.md")
-	docContent := strings.Join([]string{
-		"**0-1代码生成**",
-		"",
-		"1. 【简单】新增一个前端调试入口，方便快速查看当前页面运行状态。",
-	}, "\n")
-	if err := os.WriteFile(docPath, []byte(docContent), 0o644); err != nil {
-		t.Fatalf("WriteFile(doc) error = %v", err)
-	}
-
 	svc := New(testStore, appgit.New(testStore))
-	result, err := svc.CreateTasksFromCustomPromptDocuments(CreateTasksFromCustomPromptDocumentsRequest{
-		ProjectID:     project.ID,
-		DocumentPaths: []string{docPath},
+	taskPath := filepath.Join(cloneBase, "zw-node-0-1代码生成-1")
+	taskDetail := svc.CreateCustomPromptTaskFromPayload(context.Background(), CustomPromptTaskJobPayload{
+		ProjectID:        project.ID,
+		QuestionID:       1002,
+		ProjectName:      "zw-node",
+		SourcePath:       sourcePath,
+		TargetSourcePath: filepath.Join(taskPath, filepath.Base(taskPath)),
+		TaskType:         "0-1代码生成",
+		PromptDifficulty: "一般",
+		PromptText:       "新增一个前端调试入口，方便快速查看当前页面运行状态。",
+		ClaimSequence:    1,
+		LocalPath:        taskPath,
+		SourceModelName:  "ORIGIN",
 	})
-	if err != nil {
-		t.Fatalf("CreateTasksFromCustomPromptDocuments() error = %v", err)
-	}
-	if result.CreatedCount != 1 || result.ErrorCount != 0 {
-		t.Fatalf("unexpected result: %+v", result)
+	if taskDetail.Status != "created" {
+		t.Fatalf("CreateCustomPromptTaskFromPayload() = %+v", taskDetail)
 	}
 
 	tasks, err := testStore.ListTasks(&project.ID)

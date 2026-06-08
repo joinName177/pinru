@@ -314,6 +314,9 @@ func TestPgCodeReviewSchemaDescriptionsEnforcePromptScopedReview(t *testing.T) {
 	if !strings.Contains(reviewNotesDesc, "不能用未写明的扩展点作为主缺口") {
 		t.Fatalf("reviewNotes description = %q, want no-expansion rule", reviewNotesDesc)
 	}
+	if !strings.Contains(reviewNotesDesc, "产物满意但处理过程存在不满意") {
+		t.Fatalf("reviewNotes description = %q, want process dissatisfaction pass rule", reviewNotesDesc)
+	}
 
 	nextPrompt, ok := properties["nextPrompt"].(map[string]interface{})
 	if !ok {
@@ -325,6 +328,24 @@ func TestPgCodeReviewSchemaDescriptionsEnforcePromptScopedReview(t *testing.T) {
 	}
 	if !strings.Contains(nextPromptDesc, "触发场景、当前异常、期望修复后的业务结果和必要验收点") {
 		t.Fatalf("nextPrompt description = %q, want bug prompt shape rule", nextPromptDesc)
+	}
+	if !strings.Contains(nextPromptDesc, "一定不能和 current_prompt/上一轮会话提示词雷同") {
+		t.Fatalf("nextPrompt description = %q, want no-similar-previous-prompt rule", nextPromptDesc)
+	}
+	if !strings.Contains(nextPromptDesc, "自然语言清晰、顺畅、连贯") {
+		t.Fatalf("nextPrompt description = %q, want natural language repair prompt rule", nextPromptDesc)
+	}
+	if !strings.Contains(nextPromptDesc, "不要描述问题原因或代码原因") {
+		t.Fatalf("nextPrompt description = %q, want no-cause repair prompt rule", nextPromptDesc)
+	}
+	if !strings.Contains(nextPromptDesc, "修复提示词尽量不包含代码") {
+		t.Fatalf("nextPrompt description = %q, want no-code repair prompt rule", nextPromptDesc)
+	}
+	if !strings.Contains(nextPromptDesc, "文件、文件名、文件路径") || !strings.Contains(nextPromptDesc, "方法名") {
+		t.Fatalf("nextPrompt description = %q, want no file/method repair prompt rule", nextPromptDesc)
+	}
+	if !strings.Contains(nextPromptDesc, "必须以“修复”两个字开头") {
+		t.Fatalf("nextPrompt description = %q, want bug prefix rule", nextPromptDesc)
 	}
 
 	issues, ok := properties["issues"].(map[string]interface{})
@@ -364,6 +385,18 @@ func TestPgCodeReviewSchemaDescriptionsEnforcePromptScopedReview(t *testing.T) {
 	}
 	if !strings.Contains(issueNextPromptDesc, "不要直接写代码实现步骤") {
 		t.Fatalf("issues.items.nextPrompt description = %q, want no implementation-step rule", issueNextPromptDesc)
+	}
+	if !strings.Contains(issueNextPromptDesc, "不能和 current_prompt/上一轮会话提示词雷同") {
+		t.Fatalf("issues.items.nextPrompt description = %q, want no-similar-previous-prompt rule", issueNextPromptDesc)
+	}
+	if !strings.Contains(issueNextPromptDesc, "修复提示词尽量不包含代码") {
+		t.Fatalf("issues.items.nextPrompt description = %q, want no-code repair prompt rule", issueNextPromptDesc)
+	}
+	if !strings.Contains(issueNextPromptDesc, "文件、文件名、文件路径") || !strings.Contains(issueNextPromptDesc, "方法名") {
+		t.Fatalf("issues.items.nextPrompt description = %q, want no file/method repair prompt rule", issueNextPromptDesc)
+	}
+	if !strings.Contains(issueNextPromptDesc, "必须以“修复”两个字开头") {
+		t.Fatalf("issues.items.nextPrompt description = %q, want bug prefix rule", issueNextPromptDesc)
 	}
 }
 
@@ -586,6 +619,24 @@ func TestBuildCodexReviewPromptIncludesEvidenceGuardrails(t *testing.T) {
 	if !strings.Contains(prompt, "未运行页面或接口、仅静态取证") {
 		t.Fatalf("prompt missing static-evidence caveat: %q", prompt)
 	}
+	if !strings.Contains(prompt, "产物已经满足 current_prompt 的主要交付要求，但处理过程存在不满意") {
+		t.Fatalf("prompt missing process dissatisfaction pass rule: %q", prompt)
+	}
+	if !strings.Contains(prompt, "nextPrompt 一定不能和 current_prompt/上一轮会话提示词雷同") {
+		t.Fatalf("prompt missing no-similar-previous-prompt rule: %q", prompt)
+	}
+	if !strings.Contains(prompt, "不要描述问题原因、代码原因") {
+		t.Fatalf("prompt missing no-cause repair prompt rule: %q", prompt)
+	}
+	if !strings.Contains(prompt, "修复提示词尽量不包含代码") {
+		t.Fatalf("prompt missing no-code repair prompt rule: %q", prompt)
+	}
+	if !strings.Contains(prompt, "文件、文件名、文件路径") || !strings.Contains(prompt, "方法名") {
+		t.Fatalf("prompt missing no file/method repair prompt rule: %q", prompt)
+	}
+	if !strings.Contains(prompt, "对应 nextPrompt 前面一定要加“修复”两个字") {
+		t.Fatalf("prompt missing bug prefix repair prompt rule: %q", prompt)
+	}
 	if strings.Contains(prompt, "prompt_sources") || strings.Contains(prompt, "prompt_candidates") {
 		t.Fatalf("prompt should not reference local prompt sources: %q", prompt)
 	}
@@ -612,6 +663,27 @@ func TestRunCodexReviewRejectsWhenPromptsMissing(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "数据库中未保存该轮复审的提示词") {
 		t.Fatalf("RunCodexReview() error = %q, want missing-prompt rejection", err.Error())
+	}
+}
+
+func TestBuildDissatisfactionSummaryPromptAllowsProcessOnlyWhenProductSatisfied(t *testing.T) {
+	prompt := buildDissatisfactionSummaryPrompt(DissatisfactionSummaryRequest{
+		LocalPath:        "/tmp/demo",
+		ModelName:        "cotv21-pro",
+		OriginalPrompt:   "新增订单通知",
+		CurrentPrompt:    "修复订单通知刷新问题",
+		ReviewNotes:      "过程不满意：只看了静态通知列表，没有回到实时刷新场景验证。产物满足本轮要求。",
+		ProductSatisfied: true,
+	})
+
+	if !strings.Contains(prompt, `"product_satisfied": "true"`) {
+		t.Fatalf("prompt missing product_satisfied input: %q", prompt)
+	}
+	if !strings.Contains(prompt, "产物段固定写 `产物不满意：无`") {
+		t.Fatalf("prompt missing product-satisfied process-only rule: %q", prompt)
+	}
+	if !strings.Contains(prompt, "可以只整理过程不满意，产物段写“无”") {
+		t.Fatalf("prompt missing pass-with-process-dissatisfaction rule: %q", prompt)
 	}
 }
 
