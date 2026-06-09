@@ -470,12 +470,12 @@ func (s *JobService) executeJob(id string, req SubmitJobRequest) {
 	if s.isJobCancelled(id) {
 		return
 	}
-	if err := s.store.CompleteBackgroundJob(id, execResult.outputPayload); err != nil {
-		slog.Error("failed to mark job as complete", "job_id", id, "error", err)
-	}
 	finalMessage := execResult.finalMessage
 	if finalMessage == nil {
 		finalMessage = strPtr("已完成")
+	}
+	if err := s.store.CompleteBackgroundJobWithMessage(id, execResult.outputPayload, finalMessage); err != nil {
+		slog.Error("failed to mark job as complete", "job_id", id, "error", err)
 	}
 	s.emitProgress(id, req.JobType, req.TaskID, "done", 100, finalMessage, nil)
 	slog.Info("job completed",
@@ -555,9 +555,15 @@ func (s *JobService) executeCustomPromptDocumentGenerate(
 	}
 	projectCount := len(promptReq.ProjectNames)
 	s.emitProgress(jobID, req.JobType, req.TaskID, "running", 10, strPtr(fmt.Sprintf("准备生成 %d 个项目的提示词文档…", projectCount)), nil)
-	s.emitProgress(jobID, req.JobType, req.TaskID, "running", 20, strPtr("正在生成提示词文档…"), nil)
 
-	res, err := s.promptSvc.GenerateCustomProjectPromptDocumentsWithContext(ctx, promptReq)
+	progressOptions := &appprompt.GenerateCustomProjectPromptDocumentsOptions{
+		OnProgress: func(progress appprompt.CustomProjectPromptDocumentProgress) {
+			value, message := customPromptDocumentProgressView(progress)
+			s.emitProgress(jobID, req.JobType, req.TaskID, "running", value, strPtr(message), nil)
+		},
+	}
+
+	res, err := s.promptSvc.GenerateCustomProjectPromptDocumentsWithOptions(ctx, promptReq, progressOptions)
 	if err != nil {
 		return jobExecutionResult{}, err
 	}
@@ -571,6 +577,63 @@ func (s *JobService) executeCustomPromptDocumentGenerate(
 		outputPayload: &outputStr,
 		finalMessage:  strPtr(fmt.Sprintf("提示词文档生成完成：成功 %d，失败 %d", res.GeneratedCount, res.ErrorCount)),
 	}, nil
+}
+
+func customPromptDocumentProgressView(progress appprompt.CustomProjectPromptDocumentProgress) (int, string) {
+	total := progress.Total
+	if total <= 0 {
+		total = 1
+	}
+	index := progress.Index
+	if index <= 0 {
+		index = 1
+	}
+	if index > total {
+		index = total
+	}
+	projectName := strings.TrimSpace(progress.ProjectName)
+	if projectName == "" {
+		projectName = "当前项目"
+	}
+
+	base := 10
+	span := 80
+	step := span / total
+	if step < 1 {
+		step = 1
+	}
+	start := base + (index-1)*step
+	stageOffset := 0
+	stageText := "准备生成"
+	switch progress.Stage {
+	case "generating":
+		stageOffset = maxInt(1, step/5)
+		stageText = "正在生成"
+	case "writing":
+		stageOffset = maxInt(1, step*4/5)
+		stageText = "正在写入"
+	case "done":
+		stageOffset = step
+		stageText = "已生成"
+	case "error":
+		stageOffset = step
+		stageText = "生成失败"
+	}
+	value := start + stageOffset
+	if value > 95 {
+		value = 95
+	}
+	if progress.Stage == "done" && index == total {
+		value = 95
+	}
+	return value, fmt.Sprintf("%s第 %d/%d 个：%s", stageText, index, total, projectName)
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (s *JobService) executeCustomPromptTaskCreate(

@@ -509,8 +509,8 @@ func splitCustomPromptDifficulty(value string) (string, string) {
 }
 
 func validateCustomPromptDocumentBatch(entries []customPromptEntry) error {
-	if len(entries) != 11 {
-		return fmt.Errorf("提示词文档必须正好包含 11 条：0-1代码生成 5 条、Feature迭代 5 条、代码理解 1 条；当前解析到 %d 条", len(entries))
+	if len(entries) != 17 {
+		return fmt.Errorf("提示词文档必须正好包含 17 条：0-1代码生成 8 条、Feature迭代 8 条、代码理解 1 条；当前解析到 %d 条", len(entries))
 	}
 
 	typeCounts := map[string]int{}
@@ -527,8 +527,8 @@ func validateCustomPromptDocumentBatch(entries []customPromptEntry) error {
 			}
 			nonUnderstandingDifficultyCounts[difficulty]++
 		case "代码理解":
-			if difficulty != "简单" {
-				return fmt.Errorf("代码理解题必须是【简单】，当前为【%s】", difficulty)
+			if difficulty != "困难" {
+				return fmt.Errorf("代码理解题必须是【困难】，当前为【%s】", difficulty)
 			}
 			if !strings.Contains(strings.ToLower(entry.PromptText), "readme") {
 				return errors.New("代码理解题必须明确要求生成 README 文档")
@@ -538,17 +538,17 @@ func validateCustomPromptDocumentBatch(entries []customPromptEntry) error {
 		}
 	}
 
-	if typeCounts["0-1代码生成"] != 5 || typeCounts["Feature迭代"] != 5 || typeCounts["代码理解"] != 1 {
+	if typeCounts["0-1代码生成"] != 8 || typeCounts["Feature迭代"] != 8 || typeCounts["代码理解"] != 1 {
 		return fmt.Errorf(
-			"提示词文档题型数量必须是 0-1代码生成 5 条、Feature迭代 5 条、代码理解 1 条，当前为 0-1代码生成 %d 条、Feature迭代 %d 条、代码理解 %d 条",
+			"提示词文档题型数量必须是 0-1代码生成 8 条、Feature迭代 8 条、代码理解 1 条，当前为 0-1代码生成 %d 条、Feature迭代 %d 条、代码理解 %d 条",
 			typeCounts["0-1代码生成"],
 			typeCounts["Feature迭代"],
 			typeCounts["代码理解"],
 		)
 	}
-	if nonUnderstandingDifficultyCounts["一般"] != 3 || nonUnderstandingDifficultyCounts["困难"] != 7 {
+	if nonUnderstandingDifficultyCounts["一般"] != 5 || nonUnderstandingDifficultyCounts["困难"] != 11 {
 		return fmt.Errorf(
-			"除代码理解外的 10 条难度必须是【一般】3 条、【困难】7 条，当前为【一般】%d 条、【困难】%d 条",
+			"除代码理解外的 16 条难度必须是【一般】5 条、【困难】11 条，当前为【一般】%d 条、【困难】%d 条",
 			nonUnderstandingDifficultyCounts["一般"],
 			nonUnderstandingDifficultyCounts["困难"],
 		)

@@ -14,7 +14,7 @@ import type { PromptGenerationStatus, ReviewStatus } from '../../../api/task';
 import { extractTaskClaimSequence, formatTaskDisplayId, formatTaskSubtitle } from '../../../shared/lib/taskId';
 import type { TaskTypeOverviewSummary } from '../../../shared/lib/taskTypeOverview';
 
-export type CardSize = 'sm' | 'md' | 'lg';
+export type CardSize = 'sm' | 'four' | 'md' | 'lg';
 
 export const STATUS: Record<
   TaskStatus,

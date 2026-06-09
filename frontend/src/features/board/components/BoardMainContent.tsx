@@ -24,6 +24,7 @@ const CARD_SIZE_OPTIONS: Array<{
   title: string;
 }> = [
   { size: 'sm', icon: AlignJustify, title: '紧凑' },
+  { size: 'four', icon: LayoutGrid, title: '四列' },
   { size: 'md', icon: Grid2X2, title: '标准' },
   { size: 'lg', icon: LayoutGrid, title: '宽松' },
 ];

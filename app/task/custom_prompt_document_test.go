@@ -50,22 +50,28 @@ func TestValidateCustomPromptDocumentBatchRules(t *testing.T) {
 	entries := []customPromptEntry{
 		{TaskType: "0-1代码生成", PromptDifficulty: "一般", PromptText: "新增发布审核台，支持管理员查看待审核内容并批量处理。"},
 		{TaskType: "0-1代码生成", PromptDifficulty: "一般", PromptText: "新增模板配置页，让运营维护发布模板并在发布流程复用。"},
+		{TaskType: "0-1代码生成", PromptDifficulty: "一般", PromptText: "新增消息订阅入口，支持用户维护提醒偏好并在发布节点触发通知。"},
 		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增跨角色协作发布流程，覆盖草稿、提交、撤回和管理员处理。"},
 		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增批量导入发布素材能力，处理重复数据、失败明细和结果回显。"},
 		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增运营复盘看板，串联筛选、统计口径、明细跳转和空态展示。"},
+		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增多端审批记录中心，覆盖提交来源、处理状态、异常回退和详情追溯。"},
+		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增数据归档流程，处理归档范围、恢复入口、权限提示和历史记录查看。"},
 		{TaskType: "Feature迭代", PromptDifficulty: "一般", PromptText: "在现有发布流程里补充草稿自动保存和恢复能力。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "一般", PromptText: "在现有审核列表里补充处理人筛选和结果回显。"},
 		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "扩展审核流程的多状态流转，兼容撤回、驳回、重新提交和列表回显。"},
 		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "增强发布列表筛选统计，保持详情、导出和刷新后的口径一致。"},
 		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "补齐异常恢复提示，覆盖提交失败、重复操作和历史草稿兼容。"},
 		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "优化多角色可见范围，处理权限边界、空态提示和详情返回同步。"},
-		{TaskType: "代码理解", PromptDifficulty: "简单", PromptText: "梳理发布流程从填写到提交完成的关键状态流，并生成 README 文档。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "扩展发布详情里的操作日志，兼容历史数据、筛选条件和权限展示差异。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "增强批量处理后的结果同步，覆盖部分失败、列表刷新和详情状态一致性。"},
+		{TaskType: "代码理解", PromptDifficulty: "困难", PromptText: "梳理发布流程从填写到提交完成的关键状态流，并生成 README 文档。"},
 	}
 	if err := validateCustomPromptDocumentBatch(entries); err != nil {
 		t.Fatalf("validateCustomPromptDocumentBatch() error = %v", err)
 	}
 
 	withoutReadme := append([]customPromptEntry(nil), entries...)
-	withoutReadme[10].PromptText = "梳理发布流程从填写到提交完成的关键状态流。"
+	withoutReadme[len(withoutReadme)-1].PromptText = "梳理发布流程从填写到提交完成的关键状态流。"
 	if err := validateCustomPromptDocumentBatch(withoutReadme); err == nil || !strings.Contains(err.Error(), "README") {
 		t.Fatalf("validate without README error = %v, want README error", err)
 	}
@@ -77,7 +83,7 @@ func TestValidateCustomPromptDocumentBatchRules(t *testing.T) {
 	}
 
 	tooFew := entries[:10]
-	if err := validateCustomPromptDocumentBatch(tooFew); err == nil || !strings.Contains(err.Error(), "11 条") {
+	if err := validateCustomPromptDocumentBatch(tooFew); err == nil || !strings.Contains(err.Error(), "17 条") {
 		t.Fatalf("validate too few error = %v, want count error", err)
 	}
 }
@@ -123,21 +129,27 @@ func TestCreateTasksFromCustomPromptDocumentsCreatesTasksAndPromptArtifacts(t *t
 		"",
 		"1. 【一般】新增发布审核台，支持管理员查看待审核内容并批量处理。",
 		"2. 【一般】新增模板配置页，让运营维护发布模板并在发布流程复用。",
-		"3. 【困难】新增跨角色协作发布流程，覆盖草稿、提交、撤回和管理员处理。",
-		"4. 【困难】新增批量导入发布素材能力，处理重复数据、失败明细和结果回显。",
-		"5. 【困难】新增运营复盘看板，串联筛选、统计口径、明细跳转和空态展示。",
+		"3. 【一般】新增消息订阅入口，支持用户维护提醒偏好并在发布节点触发通知。",
+		"4. 【困难】新增跨角色协作发布流程，覆盖草稿、提交、撤回和管理员处理。",
+		"5. 【困难】新增批量导入发布素材能力，处理重复数据、失败明细和结果回显。",
+		"6. 【困难】新增运营复盘看板，串联筛选、统计口径、明细跳转和空态展示。",
+		"7. 【困难】新增多端审批记录中心，覆盖提交来源、处理状态、异常回退和详情追溯。",
+		"8. 【困难】新增数据归档流程，处理归档范围、恢复入口、权限提示和历史记录查看。",
 		"",
 		"**Feature迭代**",
 		"",
 		"1. 【一般】在现有发布流程里补充草稿自动保存和恢复能力。",
-		"2. 【困难】扩展审核流程的多状态流转，兼容撤回、驳回、重新提交和列表回显。",
-		"3. 【困难】增强发布列表筛选统计，保持详情、导出和刷新后的口径一致。",
-		"4. 【困难】补齐异常恢复提示，覆盖提交失败、重复操作和历史草稿兼容。",
-		"5. 【困难】优化多角色可见范围，处理权限边界、空态提示和详情返回同步。",
+		"2. 【一般】在现有审核列表里补充处理人筛选和结果回显。",
+		"3. 【困难】扩展审核流程的多状态流转，兼容撤回、驳回、重新提交和列表回显。",
+		"4. 【困难】增强发布列表筛选统计，保持详情、导出和刷新后的口径一致。",
+		"5. 【困难】补齐异常恢复提示，覆盖提交失败、重复操作和历史草稿兼容。",
+		"6. 【困难】优化多角色可见范围，处理权限边界、空态提示和详情返回同步。",
+		"7. 【困难】扩展发布详情里的操作日志，兼容历史数据、筛选条件和权限展示差异。",
+		"8. 【困难】增强批量处理后的结果同步，覆盖部分失败、列表刷新和详情状态一致性。",
 		"",
 		"**代码理解**",
 		"",
-		"1. 【简单】梳理发布流程从填写到提交完成的关键状态流，并生成 README 文档。",
+		"1. 【困难】梳理发布流程从填写到提交完成的关键状态流，并生成 README 文档。",
 	}, "\n")
 	if err := os.WriteFile(docPath, []byte(docContent), 0o644); err != nil {
 		t.Fatalf("WriteFile(doc) error = %v", err)
@@ -151,10 +163,10 @@ func TestCreateTasksFromCustomPromptDocumentsCreatesTasksAndPromptArtifacts(t *t
 	if err != nil {
 		t.Fatalf("CreateTasksFromCustomPromptDocuments() error = %v", err)
 	}
-	if result.CreatedCount != 11 || result.ErrorCount != 0 {
+	if result.CreatedCount != 17 || result.ErrorCount != 0 {
 		t.Fatalf("unexpected result: %+v", result)
 	}
-	if len(result.Details) != 1 || result.Details[0].ParsedCount != 11 {
+	if len(result.Details) != 1 || result.Details[0].ParsedCount != 17 {
 		t.Fatalf("unexpected detail: %+v", result.Details)
 	}
 
@@ -162,8 +174,8 @@ func TestCreateTasksFromCustomPromptDocumentsCreatesTasksAndPromptArtifacts(t *t
 	if err != nil {
 		t.Fatalf("ListTasks() error = %v", err)
 	}
-	if len(tasks) != 11 {
-		t.Fatalf("tasks len = %d, want 11", len(tasks))
+	if len(tasks) != 17 {
+		t.Fatalf("tasks len = %d, want 17", len(tasks))
 	}
 
 	seenTypes := map[string]int{}
@@ -171,8 +183,8 @@ func TestCreateTasksFromCustomPromptDocumentsCreatesTasksAndPromptArtifacts(t *t
 	for _, task := range tasks {
 		seenTypes[task.TaskType]++
 		if task.TaskType == "代码理解" {
-			if task.PromptDifficulty != "简单" {
-				t.Fatalf("code understanding difficulty = %q, want 简单", task.PromptDifficulty)
+			if task.PromptDifficulty != "困难" {
+				t.Fatalf("code understanding difficulty = %q, want 困难", task.PromptDifficulty)
 			}
 		} else {
 			seenDifficulties[task.PromptDifficulty]++
@@ -206,10 +218,10 @@ func TestCreateTasksFromCustomPromptDocumentsCreatesTasksAndPromptArtifacts(t *t
 			t.Fatalf("model copy should not exist for custom prompt task %s", task.ID)
 		}
 	}
-	if seenTypes["0-1代码生成"] != 5 || seenTypes["Feature迭代"] != 5 || seenTypes["代码理解"] != 1 {
+	if seenTypes["0-1代码生成"] != 8 || seenTypes["Feature迭代"] != 8 || seenTypes["代码理解"] != 1 {
 		t.Fatalf("seenTypes = %+v", seenTypes)
 	}
-	if seenDifficulties["一般"] != 3 || seenDifficulties["困难"] != 7 {
+	if seenDifficulties["一般"] != 5 || seenDifficulties["困难"] != 11 {
 		t.Fatalf("seenDifficulties = %+v", seenDifficulties)
 	}
 }

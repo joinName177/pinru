@@ -117,12 +117,16 @@ func (s *Store) StartBackgroundJob(id string) error {
 }
 
 func (s *Store) CompleteBackgroundJob(id string, outputPayload *string) error {
+	return s.CompleteBackgroundJobWithMessage(id, outputPayload, nil)
+}
+
+func (s *Store) CompleteBackgroundJobWithMessage(id string, outputPayload *string, progressMessage *string) error {
 	now := time.Now().Unix()
 	_, err := s.DB.Exec(
 		`UPDATE background_jobs
-		 SET status = 'done', progress = 100, output_payload = ?, finished_at = ?
+		 SET status = 'done', progress = 100, progress_message = ?, output_payload = ?, finished_at = ?
 		 WHERE id = ? AND status != 'cancelled'`,
-		outputPayload, now, id,
+		progressMessage, outputPayload, now, id,
 	)
 	return err
 }

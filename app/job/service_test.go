@@ -15,6 +15,7 @@ import (
 
 	appcli "github.com/blueship581/pinru/app/cli"
 	appgit "github.com/blueship581/pinru/app/git"
+	appprompt "github.com/blueship581/pinru/app/prompt"
 	"github.com/blueship581/pinru/app/testutil"
 	"github.com/blueship581/pinru/internal/store"
 	"github.com/blueship581/pinru/internal/util"
@@ -112,6 +113,59 @@ func TestShouldGenerateDissatisfactionSummaryAllowsProcessOnlyPass(t *testing.T)
 	}
 	if shouldGenerateDissatisfactionSummary(true, "已核验核心入口、状态回显和用户反馈，本轮通过。") {
 		t.Fatalf("shouldGenerateDissatisfactionSummary(true, pass notes) = true, want false")
+	}
+}
+
+func TestCustomPromptDocumentProgressViewShowsProjectIndex(t *testing.T) {
+	cases := []struct {
+		name         string
+		progress     appprompt.CustomProjectPromptDocumentProgress
+		wantProgress int
+		wantMessage  string
+	}{
+		{
+			name: "first project generating",
+			progress: appprompt.CustomProjectPromptDocumentProgress{
+				ProjectName: "zw-014",
+				Index:       1,
+				Total:       2,
+				Stage:       "generating",
+			},
+			wantProgress: 18,
+			wantMessage:  "正在生成第 1/2 个：zw-014",
+		},
+		{
+			name: "first project done",
+			progress: appprompt.CustomProjectPromptDocumentProgress{
+				ProjectName: "zw-014",
+				Index:       1,
+				Total:       2,
+				Stage:       "done",
+			},
+			wantProgress: 50,
+			wantMessage:  "已生成第 1/2 个：zw-014",
+		},
+		{
+			name: "second project writing",
+			progress: appprompt.CustomProjectPromptDocumentProgress{
+				ProjectName: "zw-015",
+				Index:       2,
+				Total:       2,
+				Stage:       "writing",
+			},
+			wantProgress: 82,
+			wantMessage:  "正在写入第 2/2 个：zw-015",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotProgress, gotMessage := customPromptDocumentProgressView(tc.progress)
+			if gotProgress != tc.wantProgress || gotMessage != tc.wantMessage {
+				t.Fatalf("customPromptDocumentProgressView() = (%d, %q), want (%d, %q)",
+					gotProgress, gotMessage, tc.wantProgress, tc.wantMessage)
+			}
+		})
 	}
 }
 

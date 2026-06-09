@@ -56,7 +56,7 @@ const COLUMNS: TaskStatus[] = [
 const DRAWER_ESC_CONFIRM_WINDOW_MS = 1600;
 const BOARD_EXPANDED_GROUPS_STORAGE_KEY = 'pinru.board.expandedGroups.v1';
 const BOARD_CARD_SIZE_STORAGE_KEY = 'pinru.board.cardSize.v1';
-const BOARD_CARD_SIZES: CardSize[] = ['sm', 'md', 'lg'];
+const BOARD_CARD_SIZES: CardSize[] = ['sm', 'four', 'md', 'lg'];
 const AI_REVIEW_COMMIT_REQUIRED_MESSAGE = '请先提交代码，再发起 AI 复审';
 
 function loadExpandedGroupsFromStorage() {
@@ -873,6 +873,7 @@ export default function Board() {
 
   const gridClassBySize: Record<CardSize, string> = {
     sm: 'grid-cols-5',
+    four: 'grid-cols-4',
     md: 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3',
     lg: 'grid-cols-1 sm:grid-cols-2',
   };
