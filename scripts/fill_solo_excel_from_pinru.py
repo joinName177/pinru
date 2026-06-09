@@ -12,6 +12,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 
 
 MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
@@ -120,6 +121,13 @@ def bool_status(value, true_text: str, false_text: str) -> str:
     return true_text if bool(int(value)) else false_text
 
 
+def effective_task_type(prompt_text: str, fallback: str) -> str:
+    prompt = (prompt_text or "").strip()
+    if prompt.startswith("修复"):
+        return "Bug修复"
+    return fallback
+
+
 def workbook_headers(ws) -> dict[str, int]:
     headers: dict[str, int] = {}
     for cell in ws[1]:
@@ -160,6 +168,29 @@ def ensure_repo_commit_headers(ws) -> dict[str, int]:
     return workbook_headers(ws)
 
 
+def ensure_export_columns_visible(ws, headers: dict[str, int]) -> None:
+    visible_widths = {
+        "RepoURL": 32,
+        "Repo URL": 32,
+        "CommitId": 42,
+        "Commit ID": 42,
+        "任务类型": 14,
+        "业务领域": 16,
+        "修改范围": 16,
+        "任务难度": 12,
+        "任务是否完成": 18,
+        "过程与产物是否满意": 18,
+        "不满意原因": 72,
+    }
+    for header, width in visible_widths.items():
+        col_num = headers.get(header)
+        if col_num is None:
+            continue
+        column_letter = get_column_letter(col_num)
+        ws.column_dimensions[column_letter].hidden = False
+        ws.column_dimensions[column_letter].width = width
+
+
 def review_bool_value(review: sqlite3.Row | None, field: str) -> int | None:
     if review is None:
         return None
@@ -174,23 +205,16 @@ def review_bool_value(review: sqlite3.Row | None, field: str) -> int | None:
     return None
 
 
-def is_review_execution_failure(row: sqlite3.Row) -> bool:
+def is_forbidden_review_failure(row: sqlite3.Row) -> bool:
     notes = (row["review_notes"] or "").lower()
-    return (
-        "复审执行失败" in notes
-        or "codex 执行失败" in notes
-        or "claude 执行失败" in notes
-        or "stream disconnected" in notes
-        or "unexpected status" in notes
-        or "forbidden" in notes
-    )
+    return "forbidden" in notes or "403" in notes
 
 
 def is_effective_review(row: sqlite3.Row) -> bool:
     status = (row["status"] or "").strip().lower()
     if status in ("", "none", "running"):
         return False
-    if is_review_execution_failure(row):
+    if is_forbidden_review_failure(row):
         return False
     return True
 
@@ -270,6 +294,7 @@ def load_pinru_rows(
           r.status,
           r.is_completed,
           r.is_satisfied,
+          r.prompt_text,
           r.review_notes,
           r.dissatisfaction_summary,
           r.project_type,
@@ -363,6 +388,11 @@ def load_pinru_rows(
             review = review_list[round_number - 1] if round_number - 1 < len(review_list) else None
             if include_review_ids and (review is None or review["review_id"] not in include_review_ids):
                 continue
+            user_prompt = (
+                ((review["prompt_text"] or "").strip() if review else "")
+                or (session.get("userConversation") or "").strip()
+            )
+            session_task_type = effective_task_type(user_prompt, session_task_type)
             is_completed = review_bool_value(review, "is_completed")
             is_satisfied = review_bool_value(review, "is_satisfied")
 
@@ -404,7 +434,7 @@ def load_pinru_rows(
                         "Repo ID": repo_id,
                         "提交日期": excel_date(session_dt),
                         "Trae Session ID": session_id,
-                        "User Prompt": (session.get("userConversation") or "").strip(),
+                        "User Prompt": user_prompt,
                         "RepoURL": repo_url,
                         "Repo URL": repo_url,
                         "CommitId": commit_id,
@@ -489,6 +519,7 @@ def write_rows_by_header(input_path: Path, output_path: Path, rows: list[dict], 
     headers = ensure_repo_commit_headers(ws)
     if "Repo ID" not in headers or "Trae Session ID" not in headers:
         raise RuntimeError("Excel 表头缺少 Repo ID 或 Trae Session ID")
+    ensure_export_columns_visible(ws, headers)
 
     if replace_data and ws.max_row > 1:
         ws.delete_rows(2, ws.max_row - 1)
