@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -846,7 +847,7 @@ func (s *CliService) RunCodexReview(ctx context.Context, req CodexReviewRequest,
 		return nil, fmt.Errorf(errs.FmtCodexParseJSONFail, err)
 	}
 	applyCodexReviewEvidenceGuards(localPath, reviewContext, &result)
-	polishReviewNextPrompt(&result)
+	polishReviewNextPrompt(&result, req)
 	return &result, nil
 }
 
@@ -1548,7 +1549,7 @@ func buildCodexReviewPrompt(req CodexReviewRequest, project *pgCodeProjectContex
 6. projectType 和 changeScope 按最符合实际情况的选项填写。
 7. 任务提示词以“当前复核节点上下文”里的 original_prompt/current_prompt 为唯一来源，只把其中明确写出的要求作为验收标准；不要再去读取本地提示词文件，也不要把未写明的扩展点、常识性联想、顺手优化项记为未完成或不满意。parent_review_notes 仅作辅助上下文，不能替代任务提示词本身。
 8. 当 isCompleted=false 或 isSatisfied=false 时，reviewNotes 必须回指 original_prompt/current_prompt 中对应的具体句子、短语或明确要求；若拆分到 issues，则每条 issues[*].reviewNotes 也必须分别回指对应 prompt 语句。回指不到的内容不能作为主缺口，不得据此判定未完成或不满意。
-9. nextPrompt 只能围绕主缺口补充最小修复指令，必须与已回指的 prompt 要求直接对应，不得扩展额外需求；若拆分到 issues，则每条 issues[*].nextPrompt 也遵守同样规则。Bug修复类 nextPrompt 必须像用户可执行的 bug 修复提示词：写清触发场景、当前异常、修复后的业务结果和必要边界；不要直接写“把 A 放到 B 前面”“修改某函数”“调整某字段”“在某文件里...”这类实现方案，也不要写“验收时确认”“补齐链路”“核验闭环”这类复审口吻，除非 current_prompt 本身就是代码级修复要求。
+9. nextPrompt 只能围绕主缺口补充最小修复指令，必须与已回指的 prompt 要求直接对应，不得扩展额外需求；若拆分到 issues，则每条 issues[*].nextPrompt 也遵守同样规则。Bug修复类 nextPrompt 必须像用户可执行的 bug 修复提示词：写清触发场景、当前异常、修复后的业务结果和必要边界；不要直接写“把 A 放到 B 前面”“修改某函数”“调整某字段”“在某文件里...”这类实现方案，也不要写“验收时确认”“补齐链路”“核验闭环”这类复审口吻，除非 current_prompt 本身就是代码级修复要求。Bug修复类 nextPrompt 不能直接沿用 current_prompt 的长开头，先改写成短的问题名，再写修复后的表现，通常控制在 2 到 3 句。
 10. 当本轮发现多个独立问题时，必须通过 issues 数组分别列出；不要把多个问题揉成一条。
 11. nextPromptTaskType 根据 nextPrompt 的任务性质填写，只能在“Bug修复、Feature迭代、0-1代码生成、代码理解、代码重构、工程化、代码测试、未归类”中选择；满意且 nextPrompt 为“无”时填“未归类”。
 12. issues[*].issueType 默认填“Bug修复”，除非证据明确表明是其他类型。
@@ -1560,9 +1561,10 @@ func buildCodexReviewPrompt(req CodexReviewRequest, project *pgCodeProjectContex
 18. 若 isSatisfied=false，reviewNotes 必须给出可核验的具体不满意原因，nextPrompt 必须给出围绕该缺口的最小修复词；不能只写“证据不足”“测试不足”“未运行页面”这类泛化结论。nextPrompt 要描述要修复的用户可感知问题和修复后的业务结果，不要把复审里的代码根因原样改写成代码操作步骤，也不要用复审报告口吻。
 19. 若本轮已通过，issues 返回空数组，但 reviewNotes 不能只填“无”；必须用一两句话说明已经核验哪些核心要求、关键代码位置和主链路闭环依据，作为通过依据。
 20. 如果产物已经满足 current_prompt 的主要交付要求，但处理过程存在不满意，可以保持 isSatisfied=true、nextPrompt=“无”、nextPromptTaskType=“未归类”，并在 reviewNotes 中明确写出“过程不满意：...”；过程不满意只描述处理过程漏掉的验证、拆分或确认动作，不要伪造成产物缺陷。
-21. 红线：只要 isSatisfied=false，nextPrompt 一定不能和 current_prompt/上一轮会话提示词雷同，不能复述上一轮提示词、照抄原句或只替换少量词；必须基于本轮 reviewNotes 中的问题现状重新组织成新的修复提示词。
+21. 红线：只要 isSatisfied=false，nextPrompt 一定不能和 current_prompt/上一轮会话提示词雷同，不能复述上一轮提示词、照抄原句或只替换少量词；必须基于本轮 reviewNotes 中的问题现状重新组织成新的修复提示词。尤其不要连续几轮都用同一个“修复xxx时...”开头。
 22. nextPrompt 必须使用自然语言清晰、顺畅、连贯地描述问题现状和修复后验收结果；不要写废话，不要描述问题原因、代码原因或“为什么会这样”，直接描述当前哪里不对、用户或业务会遇到什么、修复后应达到什么状态。
 22.1 修复提示词尽量不包含代码，不写代码片段、文件、文件名、文件路径、类名、方法名、变量名或命令等代码细节；除非 current_prompt 本身就是代码级修复要求，否则要把代码细节改写成用户可感知的问题现状和验收结果。
+22.2 Bug修复类 nextPrompt 要简洁，避免把复审结论里的证据、代码位置、原因分析和所有边界完整搬进去；同一对象如“评价页”“已启用模板”“维度、权重和必填项”出现一次即可，后面用“对应模板内容”等自然指代。
 23. 如果 nextPromptTaskType 或 issues[*].issueType 是 Bug修复，对应 nextPrompt 前面一定要加“修复”两个字。
 `))
 
@@ -1773,17 +1775,17 @@ func strictCodexReviewPassGuard(result *CodexReviewResult) *codexReviewPassGuard
 	return nil
 }
 
-func polishReviewNextPrompt(result *CodexReviewResult) {
+func polishReviewNextPrompt(result *CodexReviewResult, req CodexReviewRequest) {
 	if result == nil {
 		return
 	}
-	result.NextPrompt = polishReviewNextPromptText(result.NextPrompt)
+	result.NextPrompt = polishReviewNextPromptText(result.NextPrompt, req.CurrentPrompt, result.NextPromptTaskType)
 	for i := range result.Issues {
-		result.Issues[i].NextPrompt = polishReviewNextPromptText(result.Issues[i].NextPrompt)
+		result.Issues[i].NextPrompt = polishReviewNextPromptText(result.Issues[i].NextPrompt, req.CurrentPrompt, result.Issues[i].IssueType)
 	}
 }
 
-func polishReviewNextPromptText(value string) string {
+func polishReviewNextPromptText(value string, currentPrompt string, taskType ...string) string {
 	text := strings.TrimSpace(value)
 	if text == "" || text == "无" {
 		return text
@@ -1811,7 +1813,149 @@ func polishReviewNextPromptText(value string) string {
 	text = strings.ReplaceAll(text, "；需要确认", "；确认")
 	text = strings.ReplaceAll(text, "，需要确认", "，确认")
 	text = strings.ReplaceAll(text, "需要需要", "需要")
+	text = strings.TrimSpace(text)
+
+	if isBugFixTaskType(taskType...) {
+		text = polishBugFixNextPromptText(text, currentPrompt)
+	}
 	return strings.TrimSpace(text)
+}
+
+func isBugFixTaskType(taskType ...string) bool {
+	for _, value := range taskType {
+		if strings.TrimSpace(value) == "Bug修复" {
+			return true
+		}
+	}
+	return false
+}
+
+var (
+	nextPromptWhitespaceRe = regexp.MustCompile(`\s+`)
+	nextPromptPrefixRe     = regexp.MustCompile(`^修复[^：:，,。；;]{8,42}(?:时|中|后|的问题|异常|缺口)?[：:，,。；;]`)
+)
+
+func polishBugFixNextPromptText(text, currentPrompt string) string {
+	text = normalizePromptWhitespace(text)
+	text = removeRepeatedCurrentPromptPrefix(text, currentPrompt)
+	text = shortenBugFixOpening(text)
+	text = compactBugFixSentences(text, 3)
+	if text != "" && !strings.HasPrefix(text, "修复") {
+		text = "修复" + text
+	}
+	return text
+}
+
+func normalizePromptWhitespace(value string) string {
+	text := strings.TrimSpace(value)
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	text = nextPromptWhitespaceRe.ReplaceAllString(text, " ")
+	return strings.TrimSpace(text)
+}
+
+func removeRepeatedCurrentPromptPrefix(text, currentPrompt string) string {
+	currentPrefix := normalizedComparablePrefix(currentPrompt, 40)
+	if currentPrefix == "" {
+		return text
+	}
+	for {
+		textPrefix := normalizedComparablePrefix(text, 40)
+		if textPrefix == "" || commonPrefixRuneLength(textPrefix, currentPrefix) < 10 {
+			return text
+		}
+		cut := nextPromptPrefixRe.FindStringIndex(text)
+		if cut == nil {
+			return text
+		}
+		text = "修复" + strings.TrimSpace(text[cut[1]:])
+	}
+}
+
+func normalizedComparablePrefix(value string, limit int) string {
+	text := normalizePromptWhitespace(value)
+	text = strings.TrimPrefix(text, "请")
+	text = strings.TrimPrefix(text, "继续")
+	runes := []rune(text)
+	if len(runes) > limit {
+		runes = runes[:limit]
+	}
+	normalized := strings.NewReplacer(
+		" ", "",
+		"：", "",
+		":", "",
+		"，", "",
+		",", "",
+		"。", "",
+		"；", "",
+		";", "",
+	).Replace(string(runes))
+	return strings.TrimSpace(normalized)
+}
+
+func shortenBugFixOpening(text string) string {
+	if !strings.HasPrefix(text, "修复") {
+		return text
+	}
+	if loc := nextPromptPrefixRe.FindStringIndex(text); loc != nil {
+		opening := text[:loc[1]]
+		if runeLength(opening) > 24 {
+			remainder := strings.TrimSpace(text[loc[1]:])
+			if remainder != "" {
+				return "修复" + remainder
+			}
+		}
+	}
+	return text
+}
+
+func compactBugFixSentences(text string, limit int) string {
+	sentences := splitChineseSentences(text)
+	if len(sentences) <= limit {
+		return text
+	}
+	return strings.Join(sentences[:limit], "")
+}
+
+func splitChineseSentences(text string) []string {
+	var sentences []string
+	start := 0
+	runes := []rune(text)
+	for i, r := range runes {
+		if strings.ContainsRune("。！？；", r) {
+			sentence := strings.TrimSpace(string(runes[start : i+1]))
+			if sentence != "" {
+				sentences = append(sentences, sentence)
+			}
+			start = i + 1
+		}
+	}
+	if start < len(runes) {
+		sentence := strings.TrimSpace(string(runes[start:]))
+		if sentence != "" {
+			sentences = append(sentences, sentence)
+		}
+	}
+	return sentences
+}
+
+func runeLength(value string) int {
+	return len([]rune(value))
+}
+
+func commonPrefixRuneLength(a, b string) int {
+	ar := []rune(a)
+	br := []rune(b)
+	limit := len(ar)
+	if len(br) < limit {
+		limit = len(br)
+	}
+	for i := 0; i < limit; i++ {
+		if ar[i] != br[i] {
+			return i
+		}
+	}
+	return limit
 }
 
 func normalizeReviewTaskType(value string) string {

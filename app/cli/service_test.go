@@ -353,6 +353,9 @@ func TestPgCodeReviewSchemaDescriptionsEnforcePromptScopedReview(t *testing.T) {
 	if !strings.Contains(nextPromptDesc, "不要写“验收时确认”“补齐链路”“核验闭环”") {
 		t.Fatalf("nextPrompt description = %q, want no review-tone rule", nextPromptDesc)
 	}
+	if !strings.Contains(nextPromptDesc, "不要沿用 current_prompt 的长开头") || !strings.Contains(nextPromptDesc, "通常控制在 2 到 3 句") {
+		t.Fatalf("nextPrompt description = %q, want concise non-repeated bug prompt rule", nextPromptDesc)
+	}
 
 	issues, ok := properties["issues"].(map[string]interface{})
 	if !ok {
@@ -406,6 +409,9 @@ func TestPgCodeReviewSchemaDescriptionsEnforcePromptScopedReview(t *testing.T) {
 	}
 	if !strings.Contains(issueNextPromptDesc, "不要写成“验收时确认”“补齐链路”“核验闭环”") {
 		t.Fatalf("issues.items.nextPrompt description = %q, want no review-tone rule", issueNextPromptDesc)
+	}
+	if !strings.Contains(issueNextPromptDesc, "不要沿用 current_prompt 的长开头") || !strings.Contains(issueNextPromptDesc, "通常控制在 2 到 3 句") {
+		t.Fatalf("issues.items.nextPrompt description = %q, want concise non-repeated bug prompt rule", issueNextPromptDesc)
 	}
 }
 
@@ -826,12 +832,32 @@ func TestApplyCodexReviewEvidenceGuardsDowngradesHighRiskStaticPassWithPrompt(t 
 }
 
 func TestPolishReviewNextPromptTextRemovesReviewTone(t *testing.T) {
-	got := polishReviewNextPromptText("请补齐并核验自动同步链路：验收时确认前端收到事件后能回读最新数据。")
+	got := polishReviewNextPromptText("请补齐并核验自动同步链路：验收时确认前端收到事件后能回读最新数据。", "", "Bug修复")
 
 	if strings.Contains(got, "请补齐") || strings.Contains(got, "核验") || strings.Contains(got, "链路") || strings.Contains(got, "验收时") {
 		t.Fatalf("polishReviewNextPromptText() = %q, still contains review-tone wording", got)
 	}
 	if !strings.Contains(got, "修复自动同步流程") && !strings.Contains(got, "修复自动同步") {
 		t.Fatalf("polishReviewNextPromptText() = %q, want natural repair wording", got)
+	}
+}
+
+func TestPolishReviewNextPromptTextShortensRepeatedBugOpening(t *testing.T) {
+	currentPrompt := "修复面试官进入评价页时已配置模板仍可能无法自动带出的异常：当前面试阶段名称与模板阶段只是大小写、空格或常见写法差异时，评价页应加载已启用模板，并展示对应维度、权重和必填项。"
+	nextPrompt := "修复面试官进入评价页时，当前面试阶段与已启用模板阶段属于同一常见阶段写法、但模板阶段本身还带有空格或大小写差异时仍不能自动加载模板的问题；修复后这类阶段差异应稳定加载已启用模板，并在页面展示模板维度、权重和必填项，只有确实没有可用模板时才使用通用评价提示。还需要继续确认阶段匹配规则覆盖常见写法。"
+
+	got := polishReviewNextPromptText(nextPrompt, currentPrompt, "Bug修复")
+
+	if strings.Contains(got, "修复面试官进入评价页时") {
+		t.Fatalf("polishReviewNextPromptText() = %q, still repeats previous long opening", got)
+	}
+	if len(splitChineseSentences(got)) > 3 {
+		t.Fatalf("polishReviewNextPromptText() = %q, want at most 3 sentences", got)
+	}
+	if !strings.HasPrefix(got, "修复") {
+		t.Fatalf("polishReviewNextPromptText() = %q, want bug prompt prefix", got)
+	}
+	if !strings.Contains(got, "已启用模板") || !strings.Contains(got, "通用评价提示") {
+		t.Fatalf("polishReviewNextPromptText() = %q, lost key business expectations", got)
 	}
 }
