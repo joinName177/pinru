@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
-import { Loader2, Plus, RefreshCw, X } from 'lucide-react';
+import { Download, Loader2, Plus, RefreshCw, X } from 'lucide-react';
 import TaskTypeQuotaEditor from '../../../shared/components/TaskTypeQuotaEditor';
 import MarkdownPreview from '../../../shared/components/MarkdownPreview';
 import {
@@ -13,6 +13,7 @@ import {
   type ProjectConfig,
   type TaskTypeQuotas,
 } from '../../../api/config';
+import { exportSoloProjectXlsx } from '../../../api/task';
 import {
   normalizeManagedSourceFolders,
   type NormalizeManagedSourceFoldersResult,
@@ -78,6 +79,9 @@ export function ProjectOverviewPanel({
   const [normalizeError, setNormalizeError] = useState('');
   const [normalizeResult, setNormalizeResult] =
     useState<NormalizeManagedSourceFoldersResult | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  const [exportResult, setExportResult] = useState<string>('');
 
   const handleNormalize = async () => {
     setNormalizing(true);
@@ -90,6 +94,22 @@ export function ProjectOverviewPanel({
       setNormalizeError(error instanceof Error ? error.message : '归一处理失败');
     } finally {
       setNormalizing(false);
+    }
+  };
+
+  const handleExport = async () => {
+    setExporting(true);
+    setExportError('');
+    setExportResult('');
+    try {
+      const result = await exportSoloProjectXlsx(project.name);
+      setExportResult(
+        `已导出 ${result.rows} 行，文件：${result.outputPath}`,
+      );
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : '导出失败');
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -114,6 +134,15 @@ export function ProjectOverviewPanel({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={exporting}
+            title="导出当前项目对应的 xlsx"
+            className="p-2 rounded-xl hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-400 disabled:opacity-50 cursor-default"
+          >
+            <Download className={`w-4 h-4 ${exporting ? 'animate-pulse' : ''}`} />
+          </button>
           <button
             type="button"
             onClick={handleNormalize}
@@ -162,6 +191,8 @@ export function ProjectOverviewPanel({
             </button>
           </div>
           {normalizeError && <p className="mt-3 text-sm text-red-500">{normalizeError}</p>}
+          {exportError && <p className="mt-3 text-sm text-red-500">{exportError}</p>}
+          {exportResult && <p className="mt-3 text-sm text-emerald-600 dark:text-emerald-400">{exportResult}</p>}
           {normalizeResult && (
             <div className="mt-3 space-y-2">
               <p className="text-xs text-stone-500 dark:text-stone-400">

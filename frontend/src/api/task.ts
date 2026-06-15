@@ -231,6 +231,19 @@ export interface UpdateModelRunRequest {
   finishedAt?: number | null;
 }
 
+export interface SoloProjectXlsxExportResult {
+  projectName: string;
+  outputPath: string;
+  validationPath: string;
+  rows: number;
+  validationRows: number;
+  duplicateSessions: number;
+  emptyRepoUrl: number;
+  emptyCommit: number;
+  missingPrRecords: number;
+  repoUrlFilled: number;
+}
+
 export async function listTasks(projectConfigId?: string): Promise<TaskFromDB[]> {
   return callService('TaskService', 'ListTasks', projectConfigId ?? null);
 }
@@ -318,6 +331,10 @@ export async function extractTaskSessions(taskId: string): Promise<ExtractTaskSe
 
 export async function updateModelRun(request: UpdateModelRunRequest): Promise<void> {
   return callService('TaskService', 'UpdateModelRun', request);
+}
+
+export async function exportSoloProjectXlsx(projectName: string): Promise<SoloProjectXlsxExportResult> {
+  return callService('TaskService', 'ExportSoloProjectXlsx', projectName);
 }
 
 export async function deleteTask(id: string): Promise<void> {

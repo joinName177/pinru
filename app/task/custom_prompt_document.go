@@ -527,8 +527,8 @@ func validateCustomPromptDocumentBatch(entries []customPromptEntry) error {
 			}
 			nonUnderstandingDifficultyCounts[difficulty]++
 		case "代码理解":
-			if difficulty != "困难" {
-				return fmt.Errorf("代码理解题必须是【困难】，当前为【%s】", difficulty)
+			if difficulty != "一般" {
+				return fmt.Errorf("代码理解题必须是【一般】，当前为【%s】", difficulty)
 			}
 			if !strings.Contains(strings.ToLower(entry.PromptText), "readme") {
 				return errors.New("代码理解题必须明确要求生成 README 文档")
@@ -546,9 +546,9 @@ func validateCustomPromptDocumentBatch(entries []customPromptEntry) error {
 			typeCounts["代码理解"],
 		)
 	}
-	if nonUnderstandingDifficultyCounts["一般"] != 5 || nonUnderstandingDifficultyCounts["困难"] != 11 {
+	if nonUnderstandingDifficultyCounts["一般"] != 8 || nonUnderstandingDifficultyCounts["困难"] != 8 {
 		return fmt.Errorf(
-			"除代码理解外的 16 条难度必须是【一般】5 条、【困难】11 条，当前为【一般】%d 条、【困难】%d 条",
+			"除代码理解外的 16 条难度必须是【一般】8 条、【困难】8 条，当前为【一般】%d 条、【困难】%d 条",
 			nonUnderstandingDifficultyCounts["一般"],
 			nonUnderstandingDifficultyCounts["困难"],
 		)

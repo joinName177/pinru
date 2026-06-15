@@ -58,7 +58,7 @@ func TestGenerateCustomProjectPromptDocumentsWritesMarkdownToCustomRoot(t *testi
 		"",
 		"**代码理解**",
 		"",
-		"1. 【困难】梳理发布流程从填写到提交完成的关键状态流和失败分支，并沉淀为 README 文档。",
+		"1. 【一般】梳理发布流程从填写到提交完成的关键状态流和失败分支，并沉淀为 README 文档。",
 	}, "\n")
 	svc := &PromptService{
 		store:  testStore,
@@ -111,10 +111,10 @@ func TestBuildCustomProjectPromptDocumentPromptUsesFixedBatchRules(t *testing.T)
 
 	requiredSnippets := []string{
 		"只生成 17 条，其中 0-1代码生成 8 条，Feature迭代 8 条，代码理解 1 条",
-		"代码理解必须是【困难】",
-		"整批精确控制为【一般】5 条、【困难】12 条",
+		"代码理解固定为【一般】",
+		"整批精确控制为【一般】4 条、【困难】12 条",
 		"不要生成【简单】或【地狱】",
-		"一般题必须带一个真实链路压力",
+		"一般题可以带一个真实链路压力",
 		"困难题必须同时包含两个以上压力点",
 		"要求把梳理结果沉淀为 README 文档",
 		"不要写成需要改代码或改多文件的任务",

@@ -64,6 +64,7 @@ import type {
   CreateTaskRequest,
   ExtractTaskSessionsResult,
   ModelRunFromDB,
+  SoloProjectXlsxExportResult,
   TaskChildDirectory,
   TaskFromDB,
   TaskReadme,
@@ -252,6 +253,7 @@ export type WailsServiceContract = {
     AddModelRun: ServiceMethod<[request: AddModelRunRequest], void>;
     DeleteModelRun: ServiceMethod<[taskId: string, modelName: string], void>;
     UpdateTaskReportFields: ServiceMethod<[request: UpdateTaskReportFieldsRequest], void>;
+    ExportSoloProjectXlsx: ServiceMethod<[projectName: string], SoloProjectXlsxExportResult>;
     BatchUpdateTasks: ServiceMethod<[request: BatchUpdateTasksRequest], BatchUpdateResult>;
     BatchDeleteTasks: ServiceMethod<[taskIds: string[]], BatchUpdateResult>;
     SaveAiReviewRoundNotes: ServiceMethod<

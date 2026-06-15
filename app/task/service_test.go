@@ -1,6 +1,8 @@
 package task
 
 import (
+	"archive/zip"
+	"encoding/xml"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +24,171 @@ func intPtr(value int) *int {
 
 func boolTestPtr(value bool) *bool {
 	return &value
+}
+
+func TestExportSoloProjectXlsxRunsRealExporter(t *testing.T) {
+	testStore := testutil.OpenTestStore(t)
+	defer testStore.Close()
+
+	projectName := "export-itest"
+	taskID := "project-export-itest-label-12345-1"
+	modelRunID := "model-run-export-itest"
+	sessionID := "Trae Session T(2026/06/15 10:11:12)"
+	projectID := "project-export-itest"
+	project := store.Project{
+		ID:             projectID,
+		Name:           projectName,
+		GitLabURL:      "https://gitlab.example.com",
+		GitLabToken:    "glpat-demo",
+		CloneBasePath:  t.TempDir(),
+		Models:         "ORIGIN",
+		TaskTypes:      `["Bug修复"]`,
+		TaskTypeQuotas: `{"Bug修复":1}`,
+		TaskTypeTotals: `{"Bug修复":1}`,
+	}
+	if err := testStore.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	if err := testStore.CreateTaskWithModelRuns(store.Task{
+		ID:              taskID,
+		GitLabProjectID: 12345,
+		ProjectName:     projectName,
+		TaskType:        "Bug修复",
+		PromptDifficulty: "困难",
+		ProjectConfigID: &projectID,
+		ProjectType:     "Web",
+		ChangeScope:     "后端",
+		SessionList: []store.TaskSession{
+			{
+				SessionID:        sessionID,
+				TaskType:         "Bug修复",
+				ConsumeQuota:     true,
+				IsCompleted:      boolTestPtr(true),
+				IsSatisfied:      boolTestPtr(false),
+				Evaluation:       "导出测试不满意原因",
+				UserConversation: "修复导出按钮真实链路",
+			},
+		},
+	}, []store.ModelRun{{ID: modelRunID, TaskID: taskID, ModelName: "ORIGIN"}}); err != nil {
+		t.Fatalf("CreateTaskWithModelRuns() error = %v", err)
+	}
+	if err := testStore.UpdateTaskReportFields(taskID, "Web", "后端"); err != nil {
+		t.Fatalf("UpdateTaskReportFields() error = %v", err)
+	}
+	if err := testStore.UpdateTaskPromptDifficulty(taskID, "困难"); err != nil {
+		t.Fatalf("UpdateTaskPromptDifficulty() error = %v", err)
+	}
+	if err := testStore.UpdateModelRunSessionList(taskID, modelRunID, []store.TaskSession{
+		{
+			SessionID:        sessionID,
+			TaskType:         "Bug修复",
+			ConsumeQuota:     true,
+			IsCompleted:      boolTestPtr(true),
+			IsSatisfied:      boolTestPtr(false),
+			Evaluation:       "导出测试不满意原因",
+			UserConversation: "修复导出按钮真实链路",
+		},
+	}); err != nil {
+		t.Fatalf("UpdateModelRunSessionList() error = %v", err)
+	}
+	if err := testStore.CreateAiReviewRound(store.AiReviewRound{
+		ID:                     "review-export-itest",
+		TaskID:                 taskID,
+		ModelRunID:             &modelRunID,
+		LocalPath:              t.TempDir(),
+		ModelName:              "ORIGIN",
+		RoundNumber:            1,
+		OriginalPrompt:         "修复导出按钮真实链路",
+		PromptText:             "修复导出按钮真实链路",
+		PromptDifficulty:       "困难",
+		Status:                 "warning",
+		IsCompleted:            boolTestPtr(true),
+		IsSatisfied:            boolTestPtr(false),
+		ReviewNotes:            "导出测试复审备注",
+		DissatisfactionSummary: "导出测试不满意原因",
+		ProjectType:            "Web",
+		ChangeScope:            "后端",
+	}); err != nil {
+		t.Fatalf("CreateAiReviewRound() error = %v", err)
+	}
+	if err := testStore.UpsertCodePushRecord(store.CodePushRecord{
+		ID:           "push-export-itest",
+		TaskID:       taskID,
+		ModelRunID:   modelRunID,
+		SessionID:    sessionID,
+		SessionIndex: 0,
+		LocalPath:    t.TempDir(),
+		RepoName:     "export-itest-1",
+		RepoURL:      "https://github.com/example/export-itest-1",
+		CommitSHA:    "abcdef1234567890",
+		CommitURL:    "https://github.com/example/export-itest-1/commit/abcdef1234567890",
+		Branch:       "main",
+		Status:       "pushed",
+	}); err != nil {
+		t.Fatalf("UpsertCodePushRecord() error = %v", err)
+	}
+
+	service := &TaskService{store: testStore}
+	result, err := service.ExportSoloProjectXlsx(projectName)
+	if err != nil {
+		t.Fatalf("ExportSoloProjectXlsx() error = %v", err)
+	}
+	if result.Rows != 1 || result.ValidationRows != 1 {
+		t.Fatalf("export row counts = %d/%d, want 1/1", result.Rows, result.ValidationRows)
+	}
+	if result.EmptyCommit != 0 || result.MissingPRRecords != 0 {
+		t.Fatalf("export validation stats = emptyCommit %d missingPRRecords %d, want 0/0", result.EmptyCommit, result.MissingPRRecords)
+	}
+	if _, err := os.Stat(result.OutputPath); err != nil {
+		t.Fatalf("exported xlsx missing: %v", err)
+	}
+	if _, err := os.Stat(result.ValidationPath); err != nil {
+		t.Fatalf("validation report missing: %v", err)
+	}
+	if got := countXlsxSheetRows(t, result.OutputPath); got != 2 {
+		t.Fatalf("xlsx sheet row count = %d, want header + 1 data row", got)
+	}
+	report, err := os.ReadFile(result.ValidationPath)
+	if err != nil {
+		t.Fatalf("ReadFile(validation report) error = %v", err)
+	}
+	if !strings.Contains(string(report), "- 导出行数：1") {
+		t.Fatalf("validation report does not include exported row count:\n%s", string(report))
+	}
+}
+
+func countXlsxSheetRows(t *testing.T, path string) int {
+	t.Helper()
+
+	reader, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatalf("zip.OpenReader(%s) error = %v", path, err)
+	}
+	defer reader.Close()
+	for _, file := range reader.File {
+		if file.Name != "xl/worksheets/sheet1.xml" {
+			continue
+		}
+		handle, err := file.Open()
+		if err != nil {
+			t.Fatalf("open sheet1.xml error = %v", err)
+		}
+		defer handle.Close()
+		decoder := xml.NewDecoder(handle)
+		count := 0
+		for {
+			token, err := decoder.Token()
+			if err != nil {
+				break
+			}
+			if start, ok := token.(xml.StartElement); ok && start.Name.Local == "row" {
+				count++
+			}
+		}
+		return count
+	}
+	t.Fatalf("sheet1.xml not found in %s", path)
+	return 0
 }
 
 func TestCreateTaskUsesProjectScopedIdentity(t *testing.T) {

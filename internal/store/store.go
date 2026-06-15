@@ -13,7 +13,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-type Store struct{ DB *sql.DB }
+type Store struct {
+	DB     *sql.DB
+	dbPath string
+}
 
 func Open(dbPath string, migrationSQL ...string) (*Store, error) {
 	os.MkdirAll(filepath.Dir(dbPath), 0755)
@@ -21,7 +24,7 @@ func Open(dbPath string, migrationSQL ...string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{DB: db}
+	s := &Store{DB: db, dbPath: dbPath}
 	if err := s.ensureMetaSchema(); err != nil {
 		db.Close()
 		return nil, err
@@ -50,6 +53,8 @@ func Open(dbPath string, migrationSQL ...string) (*Store, error) {
 }
 
 func (s *Store) Close() error { return s.DB.Close() }
+
+func (s *Store) DBPath() string { return s.dbPath }
 
 func (s *Store) ensureMetaSchema() error {
 	metaTables := []string{

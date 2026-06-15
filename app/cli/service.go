@@ -688,6 +688,7 @@ type pgCodeProjectContext struct {
 	Git            pgCodeGitContext     `json:"git"`
 	ReviewCommit   *pgCodeCommitContext `json:"review_commit,omitempty"`
 	RecentFiles    []pgCodeRecentFile   `json:"recent_files"`
+	FileEvidence   []pgCodeFileEvidence `json:"file_evidence,omitempty"`
 	Summary        pgCodeProjectSummary `json:"summary"`
 }
 
@@ -717,6 +718,12 @@ type pgCodeRecentFile struct {
 	Path         string `json:"path"`
 	RelativePath string `json:"relative_path"`
 	MTime        string `json:"mtime"`
+}
+
+type pgCodeFileEvidence struct {
+	RelativePath string `json:"relative_path"`
+	Source       string `json:"source"`
+	Snippet      string `json:"snippet"`
 }
 
 type pgCodeProjectSummary struct {
@@ -963,6 +970,9 @@ func (s *CliService) RunCodexDissatisfactionSummary(ctx context.Context, req Dis
 	if result.Summary == "" {
 		return nil, fmt.Errorf("不满意原因总结为空")
 	}
+	if result.Summary == "异常输出" {
+		return &result, nil
+	}
 	if !strings.Contains(result.Summary, "过程不满意：") || !strings.Contains(result.Summary, "产物不满意：") {
 		return nil, fmt.Errorf("不满意原因总结缺少过程或产物段")
 	}
@@ -1099,7 +1109,8 @@ func collectNativePgCodeReviewContext(ctx context.Context, localPath string) (*p
 			ChangedFiles:    []string{},
 			ChangedFilesRaw: []string{},
 		},
-		RecentFiles: []pgCodeRecentFile{},
+		RecentFiles:  []pgCodeRecentFile{},
+		FileEvidence: []pgCodeFileEvidence{},
 		Summary: pgCodeProjectSummary{
 			TopLevelEntries: []string{},
 			Extensions:      map[string]int{},
@@ -1121,6 +1132,7 @@ func collectNativePgCodeReviewContext(ctx context.Context, localPath string) (*p
 	}
 	project.Git = collectNativeGitContext(ctx, root, 40)
 	project.RecentFiles = collectNativeRecentFiles(ctx, root, 12)
+	project.FileEvidence = collectPgCodeFileEvidence(ctx, root, project.Git.ChangedFiles, project.RecentFiles, 8)
 	project.Summary = summarizeNativeProjectFiles(root, project.Git.ChangedFiles, project.RecentFiles)
 	return project, nil
 }
@@ -1229,6 +1241,7 @@ func attachReviewCommitContext(ctx context.Context, project *pgCodeProjectContex
 		project.Git.RepoRoot = commitContext.RepoRoot
 	}
 	project.Git.InGit = true
+	project.FileEvidence = collectPgCodeFileEvidence(ctx, scope, project.Git.ChangedFiles, project.RecentFiles, 8)
 	project.Summary = summarizeNativeProjectFiles(scope, project.Git.ChangedFiles, project.RecentFiles)
 }
 
@@ -1388,6 +1401,84 @@ func collectNativeRecentFiles(ctx context.Context, root string, limit int) []pgC
 	return result
 }
 
+func collectPgCodeFileEvidence(ctx context.Context, root string, changedFiles []string, recentFiles []pgCodeRecentFile, limit int) []pgCodeFileEvidence {
+	candidates := make([]pgCodeFileEvidence, 0, limit)
+	seen := make(map[string]struct{}, limit)
+
+	appendFile := func(relPath, source string) {
+		if ctx.Err() != nil || len(candidates) >= limit {
+			return
+		}
+		relPath = filepath.ToSlash(strings.TrimSpace(relPath))
+		if relPath == "" {
+			return
+		}
+		if _, ok := seen[relPath]; ok {
+			return
+		}
+		snippet := readProjectFileEvidence(root, relPath)
+		if snippet == "" {
+			return
+		}
+		seen[relPath] = struct{}{}
+		candidates = append(candidates, pgCodeFileEvidence{
+			RelativePath: relPath,
+			Source:       source,
+			Snippet:      snippet,
+		})
+	}
+
+	for _, relPath := range changedFiles {
+		appendFile(relPath, "changed_file")
+	}
+	for _, file := range recentFiles {
+		appendFile(file.RelativePath, "recent_file")
+	}
+	return candidates
+}
+
+func readProjectFileEvidence(root, relPath string) string {
+	absolute := filepath.Join(root, filepath.FromSlash(relPath))
+	info, err := os.Stat(absolute)
+	if err != nil || info.IsDir() {
+		return ""
+	}
+	name := info.Name()
+	if _, ignored := nativeContextIgnoredNames[name]; ignored {
+		return ""
+	}
+	if _, ignored := nativeContextIgnoredSuffixes[strings.ToLower(filepath.Ext(name))]; ignored {
+		return ""
+	}
+
+	data, err := os.ReadFile(absolute)
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+	if bytes.IndexByte(data, 0) >= 0 {
+		return ""
+	}
+
+	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	collected := make([]string, 0, 24)
+	nonEmpty := 0
+	for idx, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		collected = append(collected, fmt.Sprintf("%d: %s", idx+1, limitText(trimmed, 180)))
+		nonEmpty++
+		if nonEmpty >= 24 {
+			break
+		}
+	}
+	if len(collected) == 0 {
+		return ""
+	}
+	return limitText(strings.Join(collected, "\n"), 2400)
+}
+
 func summarizeNativeProjectFiles(root string, changedFiles []string, recentFiles []pgCodeRecentFile) pgCodeProjectSummary {
 	sourcePaths := make([]string, 0, len(changedFiles)+len(recentFiles))
 	for _, rel := range changedFiles {
@@ -1542,6 +1633,7 @@ func buildCodexReviewPrompt(req CodexReviewRequest, project *pgCodeProjectContex
 	parts = append(parts, strings.TrimSpace(`
 补充规则：
 1. 【严格限制】只能基于任务提示词、本轮代码变更、最近更新文件以及你实际读取过的文件下结论。若项目上下文包含 review_commit，说明本轮代码已先提交，必须优先以 review_commit.changed_files / review_commit.name_status_lines / review_commit.stat 作为本轮变更依据；不要再用当前工作区 git status/git diff 为空来判断“未发现变更”。没有 review_commit 时，才使用 git status / git diff 列出的文件。
+1.1 如果项目上下文里提供了 file_evidence，优先把这些片段当作已读取代码的直接证据；判断完成度、满意度、keyLocations 和 reviewNotes 时，应先引用这些片段，再决定是否继续读取对应文件的其他位置。只有 file_evidence 和你后续实际读取到的代码，才能算“已读取过的文件内容”。
 2. 严禁猜测运行效果、页面视觉、接口返回、测试结果或用户体验。
 3. keyLocations 只能填写 git 变更文件或最近更新文件中 1 到 3 个你实际核验过的代码位置，写不出时可留空。
 4. isCompleted 和 isSatisfied 必须分开判断：核心交付物出现、主流程大体落地时，isCompleted 可填 true；只有主要求覆盖接近 90 分、没有明确主链路缺口、关键边界不影响验收时，isSatisfied 才能填 true。80% 左右只能算“完成但不满意”，不能直接满意通过。
@@ -1559,10 +1651,12 @@ func buildCodexReviewPrompt(req CodexReviewRequest, project *pgCodeProjectContex
 16. 高风险场景默认加严：权限/角色隔离、金额/优惠/计费、状态流转、导出下载、文件上传、WebSocket/通知、路由匹配、异步刷新、并发或库存容量。只要没有把请求到响应、状态落库到页面回显、异常边界到用户反馈核清楚，就不能判定满意。
 17. “未运行页面或接口、仅静态取证”不是自动失败，但对 Feature/Bug/0-1 的跨文件或跨前后端主流程，只能在代码证据已经完整闭环且无关键边界缺口时满意；否则默认完成但不满意，并在 reviewNotes 说明缺少哪段链路证据。
 18. 若 isSatisfied=false，reviewNotes 必须给出可核验的具体不满意原因，nextPrompt 必须给出围绕该缺口的最小修复词；不能只写“证据不足”“测试不足”“未运行页面”这类泛化结论。nextPrompt 要描述要修复的用户可感知问题和修复后的业务结果，不要把复审里的代码根因原样改写成代码操作步骤，也不要用复审报告口吻。
+18.0 特殊异常分支：如果不满意的原因是没有读取到实际代码变动、没有拿到本轮有效改动或无法确认本轮真实代码变化，reviewNotes 只输出“异常输出”四个字，nextPrompt 填“无”，nextPromptTaskType 填“未归类”，不要给修复提示词，也不要输出“过程不满意/产物不满意”。
+18.1 当 review_commit.found=true 或 file_evidence 非空时，不要写“未实际读取这些文件内容”这类和上下文矛盾的表述；只有在 file_evidence 为空且你也没有继续读取文件正文时，才能说明具体缺少哪些代码证据。
 19. 若本轮已通过，issues 返回空数组，但 reviewNotes 不能只填“无”；必须用一两句话说明已经核验哪些核心要求、关键代码位置和主链路闭环依据，作为通过依据。
 20. 如果产物已经满足 current_prompt 的主要交付要求，但处理过程存在不满意，可以保持 isSatisfied=true、nextPrompt=“无”、nextPromptTaskType=“未归类”，并在 reviewNotes 中明确写出“过程不满意：...”；过程不满意只描述处理过程漏掉的验证、拆分或确认动作，不要伪造成产物缺陷。
 21. 红线：只要 isSatisfied=false，nextPrompt 一定不能和 current_prompt/上一轮会话提示词雷同，不能复述上一轮提示词、照抄原句或只替换少量词；必须基于本轮 reviewNotes 中的问题现状重新组织成新的修复提示词。尤其不要连续几轮都用同一个“修复xxx时...”开头。
-22. nextPrompt 必须使用自然语言清晰、顺畅、连贯地描述问题现状和修复后验收结果；不要写废话，不要描述问题原因、代码原因或“为什么会这样”，直接描述当前哪里不对、用户或业务会遇到什么、修复后应达到什么状态。
+22. nextPrompt 必须使用自然语言清晰、顺畅、连贯地描述问题现状和修复后验收结果；不要写废话，不要描述问题原因、代码原因或“为什么会这样”，直接描述当前哪里不对、用户或业务会遇到什么、修复后应达到什么状态。reviewNotes 和后续不满意原因也要像人工质检反馈，表达自然、连贯、清楚，不要写成 AI 复审摘要、审计报告或提示词复述，少用“核验”“主链路”“闭环”“可核验”等 AI 味明显的词。
 22.1 修复提示词尽量不包含代码，不写代码片段、文件、文件名、文件路径、类名、方法名、变量名或命令等代码细节；除非 current_prompt 本身就是代码级修复要求，否则要把代码细节改写成用户可感知的问题现状和验收结果。
 22.2 Bug修复类 nextPrompt 要简洁，避免把复审结论里的证据、代码位置、原因分析和所有边界完整搬进去；同一对象如“评价页”“已启用模板”“维度、权重和必填项”出现一次即可，后面用“对应模板内容”等自然指代。
 23. 如果 nextPromptTaskType 或 issues[*].issueType 是 Bug修复，对应 nextPrompt 前面一定要加“修复”两个字。

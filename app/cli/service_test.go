@@ -317,6 +317,9 @@ func TestPgCodeReviewSchemaDescriptionsEnforcePromptScopedReview(t *testing.T) {
 	if !strings.Contains(reviewNotesDesc, "产物满意但处理过程存在不满意") {
 		t.Fatalf("reviewNotes description = %q, want process dissatisfaction pass rule", reviewNotesDesc)
 	}
+	if !strings.Contains(reviewNotesDesc, "reviewNotes 只写“异常输出”") {
+		t.Fatalf("reviewNotes description = %q, want abnormal output rule", reviewNotesDesc)
+	}
 
 	nextPrompt, ok := properties["nextPrompt"].(map[string]interface{})
 	if !ok {
@@ -356,6 +359,9 @@ func TestPgCodeReviewSchemaDescriptionsEnforcePromptScopedReview(t *testing.T) {
 	if !strings.Contains(nextPromptDesc, "不要沿用 current_prompt 的长开头") || !strings.Contains(nextPromptDesc, "通常控制在 2 到 3 句") {
 		t.Fatalf("nextPrompt description = %q, want concise non-repeated bug prompt rule", nextPromptDesc)
 	}
+	if !strings.Contains(nextPromptDesc, "如果 reviewNotes 是“异常输出”，nextPrompt 必须填“无”") {
+		t.Fatalf("nextPrompt description = %q, want no next prompt for abnormal output rule", nextPromptDesc)
+	}
 
 	issues, ok := properties["issues"].(map[string]interface{})
 	if !ok {
@@ -382,6 +388,9 @@ func TestPgCodeReviewSchemaDescriptionsEnforcePromptScopedReview(t *testing.T) {
 	issueReviewNotesDesc, _ := issueReviewNotes["description"].(string)
 	if !strings.Contains(issueReviewNotesDesc, "必须回指 original_prompt/current_prompt") {
 		t.Fatalf("issues.items.reviewNotes description = %q, want prompt back-reference rule", issueReviewNotesDesc)
+	}
+	if !strings.Contains(issueReviewNotesDesc, "只写“异常输出”") {
+		t.Fatalf("issues.items.reviewNotes description = %q, want abnormal output rule", issueReviewNotesDesc)
 	}
 
 	issueNextPrompt, ok := itemProps["nextPrompt"].(map[string]interface{})
@@ -412,6 +421,9 @@ func TestPgCodeReviewSchemaDescriptionsEnforcePromptScopedReview(t *testing.T) {
 	}
 	if !strings.Contains(issueNextPromptDesc, "不要沿用 current_prompt 的长开头") || !strings.Contains(issueNextPromptDesc, "通常控制在 2 到 3 句") {
 		t.Fatalf("issues.items.nextPrompt description = %q, want concise non-repeated bug prompt rule", issueNextPromptDesc)
+	}
+	if !strings.Contains(issueNextPromptDesc, "如果 reviewNotes 是“异常输出”，nextPrompt 必须填“无”") {
+		t.Fatalf("issues.items.nextPrompt description = %q, want no next prompt for abnormal output rule", issueNextPromptDesc)
 	}
 }
 
@@ -640,6 +652,12 @@ func TestBuildCodexReviewPromptIncludesEvidenceGuardrails(t *testing.T) {
 	if !strings.Contains(prompt, "nextPrompt 一定不能和 current_prompt/上一轮会话提示词雷同") {
 		t.Fatalf("prompt missing no-similar-previous-prompt rule: %q", prompt)
 	}
+	if !strings.Contains(prompt, "reviewNotes 只输出“异常输出”四个字") {
+		t.Fatalf("prompt missing abnormal output rule: %q", prompt)
+	}
+	if !strings.Contains(prompt, "不要给修复提示词") {
+		t.Fatalf("prompt missing no repair prompt for abnormal output rule: %q", prompt)
+	}
 	if !strings.Contains(prompt, "不要描述问题原因、代码原因") {
 		t.Fatalf("prompt missing no-cause repair prompt rule: %q", prompt)
 	}
@@ -708,6 +726,19 @@ func TestBuildDissatisfactionSummaryPromptAllowsProcessOnlyWhenProductSatisfied(
 	}
 	if !strings.Contains(prompt, "不要把“证据不足”当成结论本身") {
 		t.Fatalf("prompt missing concrete evidence-insufficiency rule: %q", prompt)
+	}
+	if !strings.Contains(prompt, "summary 只输出 `异常输出` 四个字") {
+		t.Fatalf("prompt missing abnormal dissatisfaction output rule: %q", prompt)
+	}
+	if !strings.Contains(prompt, "表达要连贯、顺畅、清晰") {
+		t.Fatalf("prompt missing natural dissatisfaction writing rule: %q", prompt)
+	}
+}
+
+func TestNormalizeDissatisfactionSummaryAllowsAbnormalOutput(t *testing.T) {
+	got := normalizeDissatisfactionSummary(" \n异常输出\n ")
+	if got != "异常输出" {
+		t.Fatalf("normalizeDissatisfactionSummary() = %q, want 异常输出", got)
 	}
 }
 
