@@ -50,14 +50,14 @@ func TestExportSoloProjectXlsxRunsRealExporter(t *testing.T) {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
 	if err := testStore.CreateTaskWithModelRuns(store.Task{
-		ID:              taskID,
-		GitLabProjectID: 12345,
-		ProjectName:     projectName,
-		TaskType:        "Bug修复",
+		ID:               taskID,
+		GitLabProjectID:  12345,
+		ProjectName:      projectName,
+		TaskType:         "Bug修复",
 		PromptDifficulty: "困难",
-		ProjectConfigID: &projectID,
-		ProjectType:     "Web",
-		ChangeScope:     "后端",
+		ProjectConfigID:  &projectID,
+		ProjectType:      "Web",
+		ChangeScope:      "后端",
 		SessionList: []store.TaskSession{
 			{
 				SessionID:        sessionID,
@@ -1354,5 +1354,125 @@ func TestGetTaskReadmeFallsBackToManagedSourceFolderNamedLikeParent(t *testing.T
 	}
 	if readme.Content != "same-name source" {
 		t.Fatalf("Content = %q", readme.Content)
+	}
+}
+
+func TestResetAiReviewRoundDeletesRoundAndSyncsModelRunSummary(t *testing.T) {
+	testStore := testutil.OpenTestStore(t)
+	defer testStore.Close()
+
+	task := store.Task{
+		ID:              "task-reset-review-round",
+		GitLabProjectID: 3001,
+		ProjectName:     "reset-round",
+		TaskType:        "Feature迭代",
+	}
+	modelRunID := "run-reset-review-round"
+	if err := testStore.CreateTaskWithModelRuns(task, []store.ModelRun{
+		{ID: modelRunID, TaskID: task.ID, ModelName: "ORIGIN"},
+	}); err != nil {
+		t.Fatalf("CreateTaskWithModelRuns() error = %v", err)
+	}
+	if err := testStore.CreateAiReviewRound(store.AiReviewRound{
+		ID:             "round-reset-review-round-1",
+		TaskID:         task.ID,
+		ModelRunID:     &modelRunID,
+		LocalPath:      "/tmp/reset-round",
+		ModelName:      "ORIGIN",
+		RoundNumber:    1,
+		OriginalPrompt: "original",
+		PromptText:     "round 1",
+		Status:         "warning",
+		ReviewNotes:    "上一轮未通过",
+	}); err != nil {
+		t.Fatalf("CreateAiReviewRound(1) error = %v", err)
+	}
+	if err := testStore.CreateAiReviewRound(store.AiReviewRound{
+		ID:             "round-reset-review-round-2",
+		TaskID:         task.ID,
+		ModelRunID:     &modelRunID,
+		LocalPath:      "/tmp/reset-round",
+		ModelName:      "ORIGIN",
+		RoundNumber:    2,
+		OriginalPrompt: "original",
+		PromptText:     "round 2",
+		Status:         "pass",
+	}); err != nil {
+		t.Fatalf("CreateAiReviewRound(2) error = %v", err)
+	}
+	if err := testStore.UpdateModelRunReview(modelRunID, "pass", 2, nil); err != nil {
+		t.Fatalf("UpdateModelRunReview() error = %v", err)
+	}
+
+	service := &TaskService{store: testStore}
+	if err := service.ResetAiReviewRound("round-reset-review-round-2"); err != nil {
+		t.Fatalf("ResetAiReviewRound() error = %v", err)
+	}
+
+	deleted, err := testStore.GetAiReviewRound("round-reset-review-round-2")
+	if err != nil {
+		t.Fatalf("GetAiReviewRound(deleted) error = %v", err)
+	}
+	if deleted != nil {
+		t.Fatalf("deleted round = %#v, want nil", deleted)
+	}
+	rounds, err := testStore.ListAiReviewRoundsByModelRun(modelRunID)
+	if err != nil {
+		t.Fatalf("ListAiReviewRoundsByModelRun() error = %v", err)
+	}
+	if len(rounds) != 1 || rounds[0].ID != "round-reset-review-round-1" {
+		t.Fatalf("remaining rounds = %#v, want only round 1", rounds)
+	}
+	run, err := testStore.GetModelRunByID(modelRunID)
+	if err != nil {
+		t.Fatalf("GetModelRunByID() error = %v", err)
+	}
+	if run == nil {
+		t.Fatalf("GetModelRunByID() = nil")
+	}
+	if run.ReviewStatus != "warning" || run.ReviewRound != 1 || run.ReviewNotes == nil || *run.ReviewNotes != "上一轮未通过" {
+		t.Fatalf("review summary = %q/%d/%v, want warning/1/上一轮未通过", run.ReviewStatus, run.ReviewRound, run.ReviewNotes)
+	}
+}
+
+func TestResetAiReviewRoundRejectsRunningRound(t *testing.T) {
+	testStore := testutil.OpenTestStore(t)
+	defer testStore.Close()
+
+	task := store.Task{
+		ID:              "task-reset-running-round",
+		GitLabProjectID: 3002,
+		ProjectName:     "reset-running-round",
+		TaskType:        "Feature迭代",
+	}
+	modelRunID := "run-reset-running-round"
+	if err := testStore.CreateTaskWithModelRuns(task, []store.ModelRun{
+		{ID: modelRunID, TaskID: task.ID, ModelName: "ORIGIN"},
+	}); err != nil {
+		t.Fatalf("CreateTaskWithModelRuns() error = %v", err)
+	}
+	if err := testStore.CreateAiReviewRound(store.AiReviewRound{
+		ID:          "round-reset-running-round",
+		TaskID:      task.ID,
+		ModelRunID:  &modelRunID,
+		LocalPath:   "/tmp/reset-running-round",
+		ModelName:   "ORIGIN",
+		RoundNumber: 1,
+		PromptText:  "running",
+		Status:      "running",
+	}); err != nil {
+		t.Fatalf("CreateAiReviewRound() error = %v", err)
+	}
+
+	service := &TaskService{store: testStore}
+	if err := service.ResetAiReviewRound("round-reset-running-round"); err == nil {
+		t.Fatalf("ResetAiReviewRound() error = nil, want running rejection")
+	}
+	round, err := testStore.GetAiReviewRound("round-reset-running-round")
+	if err != nil {
+		t.Fatalf("GetAiReviewRound() error = %v", err)
+	}
+	if round == nil {
+		t.Fatalf("running round was deleted")
 	}
 }

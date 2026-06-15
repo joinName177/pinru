@@ -1173,7 +1173,7 @@ func TestCancelJobClearsAiReviewRunningStateWithoutHistory(t *testing.T) {
 	}
 }
 
-func TestDeleteAiReviewJobKeepsCurrentResultWhenDeletingLatestRecord(t *testing.T) {
+func TestDeleteAiReviewJobDeletesLinkedRoundAndSyncsSummary(t *testing.T) {
 	testStore := testutil.OpenTestStore(t)
 
 	taskID := "task-delete-review-latest"
@@ -1199,30 +1199,72 @@ func TestDeleteAiReviewJobKeepsCurrentResultWhenDeletingLatestRecord(t *testing.
 		t.Fatalf("UpdateModelRunReview() error = %v", err)
 	}
 
-	payloadJSON, err := json.Marshal(AiReviewPayload{
-		ModelRunID: strPtr("run-delete-review-latest"),
-		ModelName:  "cotv21-pro",
-		LocalPath:  workDir,
+	roundID1 := "round-delete-review-latest-1"
+	roundID2 := "round-delete-review-latest-2"
+	if err := testStore.CreateAiReviewRound(store.AiReviewRound{
+		ID:             roundID1,
+		TaskID:         taskID,
+		ModelRunID:     strPtr("run-delete-review-latest"),
+		LocalPath:      workDir,
+		ModelName:      "cotv21-pro",
+		RoundNumber:    1,
+		OriginalPrompt: "original",
+		PromptText:     "round 1",
+		Status:         "pass",
+	}); err != nil {
+		t.Fatalf("CreateAiReviewRound(round1) error = %v", err)
+	}
+	if err := testStore.CreateAiReviewRound(store.AiReviewRound{
+		ID:             roundID2,
+		TaskID:         taskID,
+		ModelRunID:     strPtr("run-delete-review-latest"),
+		LocalPath:      workDir,
+		ModelName:      "cotv21-pro",
+		RoundNumber:    2,
+		OriginalPrompt: "original",
+		PromptText:     "round 2",
+		Status:         "warning",
+		ReviewNotes:    "latest result",
+	}); err != nil {
+		t.Fatalf("CreateAiReviewRound(round2) error = %v", err)
+	}
+
+	payloadRound1JSON, err := json.Marshal(AiReviewPayload{
+		ReviewRoundID: &roundID1,
+		ModelRunID:    strPtr("run-delete-review-latest"),
+		ModelName:     "cotv21-pro",
+		LocalPath:     workDir,
 	})
 	if err != nil {
-		t.Fatalf("json.Marshal(payload) error = %v", err)
+		t.Fatalf("json.Marshal(payload round1) error = %v", err)
+	}
+	payloadRound2JSON, err := json.Marshal(AiReviewPayload{
+		ReviewRoundID: &roundID2,
+		ModelRunID:    strPtr("run-delete-review-latest"),
+		ModelName:     "cotv21-pro",
+		LocalPath:     workDir,
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal(payload round2) error = %v", err)
 	}
 	resultRound1, err := json.Marshal(AiReviewResult{
-		ModelRunID:   "run-delete-review-latest",
-		ModelName:    "cotv21-pro",
-		ReviewStatus: "pass",
-		ReviewRound:  1,
-		ReviewNotes:  "first pass",
+		ReviewRoundID: roundID1,
+		ModelRunID:    "run-delete-review-latest",
+		ModelName:     "cotv21-pro",
+		ReviewStatus:  "pass",
+		ReviewRound:   1,
+		ReviewNotes:   "first pass",
 	})
 	if err != nil {
 		t.Fatalf("json.Marshal(resultRound1) error = %v", err)
 	}
 	resultRound2, err := json.Marshal(AiReviewResult{
-		ModelRunID:   "run-delete-review-latest",
-		ModelName:    "cotv21-pro",
-		ReviewStatus: "warning",
-		ReviewRound:  2,
-		ReviewNotes:  "latest result",
+		ReviewRoundID: roundID2,
+		ModelRunID:    "run-delete-review-latest",
+		ModelName:     "cotv21-pro",
+		ReviewStatus:  "warning",
+		ReviewRound:   2,
+		ReviewNotes:   "latest result",
 	})
 	if err != nil {
 		t.Fatalf("json.Marshal(resultRound2) error = %v", err)
@@ -1235,7 +1277,7 @@ func TestDeleteAiReviewJobKeepsCurrentResultWhenDeletingLatestRecord(t *testing.
 		TaskID:         &taskIDPtr,
 		Status:         "done",
 		Progress:       100,
-		InputPayload:   string(payloadJSON),
+		InputPayload:   string(payloadRound1JSON),
 		MaxRetries:     1,
 		TimeoutSeconds: 600,
 		CreatedAt:      1,
@@ -1252,7 +1294,7 @@ func TestDeleteAiReviewJobKeepsCurrentResultWhenDeletingLatestRecord(t *testing.
 		TaskID:         &taskIDPtr,
 		Status:         "done",
 		Progress:       100,
-		InputPayload:   string(payloadJSON),
+		InputPayload:   string(payloadRound2JSON),
 		MaxRetries:     1,
 		TimeoutSeconds: 600,
 		CreatedAt:      2,
@@ -1276,6 +1318,13 @@ func TestDeleteAiReviewJobKeepsCurrentResultWhenDeletingLatestRecord(t *testing.
 	if deletedJob != nil {
 		t.Fatalf("GetBackgroundJob(deleted) = %v, want nil", deletedJob)
 	}
+	deletedRound, err := testStore.GetAiReviewRound(roundID2)
+	if err != nil {
+		t.Fatalf("GetAiReviewRound(deleted) error = %v", err)
+	}
+	if deletedRound != nil {
+		t.Fatalf("GetAiReviewRound(deleted) = %#v, want nil", deletedRound)
+	}
 
 	run, err := testStore.GetModelRunByID("run-delete-review-latest")
 	if err != nil {
@@ -1284,14 +1333,14 @@ func TestDeleteAiReviewJobKeepsCurrentResultWhenDeletingLatestRecord(t *testing.
 	if run == nil {
 		t.Fatalf("GetModelRunByID() = nil")
 	}
-	if run.ReviewStatus != "warning" {
-		t.Fatalf("ReviewStatus = %q, want warning", run.ReviewStatus)
+	if run.ReviewStatus != "pass" {
+		t.Fatalf("ReviewStatus = %q, want pass", run.ReviewStatus)
 	}
-	if run.ReviewRound != 2 {
-		t.Fatalf("ReviewRound = %d, want 2", run.ReviewRound)
+	if run.ReviewRound != 1 {
+		t.Fatalf("ReviewRound = %d, want 1", run.ReviewRound)
 	}
-	if run.ReviewNotes == nil || *run.ReviewNotes != "latest result" {
-		t.Fatalf("ReviewNotes = %v, want latest result", run.ReviewNotes)
+	if run.ReviewNotes != nil {
+		t.Fatalf("ReviewNotes = %v, want nil", run.ReviewNotes)
 	}
 }
 
@@ -1321,30 +1370,72 @@ func TestDeleteAiReviewJobKeepsCurrentResultWhenDeletingOlderRecord(t *testing.T
 		t.Fatalf("UpdateModelRunReview() error = %v", err)
 	}
 
-	payloadJSON, err := json.Marshal(AiReviewPayload{
-		ModelRunID: strPtr("run-delete-review-old"),
-		ModelName:  "cotv21-pro",
-		LocalPath:  workDir,
+	roundID1 := "round-delete-review-old-1"
+	roundID2 := "round-delete-review-old-2"
+	if err := testStore.CreateAiReviewRound(store.AiReviewRound{
+		ID:             roundID1,
+		TaskID:         taskID,
+		ModelRunID:     strPtr("run-delete-review-old"),
+		LocalPath:      workDir,
+		ModelName:      "cotv21-pro",
+		RoundNumber:    1,
+		OriginalPrompt: "original",
+		PromptText:     "round 1",
+		Status:         "pass",
+	}); err != nil {
+		t.Fatalf("CreateAiReviewRound(round1) error = %v", err)
+	}
+	if err := testStore.CreateAiReviewRound(store.AiReviewRound{
+		ID:             roundID2,
+		TaskID:         taskID,
+		ModelRunID:     strPtr("run-delete-review-old"),
+		LocalPath:      workDir,
+		ModelName:      "cotv21-pro",
+		RoundNumber:    2,
+		OriginalPrompt: "original",
+		PromptText:     "round 2",
+		Status:         "warning",
+		ReviewNotes:    "keep latest",
+	}); err != nil {
+		t.Fatalf("CreateAiReviewRound(round2) error = %v", err)
+	}
+
+	payloadRound1JSON, err := json.Marshal(AiReviewPayload{
+		ReviewRoundID: &roundID1,
+		ModelRunID:    strPtr("run-delete-review-old"),
+		ModelName:     "cotv21-pro",
+		LocalPath:     workDir,
 	})
 	if err != nil {
-		t.Fatalf("json.Marshal(payload) error = %v", err)
+		t.Fatalf("json.Marshal(payload round1) error = %v", err)
+	}
+	payloadRound2JSON, err := json.Marshal(AiReviewPayload{
+		ReviewRoundID: &roundID2,
+		ModelRunID:    strPtr("run-delete-review-old"),
+		ModelName:     "cotv21-pro",
+		LocalPath:     workDir,
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal(payload round2) error = %v", err)
 	}
 	resultRound1, err := json.Marshal(AiReviewResult{
-		ModelRunID:   "run-delete-review-old",
-		ModelName:    "cotv21-pro",
-		ReviewStatus: "pass",
-		ReviewRound:  1,
-		ReviewNotes:  "older result",
+		ReviewRoundID: roundID1,
+		ModelRunID:    "run-delete-review-old",
+		ModelName:     "cotv21-pro",
+		ReviewStatus:  "pass",
+		ReviewRound:   1,
+		ReviewNotes:   "older result",
 	})
 	if err != nil {
 		t.Fatalf("json.Marshal(resultRound1) error = %v", err)
 	}
 	resultRound2, err := json.Marshal(AiReviewResult{
-		ModelRunID:   "run-delete-review-old",
-		ModelName:    "cotv21-pro",
-		ReviewStatus: "warning",
-		ReviewRound:  2,
-		ReviewNotes:  "keep latest",
+		ReviewRoundID: roundID2,
+		ModelRunID:    "run-delete-review-old",
+		ModelName:     "cotv21-pro",
+		ReviewStatus:  "warning",
+		ReviewRound:   2,
+		ReviewNotes:   "keep latest",
 	})
 	if err != nil {
 		t.Fatalf("json.Marshal(resultRound2) error = %v", err)
@@ -1357,7 +1448,7 @@ func TestDeleteAiReviewJobKeepsCurrentResultWhenDeletingOlderRecord(t *testing.T
 		TaskID:         &taskIDPtr,
 		Status:         "done",
 		Progress:       100,
-		InputPayload:   string(payloadJSON),
+		InputPayload:   string(payloadRound1JSON),
 		MaxRetries:     1,
 		TimeoutSeconds: 600,
 		CreatedAt:      1,
@@ -1374,7 +1465,7 @@ func TestDeleteAiReviewJobKeepsCurrentResultWhenDeletingOlderRecord(t *testing.T
 		TaskID:         &taskIDPtr,
 		Status:         "done",
 		Progress:       100,
-		InputPayload:   string(payloadJSON),
+		InputPayload:   string(payloadRound2JSON),
 		MaxRetries:     1,
 		TimeoutSeconds: 600,
 		CreatedAt:      2,
@@ -1389,6 +1480,13 @@ func TestDeleteAiReviewJobKeepsCurrentResultWhenDeletingOlderRecord(t *testing.T
 	jobSvc := &JobService{store: testStore, running: make(map[string]context.CancelFunc)}
 	if err := jobSvc.DeleteAiReviewJob("job-review-old-1"); err != nil {
 		t.Fatalf("DeleteAiReviewJob() error = %v", err)
+	}
+	deletedRound, err := testStore.GetAiReviewRound(roundID1)
+	if err != nil {
+		t.Fatalf("GetAiReviewRound(deleted) error = %v", err)
+	}
+	if deletedRound != nil {
+		t.Fatalf("GetAiReviewRound(deleted) = %#v, want nil", deletedRound)
 	}
 
 	run, err := testStore.GetModelRunByID("run-delete-review-old")

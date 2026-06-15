@@ -35,6 +35,7 @@ import {
   listAiReviewRounds,
   listModelRuns,
   resetTaskAiReview,
+  resetAiReviewRound,
   updateTaskSessionList,
   updateTaskStatus,
   updateTaskType,
@@ -584,6 +585,31 @@ export function useBoardTaskDetail({
       setActiveDrawerTab('ai-review');
     } catch (error) {
       setDrawerError(error instanceof Error ? error.message : '重置复审失败');
+    } finally {
+      setAiReviewResetting(false);
+    }
+  };
+
+  const handleResetAiReviewRound = async (roundId: string) => {
+    if (!roundId || aiReviewResetting) {
+      return;
+    }
+
+    setAiReviewResetting(true);
+    setDrawerError('');
+    try {
+      await resetAiReviewRound(roundId);
+      if (!selected?.id) {
+        return;
+      }
+      await Promise.all([
+        loadTasks(),
+        useAppStore.getState().loadBackgroundJobs(),
+      ]);
+      await refreshTaskSessionSyncState(selected.id);
+      setActiveDrawerTab('ai-review');
+    } catch (error) {
+      setDrawerError(error instanceof Error ? error.message : '重置复审轮次失败');
     } finally {
       setAiReviewResetting(false);
     }
@@ -1577,6 +1603,7 @@ export function useBoardTaskDetail({
     handleGeneratePrompt,
     applyExtractedSessionCandidate,
     closeSessionExtractCandidates,
+    handleResetAiReviewRound,
     refreshModelRuns: async () => {
       if (!selected) return;
       const [runs, rounds] = await Promise.all([

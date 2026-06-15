@@ -60,6 +60,7 @@ export function BoardLayerStack({
   onProjectSaved,
   onAiReview,
   onDeleteAiReviewRecord,
+  onResetAiReviewRound,
   onSubmitNextAiReviewRound,
 }: {
   taskCardContextMenu: TaskCardContextMenuState | null;
@@ -97,6 +98,7 @@ export function BoardLayerStack({
   onProjectSaved: (updated: ProjectConfig) => void;
   onAiReview?: (run: import('../../../api/task').ModelRunFromDB) => void;
   onDeleteAiReviewRecord?: (jobId: string) => void | Promise<void>;
+  onResetAiReviewRound?: (roundId: string) => void | Promise<void>;
   onSubmitNextAiReviewRound?: (modelRunId: string, modelName: string, localPath: string, nextPromptOverride?: string) => void | Promise<void>;
 }) {
   return (
@@ -235,6 +237,7 @@ export function BoardLayerStack({
           onRedoCommit={detail.handleRedoCommit}
           onPushCode={detail.handlePushCode}
           onDeleteAiReviewRecord={onDeleteAiReviewRecord}
+          onResetAiReviewRound={onResetAiReviewRound}
           onSubmitNextAiReviewRound={onSubmitNextAiReviewRound}
         />
       )}

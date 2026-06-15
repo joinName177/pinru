@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 
 	"github.com/blueship581/pinru/internal/errs"
@@ -96,6 +97,28 @@ func (s *Store) UpdateAiReviewRoundDissatisfactionSummary(id, dissatisfactionSum
 		strings.TrimSpace(dissatisfactionSummary), id,
 	)
 	return ensureRowsAffected(res, err, errs.FmtStoreReviewRoundNotFound, id)
+}
+
+func (s *Store) DeleteAiReviewRound(id string) (*AiReviewRound, error) {
+	id = strings.TrimSpace(id)
+	round, err := s.GetAiReviewRound(id)
+	if err != nil {
+		return nil, err
+	}
+	if round == nil {
+		return nil, fmt.Errorf(errs.FmtStoreReviewRoundNotFound, id)
+	}
+	if round.Status == "running" {
+		return nil, fmt.Errorf("复审轮次正在运行，请先取消或等待完成后再重置")
+	}
+	res, err := s.DB.Exec(`DELETE FROM ai_review_rounds WHERE id = ?`, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureRowsAffected(res, nil, errs.FmtStoreReviewRoundNotFound, id); err != nil {
+		return nil, err
+	}
+	return round, nil
 }
 
 func (s *Store) GetAiReviewRound(id string) (*AiReviewRound, error) {

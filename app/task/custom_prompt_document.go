@@ -248,6 +248,7 @@ func (s *TaskService) prepareCustomPromptTaskJobsFromSingleDocument(
 		return detail, nil
 	}
 	entries := parseCustomPromptDocumentEntries(string(content))
+	normalizeCustomPromptDocumentBatchDifficulties(entries)
 	detail.ParsedCount = len(entries)
 	if len(entries) == 0 {
 		detail.Status = "error"
@@ -508,6 +509,35 @@ func splitCustomPromptDifficulty(value string) (string, string) {
 	return store.DefaultPromptDifficulty, trimmed
 }
 
+func normalizeCustomPromptDocumentBatchDifficulties(entries []customPromptEntry) {
+	normalIndexes := make([]int, 0, 4)
+	hardIndexes := make([]int, 0, 12)
+	for index, entry := range entries {
+		switch internalprompt.NormalizeTaskType(entry.TaskType) {
+		case "0-1代码生成", "Feature迭代":
+			switch strings.TrimSpace(entry.PromptDifficulty) {
+			case "一般":
+				normalIndexes = append(normalIndexes, index)
+			case "困难":
+				hardIndexes = append(hardIndexes, index)
+			}
+		}
+	}
+
+	for len(normalIndexes) < 4 && len(hardIndexes) > 12 {
+		index := hardIndexes[len(hardIndexes)-1]
+		hardIndexes = hardIndexes[:len(hardIndexes)-1]
+		entries[index].PromptDifficulty = "一般"
+		normalIndexes = append(normalIndexes, index)
+	}
+	for len(normalIndexes) > 4 && len(hardIndexes) < 12 {
+		index := normalIndexes[len(normalIndexes)-1]
+		normalIndexes = normalIndexes[:len(normalIndexes)-1]
+		entries[index].PromptDifficulty = "困难"
+		hardIndexes = append(hardIndexes, index)
+	}
+}
+
 func validateCustomPromptDocumentBatch(entries []customPromptEntry) error {
 	if len(entries) != 17 {
 		return fmt.Errorf("提示词文档必须正好包含 17 条：0-1代码生成 8 条、Feature迭代 8 条、代码理解 1 条；当前解析到 %d 条", len(entries))
@@ -546,9 +576,9 @@ func validateCustomPromptDocumentBatch(entries []customPromptEntry) error {
 			typeCounts["代码理解"],
 		)
 	}
-	if nonUnderstandingDifficultyCounts["一般"] != 8 || nonUnderstandingDifficultyCounts["困难"] != 8 {
+	if nonUnderstandingDifficultyCounts["一般"] != 4 || nonUnderstandingDifficultyCounts["困难"] != 12 {
 		return fmt.Errorf(
-			"除代码理解外的 16 条难度必须是【一般】8 条、【困难】8 条，当前为【一般】%d 条、【困难】%d 条",
+			"除代码理解外的 16 条难度必须是【一般】4 条、【困难】12 条，当前为【一般】%d 条、【困难】%d 条",
 			nonUnderstandingDifficultyCounts["一般"],
 			nonUnderstandingDifficultyCounts["困难"],
 		)

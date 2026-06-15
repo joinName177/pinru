@@ -749,6 +749,10 @@ export default function Board() {
     ]);
   };
 
+  const handleResetAiReviewRound = async (roundId: string) => {
+    await detail.handleResetAiReviewRound(roundId);
+  };
+
   const handleAfterBatchApply = async (
     field: 'status' | 'taskType',
     value: string,
@@ -1008,6 +1012,7 @@ export default function Board() {
         }}
         onAiReview={aiReviewVisible ? handleAiReview : undefined}
         onDeleteAiReviewRecord={aiReviewVisible ? handleDeleteAiReviewRecord : undefined}
+        onResetAiReviewRound={aiReviewVisible ? handleResetAiReviewRound : undefined}
         onSubmitNextAiReviewRound={aiReviewVisible ? handleSubmitNextAiReviewRound : undefined}
       />
 

@@ -268,6 +268,10 @@ export async function resetTaskAiReview(taskId: string): Promise<void> {
   return callService('TaskService', 'ResetTaskAiReview', taskId);
 }
 
+export async function resetAiReviewRound(roundId: string): Promise<void> {
+  return callService('TaskService', 'ResetAiReviewRound', roundId);
+}
+
 export async function saveAiReviewRoundNotes(
   roundID: string,
   reviewNotes: string,

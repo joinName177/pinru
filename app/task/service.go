@@ -263,6 +263,25 @@ func (s *TaskService) ResetTaskAiReview(taskID string) error {
 	return s.store.ResetTaskAiReview(taskID)
 }
 
+func (s *TaskService) ResetAiReviewRound(roundID string) error {
+	roundID = strings.TrimSpace(roundID)
+	if roundID == "" {
+		return errors.New(errs.MsgReviewRoundIDRequired)
+	}
+
+	round, err := s.store.DeleteAiReviewRound(roundID)
+	if err != nil {
+		return err
+	}
+	if round == nil {
+		return fmt.Errorf(errs.FmtStoreReviewRoundNotFound, roundID)
+	}
+	if round.ModelRunID != nil && strings.TrimSpace(*round.ModelRunID) != "" {
+		return s.syncModelRunAiReviewSummary(strings.TrimSpace(*round.ModelRunID))
+	}
+	return nil
+}
+
 func (s *TaskService) UpdateModelRunSessionInfo(req UpdateModelRunSessionRequest) error {
 	return s.store.UpdateModelRunSession(req.ID, req.SessionID, req.ConversationRounds, req.ConversationDate)
 }

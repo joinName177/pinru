@@ -170,6 +170,7 @@ interface TaskDetailDrawerProps {
   onRedoCommit?: (record: CodePushRecord) => void | Promise<void>;
   onPushCode?: (record: CodePushRecord) => void | Promise<void>;
   onDeleteAiReviewRecord?: (jobId: string) => void | Promise<void>;
+  onResetAiReviewRound?: (roundId: string) => void | Promise<void>;
   onSubmitNextAiReviewRound?: (modelRunId: string, modelName: string, localPath: string, nextPromptOverride?: string, reviewRoundId?: string) => void | Promise<void>;
 }
 
@@ -244,6 +245,7 @@ export default function TaskDetailDrawer({
   onRedoCommit,
   onPushCode,
   onDeleteAiReviewRecord,
+  onResetAiReviewRound,
   selectedAiReviewRounds = [],
   onSubmitNextAiReviewRound,
 }: TaskDetailDrawerProps) {
@@ -276,6 +278,7 @@ export default function TaskDetailDrawer({
   const [showRegenForm, setShowRegenForm] = useState(false);
   const [submitToast, setSubmitToast] = useState(false);
   const [deletingAiReviewJobId, setDeletingAiReviewJobId] = useState<string | null>(null);
+  const [resettingAiReviewRoundId, setResettingAiReviewRoundId] = useState<string | null>(null);
   const [deleteAiReviewError, setDeleteAiReviewError] = useState('');
   const [nextRoundPromptDrafts, setNextRoundPromptDrafts] = useState<Record<string, string>>({});
   const [nextRoundTaskTypeDrafts, setNextRoundTaskTypeDrafts] = useState<Record<string, string>>({});
@@ -722,6 +725,26 @@ export default function TaskDetailDrawer({
       setDeleteAiReviewError(error instanceof Error ? error.message : '删除复审记录失败');
     } finally {
       setDeletingAiReviewJobId((current) => (current === entry.job.id ? null : current));
+    }
+  };
+
+  const handleResetAiReviewRound = async (roundId: string, roundLabel: string) => {
+    if (!onResetAiReviewRound) {
+      return;
+    }
+
+    if (!window.confirm(`确定重置“${roundLabel}”吗？这会从数据库清除本轮复审结果。`)) {
+      return;
+    }
+
+    setDeleteAiReviewError('');
+    setResettingAiReviewRoundId(roundId);
+    try {
+      await onResetAiReviewRound(roundId);
+    } catch (error) {
+      setDeleteAiReviewError(error instanceof Error ? error.message : '重置复审轮次失败');
+    } finally {
+      setResettingAiReviewRoundId((current) => (current === roundId ? null : current));
     }
   };
 
@@ -1899,9 +1922,28 @@ export default function TaskDetailDrawer({
                               {round.isSatisfied !== null && (
                                 <AiReviewDecisionBadge label="是否满意" value={round.isSatisfied} />
                               )}
-                              <span className="ml-auto text-[10px] text-zinc-600">
-                                {formatAiReviewTimestamp(round.createdAt)}
-                              </span>
+                              <div className="ml-auto flex items-center gap-1.5">
+                                <span className="text-[10px] text-zinc-600">
+                                  {formatAiReviewTimestamp(round.createdAt)}
+                                </span>
+                                {onResetAiReviewRound && (
+                                  <button
+                                    type="button"
+                                    disabled={round.status === 'running' || resettingAiReviewRoundId === round.id}
+                                    onClick={() => {
+                                      void handleResetAiReviewRound(round.id, `第 ${round.roundNumber} 轮`);
+                                    }}
+                                    title={round.status === 'running' ? '复审任务运行中，完成或取消后才能重置' : '重置本轮'}
+                                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-red-500/25 bg-red-500/10 text-red-200 transition hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-40"
+                                  >
+                                    {resettingAiReviewRoundId === round.id ? (
+                                      <RefreshCw className="h-3 w-3 animate-spin" />
+                                    ) : (
+                                      <Trash2 className="h-3 w-3" />
+                                    )}
+                                  </button>
+                                )}
+                              </div>
                             </div>
 
                             {/* 使用提示词 - 可展开 */}

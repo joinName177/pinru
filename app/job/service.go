@@ -303,10 +303,50 @@ func (s *JobService) DeleteAiReviewJob(id string) error {
 	if job.Status == "pending" || job.Status == "running" {
 		return errors.New(errs.MsgJobReviewStillRunning)
 	}
+	if err := s.deleteAiReviewRoundLinkedToJob(job); err != nil {
+		return err
+	}
 	if err := s.store.DeleteBackgroundJob(id); err != nil {
 		return err
 	}
 
+	return nil
+}
+
+func (s *JobService) deleteAiReviewRoundLinkedToJob(job *store.BackgroundJob) error {
+	if job == nil {
+		return nil
+	}
+
+	var payload AiReviewPayload
+	if err := json.Unmarshal([]byte(job.InputPayload), &payload); err != nil {
+		return nil
+	}
+
+	roundID := ""
+	if payload.ReviewRoundID != nil {
+		roundID = strings.TrimSpace(*payload.ReviewRoundID)
+	}
+	if roundID == "" && payload.ReviewNodeID != nil {
+		roundID = strings.TrimSpace(*payload.ReviewNodeID)
+	}
+	if roundID == "" && job.OutputPayload != nil && strings.TrimSpace(*job.OutputPayload) != "" {
+		var result AiReviewResult
+		if err := json.Unmarshal([]byte(*job.OutputPayload), &result); err == nil {
+			roundID = strings.TrimSpace(result.ReviewRoundID)
+		}
+	}
+	if roundID == "" {
+		return nil
+	}
+
+	round, err := s.store.DeleteAiReviewRound(roundID)
+	if err != nil {
+		return err
+	}
+	if round != nil && round.ModelRunID != nil && strings.TrimSpace(*round.ModelRunID) != "" {
+		return s.syncModelRunAiReviewSummaryFromRounds(strings.TrimSpace(*round.ModelRunID))
+	}
 	return nil
 }
 

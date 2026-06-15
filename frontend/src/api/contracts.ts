@@ -234,6 +234,7 @@ export type WailsServiceContract = {
     ListAiReviewNodes: ServiceMethod<[taskId: string], AiReviewNodeFromDB[]>;
     ListAiReviewRounds: ServiceMethod<[taskId: string], AiReviewRoundFromDB[]>;
     ResetTaskAiReview: ServiceMethod<[taskId: string], void>;
+    ResetAiReviewRound: ServiceMethod<[roundId: string], void>;
     ListTaskChildDirectories: ServiceMethod<[taskId: string], TaskChildDirectory[]>;
     GetTaskReadme: ServiceMethod<[taskId: string], TaskReadme | null>;
     CreateTask: ServiceMethod<[task: CreateTaskRequest], TaskFromDB>;
