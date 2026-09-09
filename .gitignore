@@ -36,6 +36,7 @@ Thumbs.db
 coverage/
 tmp/
 temp/
+exports/
 
 # Old code (remove after migration verified)
 old_code/

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -106,13 +107,47 @@ func findRepoRoot() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir := wd
+
+	candidates := make([]string, 0, 4)
+	seen := map[string]struct{}{}
+	addCandidate := func(path string) {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			return
+		}
+		cleaned := filepath.Clean(path)
+		if _, ok := seen[cleaned]; ok {
+			return
+		}
+		seen[cleaned] = struct{}{}
+		candidates = append(candidates, cleaned)
+	}
+
+	addCandidate(os.Getenv("PINRU_REPO_ROOT"))
+	addCandidate(wd)
+	if executable, err := os.Executable(); err == nil {
+		addCandidate(filepath.Dir(executable))
+	}
+	if _, sourceFile, _, ok := runtime.Caller(0); ok {
+		addCandidate(filepath.Dir(sourceFile))
+	}
+
+	for _, candidate := range candidates {
+		if repoRoot, ok := findRepoRootFrom(candidate); ok {
+			return repoRoot, nil
+		}
+	}
+	return "", fmt.Errorf("找不到仓库根目录：%s", wd)
+}
+
+func findRepoRootFrom(start string) (string, bool) {
+	dir := filepath.Clean(start)
 	for {
 		scriptPath := filepath.Join(dir, "scripts", "export_solo_project_xlsx.py")
 		templatePath := filepath.Join(dir, "public", "bmymoban.xlsx")
 		if _, scriptErr := os.Stat(scriptPath); scriptErr == nil {
 			if _, templateErr := os.Stat(templatePath); templateErr == nil {
-				return dir, nil
+				return dir, true
 			}
 		}
 		parent := filepath.Dir(dir)
@@ -121,7 +156,7 @@ func findRepoRoot() (string, error) {
 		}
 		dir = parent
 	}
-	return "", fmt.Errorf("找不到仓库根目录：%s", wd)
+	return "", false
 }
 
 func (s *TaskService) activeProjectName() (string, error) {

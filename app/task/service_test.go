@@ -157,6 +157,34 @@ func TestExportSoloProjectXlsxRunsRealExporter(t *testing.T) {
 	}
 }
 
+func TestFindRepoRootDoesNotDependOnCurrentWorkingDirectory(t *testing.T) {
+	originalWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	t.Setenv("PINRU_REPO_ROOT", "")
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatalf("Chdir(temp) error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(originalWd); err != nil {
+			t.Fatalf("restore wd error = %v", err)
+		}
+	})
+
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		t.Fatalf("findRepoRoot() error = %v", err)
+	}
+	wantRepoRoot, ok := findRepoRootFrom(originalWd)
+	if !ok {
+		t.Fatalf("findRepoRootFrom(%q) did not find repository root", originalWd)
+	}
+	if repoRoot != wantRepoRoot {
+		t.Fatalf("findRepoRoot() = %q, want %q", repoRoot, wantRepoRoot)
+	}
+}
+
 func countXlsxSheetRows(t *testing.T, path string) int {
 	t.Helper()
 

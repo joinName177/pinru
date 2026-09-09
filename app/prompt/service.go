@@ -491,25 +491,31 @@ func (s *PromptService) runPromptHumanizer(ctx context.Context, workDir, prompt,
 }
 
 func (s *PromptService) generateCustomProjectPromptDocument(ctx context.Context, workDir, projectName, model string) (string, error) {
+	var output string
+	var err error
 	if s.requirementDocGenerator != nil {
-		return s.requirementDocGenerator(ctx, workDir, projectName, model)
+		output, err = s.requirementDocGenerator(ctx, workDir, projectName, model)
+	} else {
+		projectProfile, profileErr := s.resolveProjectProfile(ctx, workDir)
+		if profileErr != nil {
+			slog.Warn("custom project profile cache unavailable, falling back to live repository reading",
+				"project", projectName,
+				"error", profileErr,
+			)
+		}
+		prompt := buildCustomProjectPromptDocumentPrompt(projectName, projectProfile)
+		output, err = s.executeCliRaw(ctx, workDir, prompt, model)
 	}
-
-	projectProfile, err := s.resolveProjectProfile(ctx, workDir)
-	if err != nil {
-		slog.Warn("custom project profile cache unavailable, falling back to live repository reading",
-			"project", projectName,
-			"error", err,
-		)
-	}
-	prompt := buildCustomProjectPromptDocumentPrompt(projectName, projectProfile)
-	output, err := s.executeCliRaw(ctx, workDir, prompt, model)
 	if err != nil {
 		return "", err
 	}
 	content := cleanCustomProjectPromptDocument(output)
-	if strings.TrimSpace(content) == "" {
-		return "", errors.New("模型未返回可写入的提示词文档")
+	if strings.TrimSpace(content) == "" || !strings.Contains(content, "**0-1代码生成**") {
+		trimmedOutput := strings.TrimSpace(output)
+		if trimmedOutput == "" {
+			return "", errors.New("模型未返回可写入的提示词文档")
+		}
+		return "", fmt.Errorf("模型未返回有效的提示词需求文档: %s", trimmedOutput)
 	}
 	return content, nil
 }
@@ -781,7 +787,6 @@ func appendProjectProfilePrompt(sb *strings.Builder, projectProfile *promptProje
 
 func buildCustomProjectPromptDocumentPrompt(projectName string, projectProfile *promptProjectProfile) string {
 	var sb strings.Builder
-	sb.WriteString("/project-requirement-generator\n\n")
 	fmt.Fprintf(&sb, "项目名称：%s\n", strings.TrimSpace(projectName))
 	sb.WriteString("角色要求：请以有实际研发排期经验的产品经理视角生成提示词，同时理解基本工程实现约束。输出要像真实业务交付任务，但复杂度控制在小中型研发需求，不要写成概念 PRD、营销文案、课堂作业或重型架构改造清单。\n")
 	sb.WriteString("请基于当前项目一次性生成提示词需求文档，不要逐条调用单题出题逻辑。\n")

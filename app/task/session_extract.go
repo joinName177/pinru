@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -35,6 +36,10 @@ var (
 		regexp.MustCompile(`^帮我运行`),
 		regexp.MustCompile(`^运行(这个|当前)`),
 	}
+)
+
+var (
+	traeTodayLogDeepTailScanBytes int64 = 1024 * 1024 * 1024
 )
 
 type ExtractedTraeSession struct {
@@ -1102,7 +1107,7 @@ func collectTraeTraceRecordsFromSystem(rawSessionIDs map[string]struct{}, logsPa
 
 	todayLogFiles, historyLogFiles := partitionTraeLogFilesByDay(logFiles, time.Now())
 	if len(todayLogFiles) > 0 {
-		recordsByRaw, collectErr := collectTraeTraceRecords(todayLogFiles, rawSessionIDs)
+		recordsByRaw, collectErr := collectTraeTraceRecordsWithTailLimit(todayLogFiles, rawSessionIDs, traeTodayLogDeepTailScanBytes)
 		if collectErr != nil {
 			return nil, collectErr
 		}
@@ -1161,12 +1166,16 @@ func partitionTraeLogFilesByDay(logFiles []string, now time.Time) ([]string, []s
 }
 
 func collectTraeTraceRecords(logFiles []string, rawSessionIDs map[string]struct{}) (map[string][]traeTraceRecord, error) {
+	return collectTraeTraceRecordsWithTailLimit(logFiles, rawSessionIDs, 0)
+}
+
+func collectTraeTraceRecordsWithTailLimit(logFiles []string, rawSessionIDs map[string]struct{}, tailLimitBytes int64) (map[string][]traeTraceRecord, error) {
 	if len(rawSessionIDs) == 0 {
 		return map[string][]traeTraceRecord{}, nil
 	}
 
 	results, err := runTraeLogWorkers(logFiles, func(index int, logFile string) traeTraceScanResult {
-		return scanTraeLogFileForRecords(index, logFile, rawSessionIDs)
+		return scanTraeLogFileForRecords(index, logFile, rawSessionIDs, tailLimitBytes)
 	})
 	if err != nil {
 		return nil, err
@@ -1223,10 +1232,10 @@ func collectTraeTraceRecords(logFiles []string, rawSessionIDs map[string]struct{
 	return recordsByRaw, nil
 }
 
-func scanTraeLogFileForRecords(index int, logFile string, rawSessionIDs map[string]struct{}) traeTraceScanResult {
+func scanTraeLogFileForRecords(index int, logFile string, rawSessionIDs map[string]struct{}, tailLimitBytes int64) traeTraceScanResult {
 	localTraceToRaw := make(map[string]string)
 	localRecords := make(map[string]traeTraceRecordPartial)
-	scanErr := scanTraeLogFile(logFile, func(line string) {
+	scanErr := scanTraeLogFile(logFile, tailLimitBytes, func(line string) {
 		if !strings.Contains(line, "trace_id") {
 			return
 		}
@@ -1326,14 +1335,51 @@ func parallelTraeWorkspaceWorkerCount(entryCount int) int {
 	return workerCount
 }
 
-func scanTraeLogFile(logFile string, handleLine func(line string)) error {
+func scanTraeLogFile(logFile string, tailLimitBytes int64, handleLine func(line string)) error {
 	file, err := os.Open(logFile)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 
+	if tailLimitBytes > 0 {
+		info, statErr := file.Stat()
+		if statErr != nil {
+			return statErr
+		}
+		if info.Size() > tailLimitBytes {
+			return scanTraeLogFileTail(file, info.Size(), tailLimitBytes, handleLine)
+		}
+	}
+
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	for scanner.Scan() {
+		handleLine(scanner.Text())
+	}
+	return scanner.Err()
+}
+
+func scanTraeLogFileTail(file *os.File, fileSize, maxBytes int64, handleLine func(line string)) error {
+	offset := fileSize - maxBytes
+	if offset < 0 {
+		offset = 0
+	}
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return err
+	}
+
+	reader := bufio.NewReader(io.LimitReader(file, maxBytes))
+	if offset > 0 {
+		if _, err := reader.ReadString('\n'); err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+	}
+
+	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	for scanner.Scan() {
 		handleLine(scanner.Text())

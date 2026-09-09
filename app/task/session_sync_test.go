@@ -99,6 +99,111 @@ func TestBuildTaskSessionsFromCandidatePreservesReviewFieldsAndEvidence(t *testi
 	}
 }
 
+func TestBuildTaskSessionsFromCandidateUpdatesMatchingLaterRounds(t *testing.T) {
+	candidate := ExtractTaskSessionCandidate{
+		ID:            "candidate-1",
+		WorkspacePath: "/tmp/workspace",
+		MatchedPath:   "/tmp/workspace/task",
+		MatchKind:     "peer_model",
+		UserID:        "u-1001",
+		Username:      "alice",
+		Summary:       "最近一次执行会话",
+		Sessions: []ExtractedTraeSession{
+			{
+				SessionID:        "sess-3",
+				UserConversation: "conv-3-new",
+				LastActivityAt:   int64Ptr(1712345678),
+				IsCurrent:        true,
+			},
+		},
+	}
+	previousSessions := []store.TaskSession{
+		{
+			SessionID:        "sess-1-old",
+			TaskType:         "Bug修复",
+			ConsumeQuota:     true,
+			IsCompleted:      boolPtr(true),
+			IsSatisfied:      boolPtr(true),
+			UserConversation: "conv-1-old",
+		},
+		{
+			SessionID:        "sess-2",
+			TaskType:         "代码测试",
+			ConsumeQuota:     false,
+			IsCompleted:      boolPtr(false),
+			IsSatisfied:      boolPtr(false),
+			UserConversation: "conv-2",
+			Evidence: &store.TaskSessionEvidence{
+				WorkspacePath: "/tmp/old-workspace",
+				ExtractedAt:   int64Ptr(1712345000),
+			},
+		},
+		{
+			SessionID:        "sess-3",
+			TaskType:         "Feature迭代",
+			ConsumeQuota:     false,
+			IsCompleted:      boolPtr(true),
+			IsSatisfied:      boolPtr(false),
+			UserConversation: "conv-3",
+		},
+	}
+
+	sessions := buildTaskSessionsFromCandidate(candidate, previousSessions, "Bug修复")
+	if len(sessions) != 3 {
+		t.Fatalf("len(sessions) = %d, want 3", len(sessions))
+	}
+	if sessions[0].SessionID != "sess-1-old" || sessions[0].UserConversation != "conv-1-old" {
+		t.Fatalf("sessions[0] = %#v, want preserved first session", sessions[0])
+	}
+	if sessions[1].SessionID != "sess-2" || sessions[1].UserConversation != "conv-2" {
+		t.Fatalf("sessions[1] = %#v, want preserved second session", sessions[1])
+	}
+	if sessions[1].Evidence == nil || sessions[1].Evidence.WorkspacePath != "/tmp/old-workspace" {
+		t.Fatalf("sessions[1].Evidence = %#v, want preserved evidence", sessions[1].Evidence)
+	}
+	if sessions[2].SessionID != "sess-3" || sessions[2].UserConversation != "conv-3-new" {
+		t.Fatalf("sessions[2] = %#v, want refreshed third session", sessions[2])
+	}
+}
+
+func TestBuildTaskSessionsFromCandidateAppendsUnmatchedFewerExtractedRounds(t *testing.T) {
+	candidate := ExtractTaskSessionCandidate{
+		ID:            "candidate-1",
+		WorkspacePath: "/tmp/workspace",
+		MatchedPath:   "/tmp/workspace/task",
+		MatchKind:     "peer_model",
+		UserID:        "u-1001",
+		Username:      "alice",
+		Summary:       "最近一次执行会话",
+		Sessions: []ExtractedTraeSession{
+			{
+				SessionID:        "sess-4",
+				UserConversation: "conv-4",
+				LastActivityAt:   int64Ptr(1712345678),
+				IsCurrent:        true,
+			},
+		},
+	}
+	previousSessions := []store.TaskSession{
+		{SessionID: "sess-1", TaskType: "Bug修复", ConsumeQuota: true},
+		{SessionID: "sess-2", TaskType: "代码测试", ConsumeQuota: false},
+		{SessionID: "sess-3", TaskType: "Feature迭代", ConsumeQuota: false},
+	}
+
+	sessions := buildTaskSessionsFromCandidate(candidate, previousSessions, "Bug修复")
+	if len(sessions) != 4 {
+		t.Fatalf("len(sessions) = %d, want 4", len(sessions))
+	}
+	for index, wantSessionID := range []string{"sess-1", "sess-2", "sess-3", "sess-4"} {
+		if sessions[index].SessionID != wantSessionID {
+			t.Fatalf("sessions[%d].SessionID = %q, want %q", index, sessions[index].SessionID, wantSessionID)
+		}
+	}
+	if sessions[3].UserConversation != "conv-4" {
+		t.Fatalf("sessions[3].UserConversation = %q, want conv-4", sessions[3].UserConversation)
+	}
+}
+
 func int64Ptr(value int64) *int64 {
 	next := value
 	return &next

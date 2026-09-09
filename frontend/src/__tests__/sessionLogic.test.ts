@@ -33,6 +33,8 @@ function createEditableSession(
     isCompleted: overrides.isCompleted ?? true,
     isSatisfied: overrides.isSatisfied ?? true,
     evaluation: overrides.evaluation ?? '',
+    userConversation: overrides.userConversation ?? '',
+    evidence: overrides.evidence,
   };
 }
 
@@ -296,6 +298,116 @@ describe('sessionUtils', () => {
         }),
       }),
     ]);
+  });
+
+  it('updates matching later rounds when extraction returns fewer sessions', () => {
+    const candidate: ExtractTaskSessionCandidate = {
+      id: 'candidate-1',
+      workspacePath: '/tmp/workspace',
+      matchedPath: '/tmp/workspace/task',
+      matchKind: 'exact',
+      sessionCount: 1,
+      userId: 'u1',
+      username: 'alice',
+      currentSessionId: 'sess-3',
+      userMessageCount: 1,
+      summary: 'summary',
+      lastActivityAt: 123,
+      sessions: [
+        {
+          sessionId: 'sess-3',
+          userConversation: 'conv-3-new',
+          userMessageCount: 1,
+          firstUserMessage: 'hello',
+          lastActivityAt: 123,
+          isCurrent: true,
+        },
+      ],
+    };
+
+    const drafts = buildDraftsFromExtractedCandidate(candidate, [
+      createEditableSession({
+        localId: 'existing-1',
+        sessionId: 'sess-1-old',
+        taskType: 'Bug修复',
+        consumeQuota: true,
+        userConversation: 'conv-1-old',
+      }),
+      createEditableSession({
+        localId: 'existing-2',
+        sessionId: 'sess-2',
+        taskType: '代码测试',
+        consumeQuota: false,
+        userConversation: 'conv-2',
+      }),
+      createEditableSession({
+        localId: 'existing-3',
+        sessionId: 'sess-3',
+        taskType: 'Feature迭代',
+        consumeQuota: false,
+        userConversation: 'conv-3',
+      }),
+    ], 'Bug修复');
+
+    expect(drafts).toHaveLength(3);
+    expect(drafts[0]).toEqual(expect.objectContaining({
+      localId: 'existing-1',
+      sessionId: 'sess-1-old',
+      userConversation: 'conv-1-old',
+    }));
+    expect(drafts[1]).toEqual(expect.objectContaining({
+      localId: 'existing-2',
+      sessionId: 'sess-2',
+      userConversation: 'conv-2',
+    }));
+    expect(drafts[2]).toEqual(expect.objectContaining({
+      localId: 'existing-3',
+      sessionId: 'sess-3',
+      userConversation: 'conv-3-new',
+    }));
+  });
+
+  it('appends unmatched extracted sessions when fewer sessions are returned', () => {
+    const candidate: ExtractTaskSessionCandidate = {
+      id: 'candidate-1',
+      workspacePath: '/tmp/workspace',
+      matchedPath: '/tmp/workspace/task',
+      matchKind: 'exact',
+      sessionCount: 1,
+      userId: 'u1',
+      username: 'alice',
+      currentSessionId: 'sess-4',
+      userMessageCount: 1,
+      summary: 'summary',
+      lastActivityAt: 123,
+      sessions: [
+        {
+          sessionId: 'sess-4',
+          userConversation: 'conv-4',
+          userMessageCount: 1,
+          firstUserMessage: 'hello',
+          lastActivityAt: 123,
+          isCurrent: true,
+        },
+      ],
+    };
+
+    const drafts = buildDraftsFromExtractedCandidate(candidate, [
+      createEditableSession({ localId: 'existing-1', sessionId: 'sess-1', consumeQuota: true }),
+      createEditableSession({ localId: 'existing-2', sessionId: 'sess-2', consumeQuota: false }),
+      createEditableSession({ localId: 'existing-3', sessionId: 'sess-3', consumeQuota: false }),
+    ], 'Bug修复');
+
+    expect(drafts.map((draft) => draft.sessionId)).toEqual([
+      'sess-1',
+      'sess-2',
+      'sess-3',
+      'sess-4',
+    ]);
+    expect(drafts[3]).toEqual(expect.objectContaining({
+      userConversation: 'conv-4',
+      consumeQuota: false,
+    }));
   });
 
   it('formats and parses helper display values', () => {

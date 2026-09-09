@@ -40,6 +40,32 @@ func TestCommitWorkspaceRejectsNoChanges(t *testing.T) {
 	}
 }
 
+func TestCommitWorkspaceOrReuseHeadUsesExistingCommitWhenClean(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("*.log\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := commitAllForTest(dir, "initial"); err != nil {
+		t.Fatal(err)
+	}
+	head := strings.TrimSpace(gitOutputForTest(t, dir, "rev-parse", "HEAD"))
+
+	sha, err := commitWorkspaceOrReuseHead(dir, "session-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sha != head {
+		t.Fatalf("sha = %q, want existing HEAD %q", sha, head)
+	}
+	msg := gitOutputForTest(t, dir, "log", "-1", "--pretty=%B")
+	if strings.TrimSpace(msg) != "initial" {
+		t.Fatalf("commit message = %q, want original message", msg)
+	}
+}
+
 func TestCommitWorkspaceCreatesFullSHA(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello\n"), 0o644); err != nil {

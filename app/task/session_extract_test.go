@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -100,6 +101,124 @@ func TestCollectTraeTraceRecordsKeepsEarlierTraceDetailsBeforeSessionMapping(t *
 	}
 	if records[0].Timestamp.IsZero() {
 		t.Fatalf("records[0].Timestamp = zero, want extracted timestamp")
+	}
+}
+
+func TestScanTraeLogFileTailSkipsOldPrefixForLargeTodayLog(t *testing.T) {
+	logFile := filepath.Join(t.TempDir(), "large.log")
+	oldLine := "old trace_id=\"oldoldoldoldoldoldoldoldoldold12\"\n"
+	newLine := "new trace_id=\"newnewnewnewnewnewnewnewnewnew12\"\n"
+	content := oldLine + strings.Repeat("x", 256) + "\n" + newLine
+	if err := os.WriteFile(logFile, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	file, err := os.Open(logFile)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer file.Close()
+
+	lines := make([]string, 0)
+	if err := scanTraeLogFileTail(file, int64(len(content)), int64(len(newLine)+8), func(line string) {
+		lines = append(lines, line)
+	}); err != nil {
+		t.Fatalf("scanTraeLogFileTail() error = %v", err)
+	}
+
+	if len(lines) != 1 || lines[0] != strings.TrimSuffix(newLine, "\n") {
+		t.Fatalf("lines = %#v, want only new line", lines)
+	}
+}
+
+func TestScanTraeLogFileTailModeReadsSmallFilesFully(t *testing.T) {
+	logFile := filepath.Join(t.TempDir(), "small.log")
+	content := "first\nsecond\n"
+	if err := os.WriteFile(logFile, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	lines := make([]string, 0)
+	if err := scanTraeLogFile(logFile, traeTodayLogDeepTailScanBytes, func(line string) {
+		lines = append(lines, line)
+	}); err != nil {
+		t.Fatalf("scanTraeLogFile() error = %v", err)
+	}
+
+	if len(lines) != 2 || lines[0] != "first" || lines[1] != "second" {
+		t.Fatalf("lines = %#v, want full small file", lines)
+	}
+}
+
+func TestCollectTraeTraceRecordsWithTailLimitCanExpandWindow(t *testing.T) {
+	logFile := filepath.Join(t.TempDir(), "ai-agent_stdout.log")
+	rawSessionID := "69db73736d34f5e3ac85b387"
+	traceID := "664ffceb2a37d8b06f021618f433ea4b"
+	userMessageID := "69db73af28fdad7729b17e8c"
+	assistantMessageID := "69db73b06d34f5e3ac85b391"
+
+	sessionLines := "" +
+		"2026-04-12T18:27:59.999999+08:00 INFO route chat trace_id=\"" + traceID + "\" service: \"chat\", method: \"chat\"\n" +
+		"2026-04-12T18:28:00.026777+08:00 INFO [ChatService] create message, chat_session_id: " + rawSessionID + ", message_id: " + userMessageID + " trace_id=\"" + traceID + "\" session_id=" + rawSessionID + "\n" +
+		"2026-04-12T18:28:00.080631+08:00 INFO generate start trace_id=\"" + traceID + "\" session_id=" + rawSessionID + " task_id=69db73b06d34f5e3ac85b392 message_id=" + assistantMessageID + "\n"
+	content := sessionLines + strings.Repeat("x\n", 512)
+	if err := os.WriteFile(logFile, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	rawSessions := map[string]struct{}{rawSessionID: {}}
+	recordsByRaw, err := collectTraeTraceRecordsWithTailLimit([]string{logFile}, rawSessions, 64)
+	if err != nil {
+		t.Fatalf("collectTraeTraceRecordsWithTailLimit(small) error = %v", err)
+	}
+	if len(recordsByRaw[rawSessionID]) != 0 {
+		t.Fatalf("small tail unexpectedly found records: %#v", recordsByRaw[rawSessionID])
+	}
+
+	recordsByRaw, err = collectTraeTraceRecordsWithTailLimit([]string{logFile}, rawSessions, int64(len(content)))
+	if err != nil {
+		t.Fatalf("collectTraeTraceRecordsWithTailLimit(expanded) error = %v", err)
+	}
+	if len(recordsByRaw[rawSessionID]) != 1 {
+		t.Fatalf("expanded tail records = %#v, want 1", recordsByRaw[rawSessionID])
+	}
+}
+
+func TestCollectTraeTraceRecordsWithTailLimitCollectsMultipleTurnsInWindow(t *testing.T) {
+	logFile := filepath.Join(t.TempDir(), "ai-agent_stdout.log")
+	rawSessionID := "69db73736d34f5e3ac85b387"
+	firstTraceID := "664ffceb2a37d8b06f021618f433ea4b"
+	secondTraceID := "764ffceb2a37d8b06f021618f433ea4c"
+	firstUserMessageID := "69db73af28fdad7729b17e8c"
+	secondUserMessageID := "79db73af28fdad7729b17e8d"
+	firstAssistantMessageID := "69db73b06d34f5e3ac85b391"
+	secondAssistantMessageID := "79db73b06d34f5e3ac85b392"
+
+	recentSessionLines := "" +
+		"2026-04-12T18:27:59.999999+08:00 INFO route chat trace_id=\"" + firstTraceID + "\" service: \"chat\", method: \"chat\"\n" +
+		"2026-04-12T18:28:00.026777+08:00 INFO [ChatService] create message, chat_session_id: " + rawSessionID + ", message_id: " + firstUserMessageID + " trace_id=\"" + firstTraceID + "\" session_id=" + rawSessionID + "\n" +
+		"2026-04-12T18:28:00.080631+08:00 INFO generate start trace_id=\"" + firstTraceID + "\" session_id=" + rawSessionID + " task_id=69db73b06d34f5e3ac85b392 message_id=" + firstAssistantMessageID + "\n" +
+		"2026-04-12T18:30:59.999999+08:00 INFO route chat trace_id=\"" + secondTraceID + "\" service: \"chat\", method: \"chat\"\n" +
+		"2026-04-12T18:31:00.026777+08:00 INFO [ChatService] create message, chat_session_id: " + rawSessionID + ", message_id: " + secondUserMessageID + " trace_id=\"" + secondTraceID + "\" session_id=" + rawSessionID + "\n" +
+		"2026-04-12T18:31:00.080631+08:00 INFO generate start trace_id=\"" + secondTraceID + "\" session_id=" + rawSessionID + " task_id=79db73b06d34f5e3ac85b393 message_id=" + secondAssistantMessageID + "\n"
+	content := strings.Repeat("old\n", 512) + recentSessionLines
+	if err := os.WriteFile(logFile, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	recordsByRaw, err := collectTraeTraceRecordsWithTailLimit(
+		[]string{logFile},
+		map[string]struct{}{rawSessionID: {}},
+		int64(len(recentSessionLines)+16),
+	)
+	if err != nil {
+		t.Fatalf("collectTraeTraceRecordsWithTailLimit() error = %v", err)
+	}
+	if len(recordsByRaw[rawSessionID]) != 2 {
+		t.Fatalf("tail records = %#v, want 2", recordsByRaw[rawSessionID])
+	}
+	if recordsByRaw[rawSessionID][0].TraceID != firstTraceID || recordsByRaw[rawSessionID][1].TraceID != secondTraceID {
+		t.Fatalf("tail records = %#v, want records sorted by timestamp", recordsByRaw[rawSessionID])
 	}
 }
 

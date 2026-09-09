@@ -125,7 +125,12 @@ func TestBuildCustomProjectPromptDocumentPromptUsesFixedBatchRules(t *testing.T)
 		}
 	}
 
+	if strings.HasPrefix(strings.TrimSpace(prompt), "/") {
+		t.Fatalf("custom prompt document prompt must not start with slash (would be treated as CLI command): %q", prompt)
+	}
+
 	staleSnippets := []string{
+		"/project-requirement-generator",
 		"只生成 11 条",
 		"0-1代码生成 5 条",
 		"Feature迭代 5 条",
@@ -140,6 +145,60 @@ func TestBuildCustomProjectPromptDocumentPromptUsesFixedBatchRules(t *testing.T)
 		if strings.Contains(prompt, snippet) {
 			t.Fatalf("custom prompt document prompt still contains stale rule %q:\n%s", snippet, prompt)
 		}
+	}
+}
+
+func TestGenerateCustomProjectPromptDocumentsRejectsInvalidCliOutput(t *testing.T) {
+	testStore := testutil.OpenTestStore(t)
+	defer testStore.Close()
+
+	customRoot := t.TempDir()
+	if err := testStore.SetConfig("custom_project_root_path", customRoot); err != nil {
+		t.Fatalf("SetConfig(custom_project_root_path) error = %v", err)
+	}
+	if err := testStore.CreateProject(store.Project{
+		ID:            "project-custom-invalid",
+		Name:          "Demo",
+		CloneBasePath: t.TempDir(),
+	}); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	sourcePath := filepath.Join(t.TempDir(), "zw-002")
+	if err := os.MkdirAll(sourcePath, 0o755); err != nil {
+		t.Fatalf("MkdirAll(sourcePath) error = %v", err)
+	}
+	if err := testStore.UpsertQuestionBankItem(store.QuestionBankItem{
+		ProjectConfigID: "project-custom-invalid",
+		QuestionID:      802,
+		DisplayName:     "zw-002",
+		SourceKind:      "local_directory",
+		SourcePath:      sourcePath,
+		OriginRef:       "custom:zw-002",
+		Status:          "ready",
+	}); err != nil {
+		t.Fatalf("UpsertQuestionBankItem() error = %v", err)
+	}
+
+	svc := &PromptService{
+		store:  testStore,
+		cliSvc: appcli.NewWithResolver(func(string) (string, error) { return "/tmp/fake-claude", nil }),
+		requirementDocGenerator: func(ctx context.Context, workDir, projectName, model string) (string, error) {
+			return "Unknown command: /project-requirement-generator", nil
+		},
+	}
+
+	result, err := svc.GenerateCustomProjectPromptDocuments(GenerateCustomProjectPromptDocumentsRequest{
+		ProjectID:    "project-custom-invalid",
+		ProjectNames: []string{"zw-002"},
+	})
+	if err != nil {
+		t.Fatalf("GenerateCustomProjectPromptDocuments() error = %v", err)
+	}
+	if result.GeneratedCount != 0 || result.ErrorCount != 1 {
+		t.Fatalf("expected 0 generated and 1 error, got: %+v", result)
+	}
+	if len(result.Details) != 1 || result.Details[0].Status != "error" {
+		t.Fatalf("expected detail status error, got: %+v", result.Details)
 	}
 }
 

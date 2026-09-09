@@ -190,30 +190,91 @@ export function buildDraftsFromExtractedCandidate(
   previousSessions: EditableTaskSession[],
   fallbackTaskType: string,
 ): EditableTaskSession[] {
-  return candidate.sessions.map((detectedSession, index) => {
-    const previous = previousSessions[index];
-    const fallbackDraft = createSessionDraft(fallbackTaskType, {
-      taskType: previous?.taskType ?? fallbackTaskType,
-      consumeQuota: index === 0 ? true : previous?.consumeQuota ?? false,
-      isCompleted: getSessionDecisionValue(previous?.isCompleted),
-      isSatisfied: getSessionDecisionValue(previous?.isSatisfied),
-      evaluation: previous?.evaluation ?? '',
-      userConversation: previous?.userConversation ?? '',
-    });
+  const drafts: EditableTaskSession[] = previousSessions.map((session) => ({
+    ...session,
+    evidence: session.evidence ? { ...session.evidence } : session.evidence,
+  }));
+  const usedIndexes = new Set<number>();
+  const canMergeByPosition = candidate.sessions.length >= previousSessions.length;
 
-    return {
-      ...fallbackDraft,
-      localId: previous?.localId ?? fallbackDraft.localId,
-      taskType: previous?.taskType ?? fallbackDraft.taskType,
-      consumeQuota: index === 0 ? true : previous?.consumeQuota ?? fallbackDraft.consumeQuota,
-      isCompleted: previous?.isCompleted ?? fallbackDraft.isCompleted,
-      isSatisfied: previous?.isSatisfied ?? fallbackDraft.isSatisfied,
-      evaluation: previous?.evaluation ?? fallbackDraft.evaluation,
-      sessionId: detectedSession.sessionId,
-      userConversation: detectedSession.userConversation ?? '',
-      evidence: buildSessionEvidenceFromCandidate(candidate, detectedSession),
-    };
+  candidate.sessions.forEach((detectedSession, detectedIndex) => {
+    const matchedIndex = findDraftIndexBySessionId(drafts, detectedSession.sessionId, usedIndexes);
+    const targetIndex =
+      matchedIndex >= 0
+        ? matchedIndex
+        : canMergeByPosition && detectedIndex < drafts.length
+          ? detectedIndex
+          : -1;
+
+    if (targetIndex >= 0) {
+      drafts[targetIndex] = mergeDetectedSessionIntoDraft(
+        candidate,
+        detectedSession,
+        drafts[targetIndex],
+        targetIndex,
+        fallbackTaskType,
+      );
+      usedIndexes.add(targetIndex);
+      return;
+    }
+
+    drafts.push(mergeDetectedSessionIntoDraft(
+      candidate,
+      detectedSession,
+      undefined,
+      drafts.length,
+      fallbackTaskType,
+    ));
   });
+
+  return drafts.map((draft, index) => ({
+    ...draft,
+    consumeQuota: index === 0 ? true : draft.consumeQuota,
+  }));
+}
+
+function findDraftIndexBySessionId(
+  drafts: EditableTaskSession[],
+  sessionId: string,
+  usedIndexes: Set<number>,
+): number {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId) {
+    return -1;
+  }
+  return drafts.findIndex(
+    (draft, index) => !usedIndexes.has(index) && draft.sessionId.trim() === normalizedSessionId,
+  );
+}
+
+function mergeDetectedSessionIntoDraft(
+  candidate: ExtractTaskSessionCandidate,
+  detectedSession: ExtractTaskSessionCandidate['sessions'][number],
+  previous: EditableTaskSession | undefined,
+  index: number,
+  fallbackTaskType: string,
+): EditableTaskSession {
+  const fallbackDraft = createSessionDraft(fallbackTaskType, {
+    taskType: previous?.taskType ?? fallbackTaskType,
+    consumeQuota: index === 0 ? true : previous?.consumeQuota ?? false,
+    isCompleted: getSessionDecisionValue(previous?.isCompleted),
+    isSatisfied: getSessionDecisionValue(previous?.isSatisfied),
+    evaluation: previous?.evaluation ?? '',
+    userConversation: previous?.userConversation ?? '',
+  });
+
+  return {
+    ...fallbackDraft,
+    localId: previous?.localId ?? fallbackDraft.localId,
+    taskType: previous?.taskType ?? fallbackDraft.taskType,
+    consumeQuota: index === 0 ? true : previous?.consumeQuota ?? fallbackDraft.consumeQuota,
+    isCompleted: previous?.isCompleted ?? fallbackDraft.isCompleted,
+    isSatisfied: previous?.isSatisfied ?? fallbackDraft.isSatisfied,
+    evaluation: previous?.evaluation ?? fallbackDraft.evaluation,
+    sessionId: detectedSession.sessionId,
+    userConversation: detectedSession.userConversation ?? previous?.userConversation ?? '',
+    evidence: buildSessionEvidenceFromCandidate(candidate, detectedSession),
+  };
 }
 
 function buildSessionEvidenceFromCandidate(

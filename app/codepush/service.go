@@ -60,7 +60,7 @@ func (s *CodePushService) CommitCode(req CommitCodeRequest) (*store.CodePushReco
 		return nil, err
 	}
 
-	sha, err := commitWorkspace(resolved.LocalPath, resolved.SessionID, false)
+	sha, err := commitWorkspaceOrReuseHead(resolved.LocalPath, resolved.SessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -315,6 +315,17 @@ func commitWorkspace(path, sessionID string, amend bool) (string, error) {
 		if err := runGit(path, "commit", "-m", sessionID); err != nil {
 			return "", err
 		}
+	}
+	return gitOutput(path, "rev-parse", "HEAD")
+}
+
+func commitWorkspaceOrReuseHead(path, sessionID string) (string, error) {
+	sha, err := commitWorkspace(path, sessionID, false)
+	if err == nil {
+		return sha, nil
+	}
+	if !strings.Contains(err.Error(), noCommitChangeMsg) || !hasHead(path) {
+		return "", err
 	}
 	return gitOutput(path, "rev-parse", "HEAD")
 }

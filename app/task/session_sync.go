@@ -182,7 +182,7 @@ func buildTaskSessionsFromCandidate(
 	previousSessions []store.TaskSession,
 	fallbackTaskType string,
 ) []store.TaskSession {
-	if len(candidate.Sessions) == 0 {
+	if len(candidate.Sessions) == 0 && len(previousSessions) == 0 {
 		return nil
 	}
 
@@ -192,56 +192,143 @@ func buildTaskSessionsFromCandidate(
 	}
 
 	extractedAt := time.Now().Unix()
-	sessions := make([]store.TaskSession, 0, len(candidate.Sessions))
-	for index, extractedSession := range candidate.Sessions {
-		previousSession, hasPrevious := store.TaskSession{}, false
-		if index < len(previousSessions) {
-			previousSession = previousSessions[index]
-			hasPrevious = true
+	sessions := make([]store.TaskSession, 0, maxInt(len(candidate.Sessions), len(previousSessions)))
+	for _, previousSession := range previousSessions {
+		next := previousSession
+		next.SessionID = strings.TrimSpace(next.SessionID)
+		next.TaskType = strings.TrimSpace(next.TaskType)
+		next.Evaluation = strings.TrimSpace(next.Evaluation)
+		next.UserConversation = strings.TrimSpace(next.UserConversation)
+		next.Evidence = cloneTaskSessionEvidence(next.Evidence)
+		sessions = append(sessions, next)
+	}
+
+	usedIndexes := make(map[int]struct{})
+	canMergeByPosition := len(candidate.Sessions) >= len(previousSessions)
+	for detectedIndex, extractedSession := range candidate.Sessions {
+		targetIndex := findTaskSessionIndexBySessionID(sessions, extractedSession.SessionID, usedIndexes)
+		if targetIndex < 0 && canMergeByPosition && detectedIndex < len(sessions) {
+			targetIndex = detectedIndex
 		}
 
-		taskType := normalizedTaskType
-		if hasPrevious && strings.TrimSpace(previousSession.TaskType) != "" {
-			taskType = strings.TrimSpace(previousSession.TaskType)
+		if targetIndex >= 0 {
+			sessions[targetIndex] = mergeExtractedSessionIntoTaskSession(
+				candidate,
+				extractedSession,
+				&sessions[targetIndex],
+				targetIndex,
+				normalizedTaskType,
+				extractedAt,
+			)
+			usedIndexes[targetIndex] = struct{}{}
+			continue
 		}
 
-		isCompleted := true
-		if hasPrevious && previousSession.IsCompleted != nil {
-			isCompleted = *previousSession.IsCompleted
-		}
-		isSatisfied := true
-		if hasPrevious && previousSession.IsSatisfied != nil {
-			isSatisfied = *previousSession.IsSatisfied
-		}
+		sessions = append(sessions, mergeExtractedSessionIntoTaskSession(
+			candidate,
+			extractedSession,
+			nil,
+			len(sessions),
+			normalizedTaskType,
+			extractedAt,
+		))
+	}
 
-		consumeQuota := index == 0
-		if index > 0 && hasPrevious {
-			consumeQuota = previousSession.ConsumeQuota
+	for index := range sessions {
+		if index == 0 {
+			sessions[index].ConsumeQuota = true
 		}
-
-		userConversation := strings.TrimSpace(extractedSession.UserConversation)
-		if userConversation == "" && hasPrevious {
-			userConversation = strings.TrimSpace(previousSession.UserConversation)
-		}
-
-		evaluation := ""
-		if hasPrevious {
-			evaluation = strings.TrimSpace(previousSession.Evaluation)
-		}
-
-		sessions = append(sessions, store.TaskSession{
-			SessionID:        strings.TrimSpace(extractedSession.SessionID),
-			TaskType:         taskType,
-			ConsumeQuota:     consumeQuota,
-			IsCompleted:      boolPtr(isCompleted),
-			IsSatisfied:      boolPtr(isSatisfied),
-			Evaluation:       evaluation,
-			UserConversation: userConversation,
-			Evidence:         buildTaskSessionEvidence(candidate, extractedSession, extractedAt),
-		})
 	}
 
 	return sessions
+}
+
+func findTaskSessionIndexBySessionID(sessions []store.TaskSession, sessionID string, usedIndexes map[int]struct{}) int {
+	trimmed := strings.TrimSpace(sessionID)
+	if trimmed == "" {
+		return -1
+	}
+	for index, session := range sessions {
+		if _, used := usedIndexes[index]; used {
+			continue
+		}
+		if strings.TrimSpace(session.SessionID) == trimmed {
+			return index
+		}
+	}
+	return -1
+}
+
+func mergeExtractedSessionIntoTaskSession(
+	candidate ExtractTaskSessionCandidate,
+	extractedSession ExtractedTraeSession,
+	previousSession *store.TaskSession,
+	index int,
+	normalizedTaskType string,
+	extractedAt int64,
+) store.TaskSession {
+	taskType := normalizedTaskType
+	if previousSession != nil && strings.TrimSpace(previousSession.TaskType) != "" {
+		taskType = strings.TrimSpace(previousSession.TaskType)
+	}
+
+	isCompleted := true
+	if previousSession != nil && previousSession.IsCompleted != nil {
+		isCompleted = *previousSession.IsCompleted
+	}
+	isSatisfied := true
+	if previousSession != nil && previousSession.IsSatisfied != nil {
+		isSatisfied = *previousSession.IsSatisfied
+	}
+
+	consumeQuota := index == 0
+	if index > 0 && previousSession != nil {
+		consumeQuota = previousSession.ConsumeQuota
+	}
+
+	userConversation := strings.TrimSpace(extractedSession.UserConversation)
+	if userConversation == "" && previousSession != nil {
+		userConversation = strings.TrimSpace(previousSession.UserConversation)
+	}
+
+	evaluation := ""
+	if previousSession != nil {
+		evaluation = strings.TrimSpace(previousSession.Evaluation)
+	}
+
+	return store.TaskSession{
+		SessionID:        strings.TrimSpace(extractedSession.SessionID),
+		TaskType:         taskType,
+		ConsumeQuota:     consumeQuota,
+		IsCompleted:      boolPtr(isCompleted),
+		IsSatisfied:      boolPtr(isSatisfied),
+		Evaluation:       evaluation,
+		UserConversation: userConversation,
+		Evidence:         buildTaskSessionEvidence(candidate, extractedSession, extractedAt),
+	}
+}
+
+func maxInt(left, right int) int {
+	if left > right {
+		return left
+	}
+	return right
+}
+
+func cloneTaskSessionEvidence(evidence *store.TaskSessionEvidence) *store.TaskSessionEvidence {
+	if evidence == nil {
+		return nil
+	}
+	next := *evidence
+	if evidence.LastActivityAt != nil {
+		value := *evidence.LastActivityAt
+		next.LastActivityAt = &value
+	}
+	if evidence.ExtractedAt != nil {
+		value := *evidence.ExtractedAt
+		next.ExtractedAt = &value
+	}
+	return &next
 }
 
 func buildTaskSessionEvidence(
