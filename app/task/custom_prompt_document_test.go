@@ -52,18 +52,18 @@ func TestValidateCustomPromptDocumentBatchRules(t *testing.T) {
 		{TaskType: "0-1代码生成", PromptDifficulty: "一般", PromptText: "新增模板配置页，让运营维护发布模板并在发布流程复用。"},
 		{TaskType: "0-1代码生成", PromptDifficulty: "一般", PromptText: "新增消息订阅入口，支持用户维护提醒偏好并在发布节点触发通知。"},
 		{TaskType: "0-1代码生成", PromptDifficulty: "一般", PromptText: "新增素材预览入口，让运营提交前查看标题、封面和正文摘要。"},
-		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增发布日历视图，按日期展示待发布内容和空档提醒。"},
-		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增跨角色协作发布流程，覆盖草稿、提交、撤回和管理员处理。"},
-		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增批量导入发布素材能力，处理重复数据、失败明细和结果回显。"},
-		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增运营复盘看板，串联筛选、统计口径、明细跳转和空态展示。"},
-		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "在现有发布流程里补充草稿自动保存和恢复能力，并保证跨页面返回后内容和提示状态一致。"},
-		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "在现有审核列表里补充处理人筛选和结果回显，兼容批量处理后的列表刷新和空态提示。"},
-		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "在现有详情页补充返回列表后保留筛选条件，同时保证分页位置和高亮状态不丢失。"},
-		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "在现有发布记录里补充失败原因展示和重试提示，兼容刷新后状态同步与历史记录回看。"},
-		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "在现有模板选择里补充最近使用排序和空态提示，并处理默认模板失效后的兜底反馈。"},
-		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "在现有审核详情里补充处理备注回显，并保证驳回、通过后列表摘要和详情内容一致。"},
-		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "扩展审核流程的多状态流转，兼容撤回、驳回、重新提交和列表回显。"},
-		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "增强发布列表筛选统计，保持详情、导出和刷新后的口径一致。"},
+		{TaskType: "0-1代码生成", PromptDifficulty: "一般", PromptText: "新增发布日历视图，按日期展示待发布内容和空档提醒。"},
+		{TaskType: "0-1代码生成", PromptDifficulty: "一般", PromptText: "新增跨角色协作发布流程，覆盖草稿、提交、撤回和管理员处理。"},
+		{TaskType: "0-1代码生成", PromptDifficulty: "一般", PromptText: "新增批量导入发布素材能力，处理重复数据、失败明细和结果回显。"},
+		{TaskType: "0-1代码生成", PromptDifficulty: "一般", PromptText: "新增运营复盘看板，串联筛选、统计口径、明细跳转和空态展示。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "一般", PromptText: "在现有发布流程里补充草稿自动保存和恢复能力，并保证跨页面返回后内容和提示状态一致。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "一般", PromptText: "在现有审核列表里补充处理人筛选和结果回显，兼容批量处理后的列表刷新和空态提示。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "一般", PromptText: "在现有详情页补充返回列表后保留筛选条件，同时保证分页位置和高亮状态不丢失。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "一般", PromptText: "在现有发布记录里补充失败原因展示和重试提示，兼容刷新后状态同步与历史记录回看。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "一般", PromptText: "在现有模板选择里补充最近使用排序和空态提示，并处理默认模板失效后的兜底反馈。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "一般", PromptText: "在现有审核详情里补充处理备注回显，并保证驳回、通过后列表摘要和详情内容一致。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "一般", PromptText: "扩展审核流程的多状态流转，兼容撤回、驳回、重新提交和列表回显。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "一般", PromptText: "增强发布列表筛选统计，保持详情、导出和刷新后的口径一致。"},
 		{TaskType: "代码理解", PromptDifficulty: "一般", PromptText: "梳理发布流程从填写到提交完成的关键状态流，并生成 README 文档。"},
 	}
 	if err := validateCustomPromptDocumentBatch(entries); err != nil {
@@ -77,8 +77,8 @@ func TestValidateCustomPromptDocumentBatchRules(t *testing.T) {
 	}
 
 	wrongDifficulty := append([]customPromptEntry(nil), entries...)
-	wrongDifficulty[0].PromptDifficulty = "简单"
-	if err := validateCustomPromptDocumentBatch(wrongDifficulty); err == nil || !strings.Contains(err.Error(), "一般】或【困难") {
+	wrongDifficulty[0].PromptDifficulty = "困难"
+	if err := validateCustomPromptDocumentBatch(wrongDifficulty); err == nil || !strings.Contains(err.Error(), "必须是【一般】") {
 		t.Fatalf("validate wrong difficulty error = %v, want difficulty error", err)
 	}
 
@@ -120,8 +120,8 @@ func TestNormalizeCustomPromptDocumentBatchDifficulties(t *testing.T) {
 			counts[entry.PromptDifficulty]++
 		}
 	}
-	if counts["一般"] != 4 || counts["困难"] != 12 {
-		t.Fatalf("difficulty counts = %+v, want 一般 4 / 困难 12", counts)
+	if counts["一般"] != 16 || counts["困难"] != 0 {
+		t.Fatalf("difficulty counts = %+v, want 一般 16", counts)
 	}
 }
 
@@ -258,7 +258,7 @@ func TestCreateTasksFromCustomPromptDocumentsCreatesTasksAndPromptArtifacts(t *t
 	if seenTypes["0-1代码生成"] != 8 || seenTypes["Feature迭代"] != 8 || seenTypes["代码理解"] != 1 {
 		t.Fatalf("seenTypes = %+v", seenTypes)
 	}
-	if seenDifficulties["一般"] != 4 || seenDifficulties["困难"] != 12 {
+	if seenDifficulties["一般"] != 16 || seenDifficulties["困难"] != 0 {
 		t.Fatalf("seenDifficulties = %+v", seenDifficulties)
 	}
 }

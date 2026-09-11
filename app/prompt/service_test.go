@@ -111,11 +111,9 @@ func TestBuildCustomProjectPromptDocumentPromptUsesFixedBatchRules(t *testing.T)
 
 	requiredSnippets := []string{
 		"只生成 17 条，其中 0-1代码生成 8 条，Feature迭代 8 条，代码理解 1 条",
-		"代码理解固定为【一般】",
-		"整批精确控制为【一般】4 条、【困难】12 条",
-		"不要生成【简单】或【地狱】",
-		"一般题可以带一个真实链路压力",
-		"困难题必须同时包含两个以上压力点",
+		"全部统一为【一般】",
+		"不要生成【简单】、【困难】或【地狱】",
+		"交付边界点到为止",
 		"要求把梳理结果沉淀为 README 文档",
 		"不要写成需要改代码或改多文件的任务",
 	}
@@ -140,6 +138,9 @@ func TestBuildCustomProjectPromptDocumentPromptUsesFixedBatchRules(t *testing.T)
 		"0-1代码生成 10 条",
 		"Feature迭代 10 条",
 		"简单约 3 条、一般约 10 条、困难约 8 条",
+		"【一般】4 条、【困难】12 条",
+		"一般题可以带一个真实链路压力",
+		"困难题必须同时包含两个以上压力点",
 	}
 	for _, snippet := range staleSnippets {
 		if strings.Contains(prompt, snippet) {
