@@ -5,6 +5,7 @@ import {
   Check,
   ChevronDown,
   CopyPlus,
+  Container,
   FolderDown,
   FolderOpen,
   GitPullRequest,
@@ -55,6 +56,7 @@ const NAV_ITEMS: Array<{ to: string; label: string; icon: typeof FolderDown; end
   { to: '/', icon: Home, label: '主页', end: true },
   { to: '/claim', icon: FolderDown, label: '领题' },
   { to: '/overview', icon: BarChart3, label: '项目查看' },
+  { to: '/annotation', icon: Container, label: '容器标注' },
   { to: '/submit', icon: GitPullRequest, label: '提交' },
 ];
 

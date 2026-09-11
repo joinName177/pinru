@@ -2,7 +2,7 @@
 
 日期：2026-09-12。
 
-状态：供本次方案评审使用，尚未实施。本文不表示程序或技能已经修改、评分已经复核或项目方已验收。
+状态：已实施，新增“容器标注”入口；使用方法见 [操作指南](claude-container-annotation.md)。已完成临时材料与模拟审核器的流程验证，真实付费审核和项目方验收不属于此次代码验证。
 
 ## 1. 目标与范围
 
@@ -150,14 +150,14 @@ SQLite 保存任务绑定、会话、真实轮次、独立评价版本和批次�
 
 ## 8. 分阶段实施与验收
 
-以下为分阶段实施范围与验收计划，具体编码步骤在实施前根据最终方案细化。每一阶段都形成可以独立验证的结果。
+以下阶段已在本地整改分支实现；具体文件按实际实现更新。真实模型评分和外部提交验收仍需真实题目材料。
 
 | 阶段 | 主要文件与模块 | 阶段验收 |
 | --- | --- | --- |
 | A：评分规则整理 | 上述 skill 文件；以 app/cli/service.go 和 app/cli/prompts/dissatisfaction_summary.md 为经验来源 | 同一案例不因旧布尔阈值改变五维分；仅缺证据不凭空扣分；自然改写不改变事实；单次制表用法仍有效 |
-| B：题目和证据准备 | app/task/custom_prompt_document.go；internal/gitops/gitops.go；新增 app/task/container_binding.go、container_capture.go、claude_trace.go、annotation_snapshot.go；新增存储及迁移 | 无 Git 与已有 Git 源题均有有效初始 SHA；空目录限制正确处理；复制保持初始提交；同名容器重建不串题；采集中变化不会生成错误轮末快照 |
+| B：题目和证据准备 | app/task/custom_prompt_document.go；app/annotation/{service,container,capture,filesystem,source}.go；internal/annotation/；新增存储及迁移 | 无 Git 与已有 Git 源题均有有效初始 SHA；空目录限制正确处理；复制保持初始提交；同名容器重建不串题；采集中变化不会生成错误轮末快照 |
 | C：审核与持久存储 | 新增 app/cli/satisfaction_review.go 及输出 schema；app/job/service.go 接入新作业；新增 internal/store/annotation.go；任务详情页展示评分、缺项、建议 | 审核按冻结副本进行；工具结果不算用户轮；重复导入幂等；程序重启结果仍在；失败重试不覆盖旧评价；下一轮建议未执行时不算轮次 |
-| D：统一预检与导出 | 新增 app/task/satisfaction_export.go、scripts/export_satisfaction_xlsx.py；frontend/src/features/report/；frontend/src/api/task.ts；配置新模板资源 | 多题多轮生成一个表；低分及前轮失败保留；跨题重复 ID 被发现；附件齐全；Prompt 不被改写或当公式；批次缺记录不能悄悄通过 |
+| D：统一预检与导出 | app/annotation/export.go、app/annotation/assets/；frontend/src/features/annotation/；frontend/src/api/annotation.ts；配置新模板资源 | 多题多轮生成一个表；低分及前轮失败保留；跨题重复 ID 被发现；附件齐全；Prompt 不被改写或当公式；批次缺记录不能悄悄通过 |
 | E：完整流程验收 | 代表性容器材料与合成轨迹夹具、技能回归样例、导出回读检查、更新 llmdoc | 从创建题目到批次导出可完整复现，结果与独立轮次清单一致，现有 Trae 数据查看及旧导出不受破坏 |
 
 迁移使用新增表和字段，保留现有 Trae 历史数据；迁移编号按实施时最新文件分配，并注册到 migrations/migrations.go。不要将旧 isSatisfied 自动映射为五项 5 分。新模板与脚本按打包资源处理，不再依赖从进程当前目录寻找源码仓库。
@@ -181,4 +181,6 @@ SQLite 保存任务绑定、会话、真实轮次、独立评价版本和批次�
 
 可在当前项目基础上实现。推荐顺序为规则整理、证据准备、逐轮审核缓存、整批导出、完整流程验收。批量制表与逐轮保存兼容；五维评价、文字质量与数据完整性必须分开检查。
 
-本轮只新增此方案文档，不修改业务代码、原 Excel、被测仓库、容器或技能。五维均非 5 与任意维度非 5 的触发含义仍按第 5.4 节显式记录，不将暂定值当作用户已确认。
+执行补记：已完成业务代码、内置与本机 skill、测试和操作指南。本次未改原 Excel，也未运行真实被测题目或付费审核。五维均非 5 与任意维度非 5 的触发含义仍按第 5.4 节显式记录，实际实现采用“任一低分且确有待修缺陷才给下一轮建议”。
+
+验证记录：Go 全量测试通过；前端 26 个测试文件、133 项测试通过，typecheck 与构建通过；Python 导出回归 19 项通过；桌面二进制构建通过。独立代码审查发现的首次采集空数组、图片漏轮、重复轮结束状态、串题来源、初始仓库关联、审核附件和 Prompt 原文问题均已修复并复审。

@@ -36,6 +36,8 @@ const (
 
 var errGitCloneIdleTimeout = fmt.Errorf(errs.FmtJobGitCloneIdleTimeout, gitCloneIdleTimeout)
 
+type AnnotationHandler func(context.Context, string, string) (any, error)
+
 type JobService struct {
 	store             *store.Store
 	promptSvc         *appprompt.PromptService
@@ -47,6 +49,7 @@ type JobService struct {
 	running           map[string]context.CancelFunc
 	cloneSem          chan struct{}
 	promptGenerateSem chan struct{}
+	annotationHandler AnnotationHandler
 }
 
 func New(
@@ -56,8 +59,9 @@ func New(
 	submitSvc *appsubmit.SubmitService,
 	taskSvc *apptask.TaskService,
 	cliSvc *appcli.CliService,
+	annotationHandlers ...AnnotationHandler,
 ) *JobService {
-	return &JobService{
+	s := &JobService{
 		store:             st,
 		promptSvc:         promptSvc,
 		gitSvc:            gitSvc,
@@ -68,6 +72,10 @@ func New(
 		cloneSem:          make(chan struct{}, gitCloneConcurrencyLimit),
 		promptGenerateSem: make(chan struct{}, promptGenerateConcurrencyLimit),
 	}
+	if len(annotationHandlers) > 0 {
+		s.annotationHandler = annotationHandlers[0]
+	}
+	return s
 }
 
 type SubmitJobRequest struct {
@@ -172,6 +180,20 @@ func (s *JobService) SubmitJob(req SubmitJobRequest) (*store.BackgroundJob, erro
 }
 
 func (s *JobService) findActiveJobLocked(req SubmitJobRequest) (*store.BackgroundJob, error) {
+	if strings.HasPrefix(req.JobType, "annotation_") {
+		jobs, err := s.store.ListBackgroundJobs(nil)
+		if err != nil {
+			return nil, err
+		}
+		for i := range jobs {
+			j := &jobs[i]
+			if j.JobType == req.JobType && j.InputPayload == req.InputPayload &&
+				(j.Status == "pending" || j.Status == "running") {
+				return j, nil
+			}
+		}
+		return nil, nil
+	}
 	if req.JobType != "ai_review" || strings.TrimSpace(req.TaskID) == "" {
 		return nil, nil
 	}
@@ -453,6 +475,21 @@ func (s *JobService) executeJob(id string, req SubmitJobRequest) {
 		execResult, execErr = s.executePrSubmit(ctx, id, req)
 	case "ai_review":
 		execResult, execErr = s.executeAiReview(ctx, id, req)
+	case "annotation_prepare", "annotation_bind", "annotation_capture", "annotation_review", "annotation_export":
+		if s.annotationHandler == nil {
+			execErr = errors.New("容器标注服务尚未注册")
+		} else {
+			var output any
+			output, execErr = s.annotationHandler(ctx, req.JobType, req.InputPayload)
+			if execErr == nil {
+				var raw []byte
+				raw, execErr = json.Marshal(output)
+				if execErr == nil {
+					execResult.outputPayload = strPtr(string(raw))
+					execResult.finalMessage = strPtr("标注操作完成")
+				}
+			}
+		}
 	default:
 		execErr = fmt.Errorf(errs.FmtJobUnknownType, req.JobType)
 	}

@@ -36,6 +36,18 @@ import type {
   SubmitJobRequest,
 } from './job';
 import type {
+  AnnotationCase,
+  AnnotationContainer,
+  AnnotationExportResult,
+  AnnotationPreflightReport,
+  BindContainerRequest,
+  CaptureRequest,
+  ExportAnnotationRequest,
+  ReviewRequest,
+  SaveCaseSettingsRequest,
+  TraceCandidate,
+} from './annotation';
+import type {
   GeneratePromptRequest,
   GenerateCustomProjectPromptDocumentsRequest,
   GenerateCustomProjectPromptDocumentsResult,
@@ -80,6 +92,18 @@ type ServiceMethod<Args extends unknown[], Result> = {
 };
 
 export type WailsServiceContract = {
+  AnnotationService: {
+    ListCases: ServiceMethod<[projectId: string], AnnotationCase[]>;
+    ListContainers: ServiceMethod<[], AnnotationContainer[]>;
+    PrepareCase: ServiceMethod<[request: { taskId: string }], AnnotationCase>;
+    BindContainer: ServiceMethod<[request: BindContainerRequest], AnnotationCase>;
+    ListTraces: ServiceMethod<[taskId: string], TraceCandidate[]>;
+    Capture: ServiceMethod<[request: CaptureRequest], AnnotationCase>;
+    Review: ServiceMethod<[request: ReviewRequest], AnnotationCase>;
+    SaveCaseSettings: ServiceMethod<[request: SaveCaseSettingsRequest], AnnotationCase>;
+    Preflight: ServiceMethod<[projectId: string], AnnotationPreflightReport>;
+    Export: ServiceMethod<[request: ExportAnnotationRequest], AnnotationExportResult>;
+  };
   ChatService: {
     CreateSession: ServiceMethod<[request: { taskId: string; model: string }], ChatSession>;
     ListSessions: ServiceMethod<[taskId: string, model: string], ChatSession[]>;

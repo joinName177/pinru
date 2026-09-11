@@ -86,6 +86,8 @@ func TestCommitWorkspaceCreatesFullSHA(t *testing.T) {
 }
 
 func TestCommitWorkspaceKeepsConfiguredAuthor(t *testing.T) {
+	// Exercise local identity without inheriting the developer's global author.
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "gitconfig"))
 	dir := t.TempDir()
 	if err := runGit(dir, "init", "-b", mainBranch); err != nil {
 		if err := runGit(dir, "init"); err != nil {

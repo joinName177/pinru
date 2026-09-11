@@ -14,6 +14,7 @@ import (
 
 	"github.com/lmittmann/tint"
 
+	appannotation "github.com/blueship581/pinru/app/annotation"
 	appchat "github.com/blueship581/pinru/app/chat"
 	appcli "github.com/blueship581/pinru/app/cli"
 	appcodepush "github.com/blueship581/pinru/app/codepush"
@@ -54,7 +55,8 @@ func main() {
 	cliSvc := appcli.New()
 	promptSvc := appprompt.New(db, cliSvc)
 	chatSvc := appchat.New(db, cliSvc)
-	jobSvc := appjob.New(db, promptSvc, gitSvc, submitSvc, taskSvc, cliSvc)
+	annotationSvc := appannotation.New(db, cliSvc)
+	jobSvc := appjob.New(db, promptSvc, gitSvc, submitSvc, taskSvc, cliSvc, annotationSvc.ExecuteJob)
 
 	// Pre-install bundled skills and execution manuals on every launch.
 	// Manuals are extracted to ~/.pinru/manuals/; skills are written to
@@ -66,6 +68,7 @@ func main() {
 		Name:        "PinRu",
 		Description: "AI Model Code Review Workstation",
 		Services: []application.Service{
+			application.NewService(annotationSvc),
 			application.NewService(configSvc),
 			application.NewService(taskSvc),
 			application.NewService(gitSvc),

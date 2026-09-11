@@ -244,6 +244,10 @@ func TestCreateTasksFromCustomPromptDocumentsCreatesTasksAndPromptArtifacts(t *t
 			t.Fatalf("artifact mismatch for %s", task.ID)
 		}
 		sourceFolderName := filepath.Base(*task.LocalPath)
+		annotationCase, err := testStore.GetAnnotationCase(task.ID)
+		if err != nil || annotationCase == nil || len(annotationCase.InitialSHA) != 40 {
+			t.Fatalf("task %s must have a registered pre-turn snapshot: %+v %v", task.ID, annotationCase, err)
+		}
 		if _, err := os.Stat(filepath.Join(*task.LocalPath, sourceFolderName, "src", "main.ts")); err != nil {
 			t.Fatalf("source copy missing for %s: %v", task.ID, err)
 		}
@@ -263,7 +267,7 @@ func TestCreateTasksFromCustomPromptDocumentsCreatesTasksAndPromptArtifacts(t *t
 	}
 }
 
-func TestCreateTasksFromCustomPromptDocumentsCopiesExistingNodeModules(t *testing.T) {
+func TestCreateTasksFromCustomPromptDocumentsPreparesPortableSource(t *testing.T) {
 	testStore := testutil.OpenTestStore(t)
 	defer testStore.Close()
 
@@ -328,7 +332,7 @@ func TestCreateTasksFromCustomPromptDocumentsCopiesExistingNodeModules(t *testin
 		t.Fatalf("tasks = %+v", tasks)
 	}
 	sourceFolderName := filepath.Base(*tasks[0].LocalPath)
-	if _, err := os.Stat(filepath.Join(*tasks[0].LocalPath, sourceFolderName, "node_modules", "left-pad", "index.js")); err != nil {
-		t.Fatalf("node_modules copy missing: %v", err)
+	if _, err := os.Stat(filepath.Join(*tasks[0].LocalPath, sourceFolderName, "node_modules", "left-pad", "index.js")); !os.IsNotExist(err) {
+		t.Fatalf("host node_modules must not enter container source: %v", err)
 	}
 }

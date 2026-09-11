@@ -13,9 +13,10 @@ import (
 	"strings"
 	"time"
 
+	appannotation "github.com/blueship581/pinru/app/annotation"
 	appprompt "github.com/blueship581/pinru/app/prompt"
+	annotation "github.com/blueship581/pinru/internal/annotation"
 	"github.com/blueship581/pinru/internal/errs"
-	"github.com/blueship581/pinru/internal/gitops"
 	internalprompt "github.com/blueship581/pinru/internal/prompt"
 	"github.com/blueship581/pinru/internal/store"
 	"github.com/blueship581/pinru/internal/util"
@@ -353,13 +354,7 @@ func (s *TaskService) createSingleCustomPromptTask(
 		return detail
 	}
 
-	if err := ensureCustomPromptSourceDependencies(ctx, item.SourcePath); err != nil {
-		detail.Status = "error"
-		detail.Message = err.Error()
-		return detail
-	}
-
-	if err := gitops.CopyProjectDirectoryWithNodeModules(ctx, item.SourcePath, plan.SourcePath); err != nil {
+	if _, err := annotation.CopyEvidenceTree(ctx, item.SourcePath, plan.SourcePath); err != nil {
 		_ = cleanupCustomPromptTaskTargets(targetPaths)
 		detail.Status = "error"
 		detail.Message = err.Error()
@@ -398,6 +393,14 @@ func (s *TaskService) createSingleCustomPromptTask(
 	if err := appprompt.SyncPromptArtifact(created.LocalPath, entry.PromptText); err != nil {
 		detail.Status = "error"
 		detail.Message = err.Error()
+		return detail
+	}
+	if _, err := appannotation.New(s.store, nil).PrepareCaseWithContext(ctx, appannotation.PrepareRequest{TaskID: created.ID}); err != nil {
+		detail.Status = "error"
+		detail.Message = "初始快照准备失败：" + err.Error()
+		if statusErr := s.UpdateTaskStatus(created.ID, "Error"); statusErr != nil {
+			detail.Message += "；状态保存失败：" + statusErr.Error()
+		}
 		return detail
 	}
 	if detail.Message == "" {

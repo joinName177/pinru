@@ -11,6 +11,7 @@ import Claim from './features/claim';
 import Overview from './features/overview';
 import Submit from './features/submit';
 import Settings from './features/settings';
+import Annotation from './features/annotation';
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
           <Route path="claim" element={<Claim />} />
           <Route path="overview" element={<RouteErrorBoundary><Overview /></RouteErrorBoundary>} />
           <Route path="submit" element={<RouteErrorBoundary><Submit /></RouteErrorBoundary>} />
+          <Route path="annotation" element={<RouteErrorBoundary><Annotation /></RouteErrorBoundary>} />
           <Route path="report" element={<Navigate to="/" replace />} />
           <Route path="settings" element={<RouteErrorBoundary><Settings /></RouteErrorBoundary>} />
         </Route>

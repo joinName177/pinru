@@ -35,6 +35,7 @@
 - **提示词生成** — 分析仓库结构，调用 LLM 生成面向各 AI 模型的执行提示词
 - **多模型执行** — 在独立目录中调用 Claude Code、Codex 等 CLI 工具并发执行评审
 - **AI 复审** — 评审完成后由 Codex 审核产出是否符合提示词要求，给出结论与下一轮提示词建议
+- **容器标注** — 绑定手动执行的 Claude Docker 会话，采集真实轮次、保存五维评分与验证材料，整批导出 Excel；见[操作指南](llmdoc/guide/claude-container-annotation.md)
 - **一键提交 PR** — 将源码与模型产出推送到 GitHub，自动创建带标签的 Pull Request
 - **项目总览** — 查看项目内题目分布统计、提示词聚合信息
 - **后台任务队列** — 所有耗时操作（克隆、执行、提交）均异步处理，前端实时轮询进度
@@ -79,6 +80,8 @@
 | `git` | 克隆仓库、创建分支 |
 | `claude`（Claude Code CLI） | 执行 Claude 模型评审 |
 | `codex`（Codex CLI） | 执行 Codex 模型评审 / AI 复审 |
+| `docker` + OrbStack / Docker | 容器标注：发现挂载目录、读取会话轨迹 |
+| `python3`（3.10+） | 容器标注：导出与检查 Excel（仅标准库） |
 
 ```bash
 # 1. 克隆仓库

@@ -1,0 +1,311 @@
+package annotation
+
+import (
+	"archive/zip"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	appcli "github.com/blueship581/pinru/app/cli"
+	domain "github.com/blueship581/pinru/internal/annotation"
+	"github.com/blueship581/pinru/internal/store"
+	"github.com/blueship581/pinru/migrations"
+)
+
+func annotationFixture(t *testing.T) (*AnnotationService, string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "app.db"), migrations.All()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	project := "batch"
+	if err := st.CreateProject(store.Project{ID: project, Name: "样本批次", Models: "[]", CloneBasePath: dir}); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(dir, "source")
+	if err := os.Mkdir(source, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "main.py"), []byte("def add(a,b): return a+b\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	prompt := "实现加法功能"
+	if err := st.CreateTask(store.Task{ID: "题目-1", ProjectName: "示例题", ProjectConfigID: &project, LocalPath: &source, PromptText: &prompt, TaskType: "0-1代码生成", Status: "Claimed"}); err != nil {
+		t.Fatal(err)
+	}
+	s := New(st, nil)
+	prepared, err := s.PrepareCase(PrepareRequest{TaskID: "题目-1"})
+	if err != nil || len(prepared.InitialSHA) != 40 {
+		t.Fatalf("prepare: %+v %v", prepared, err)
+	}
+	trace := filepath.Join(dir, "session.jsonl")
+	writeFixtureTrace(t, trace, source, 1)
+	return s, trace, source
+}
+
+func writeFixtureTrace(t *testing.T, trace, cwd string, count int) {
+	t.Helper()
+	var data []byte
+	for i := 1; i <= count; i++ {
+		prompt, id := "实现加法功能", "p1"
+		if i == 2 {
+			prompt, id = "空值输入没有提示，请补上明确反馈", "p2"
+		}
+		for _, event := range []map[string]any{
+			{"type": "user", "sessionId": "session", "promptId": id, "uuid": id, "cwd": cwd, "version": "2.1.0", "message": map[string]any{"role": "user", "content": prompt}},
+			{"type": "assistant", "sessionId": "session", "uuid": "answer-" + id, "parentUuid": id, "message": map[string]any{"role": "assistant", "content": []map[string]string{{"type": "text", "text": "完成本轮实现"}}, "stop_reason": "end_turn"}},
+		} {
+			raw, err := json.Marshal(event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = append(data, raw...)
+			data = append(data, '\n')
+		}
+	}
+	if err := os.WriteFile(trace, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func fakeReviewCLI(t *testing.T) (*appcli.CliService, string) {
+	t.Helper()
+	dir := t.TempDir()
+	payload := filepath.Join(dir, "response.json")
+	count := filepath.Join(dir, "count")
+	eval := map[string]any{
+		"status": "ready", "scores": []int{4, 5, 5, 5, 5}, "descriptions": []string{"加法入口能返回结果，但空值缺少明确反馈。", "按原要求提供了加法入口。", "按入口、计算、反馈顺序组织实现。", "从输入类型推导处理分支。", "完成实现并运行了轨迹中记录的用例。"},
+		"taskType": "0-1代码生成", "difficulty": "简单", "language": "Python", "environment": "无外部依赖", "harnessVersion": "2.1.0", "os": "MacOS/Linux",
+		"evidence": []string{"原轨迹第 2 行回复；静态检查 code/main.py；审核日志 evaluator.log"}, "missing": []string{},
+		"issues": []map[string]string{{"kind": "bug", "description": "空值输入没有反馈", "evidence": "code/main.py 仅返回 a+b"}}, "nextPrompt": "空值输入时页面没有反馈，请补上明确提示，保留正常加法结果。", "nextPromptType": "Bug修复",
+	}
+	raw, _ := json.Marshal(eval)
+	if err := os.WriteFile(payload, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
+	script := "#!/bin/sh\ncat >/dev/null\nwhile [ \"$#\" -gt 0 ]; do\nif [ \"$1\" = -o ]; then shift; cp " + quote(payload) + " \"$1\"; fi\nshift\ndone\nprintf 'called\\n' >> " + quote(count) + "\nprintf 'static verification recorded\\n'\n"
+	binary := filepath.Join(dir, "codex-fake")
+	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	return appcli.NewWithResolver(func(string) (string, error) { return binary, nil }), count
+}
+
+func TestAnnotationLocalWorkflowPreservesGradesAndExportsWholeBatchDraft(t *testing.T) {
+	s, trace, source := annotationFixture(t)
+	c, err := s.Capture(CaptureRequest{TaskID: "题目-1", TracePath: trace})
+	if err != nil || len(c.Rounds) != 1 || c.Rounds[0].CaptureID == "" {
+		t.Fatalf("capture %+v %v", c, err)
+	}
+	initial, revision := c.InitialSHA, c.Revision
+	duplicate, err := s.Capture(CaptureRequest{TaskID: "题目-1", TracePath: trace})
+	if err != nil || duplicate.Revision != revision {
+		t.Fatalf("idempotent capture %+v %v", duplicate, err)
+	}
+	cli, count := fakeReviewCLI(t)
+	s.cli = cli
+	c, err = s.Review(ReviewRequest{TaskID: "题目-1", PromptID: "p1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eval := c.Rounds[0].Evaluations[0]
+	if eval.Scores[0] == nil || *eval.Scores[0] != 4 || eval.NextPrompt == "" || eval.ReviewPath == "" {
+		t.Fatalf("review %+v", eval)
+	}
+	if _, err = s.Review(ReviewRequest{TaskID: "题目-1", PromptID: "p1"}); err != nil {
+		t.Fatal(err)
+	}
+	runs, _ := os.ReadFile(count)
+	if string(runs) != "called\n" {
+		t.Fatalf("cache ran reviewer again: %s", runs)
+	}
+	writeFixtureTrace(t, trace, source, 2)
+	c, err = s.Capture(CaptureRequest{TaskID: "题目-1", TracePath: trace})
+	if err != nil || len(c.Rounds) != 2 || c.InitialSHA != initial || len(c.Rounds[0].Evaluations) != 1 {
+		t.Fatalf("append %+v %v", c, err)
+	}
+	if _, err = s.PrepareCase(PrepareRequest{TaskID: "题目-1"}); err == nil {
+		t.Fatal("replaced initial snapshot after execution")
+	}
+	if _, err = s.Export(ExportRequest{ProjectID: "batch", Submitter: "标注员", SubmittedAt: "2026-09-12"}); err == nil {
+		t.Fatal("incomplete batch formally exported")
+	}
+	result, err := s.Export(ExportRequest{ProjectID: "batch", Submitter: "标注员", SubmittedAt: "2026-09-12", Draft: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Rows != 2 || len(result.Issues) == 0 {
+		t.Fatalf("draft %+v", result)
+	}
+	z, err := zip.OpenReader(result.OutputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer z.Close()
+	var text strings.Builder
+	for _, f := range z.File {
+		if strings.HasPrefix(f.Name, "xl/") && strings.HasSuffix(f.Name, ".xml") {
+			r, e := f.Open()
+			if e != nil {
+				t.Fatal(e)
+			}
+			io.Copy(&text, r)
+			r.Close()
+		}
+	}
+	for _, want := range []string{"实现加法功能", "空值输入没有提示", "加法入口能返回结果"} {
+		if !strings.Contains(text.String(), want) {
+			t.Errorf("draft dropped %q", want)
+		}
+	}
+}
+
+func TestCachedReviewRejectsAlteredCodeAndTraceAttachments(t *testing.T) {
+	for _, part := range []string{"code", "traces", "review"} {
+		t.Run(part, func(t *testing.T) {
+			s, trace, _ := annotationFixture(t)
+			s.cli, _ = fakeReviewCLI(t)
+			c, err := s.Capture(CaptureRequest{TaskID: "题目-1", TracePath: trace})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, err = s.Review(ReviewRequest{TaskID: "题目-1", PromptID: "p1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := filepath.Join(c.Captures[0].Dir, part, "changed.txt")
+			if part == "review" {
+				p = filepath.Join(c.Rounds[0].Evaluations[0].ReviewPath, "evaluator.log")
+			}
+			if err := os.WriteFile(p, []byte("changed evidence"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Review(ReviewRequest{TaskID: "题目-1", PromptID: "p1"}); err == nil {
+				t.Fatal("altered evidence reused cached score")
+			}
+		})
+	}
+}
+
+func TestTraceSourceRejectsDifferentTaskAndAcceptsContainerParentWithKnownPrompt(t *testing.T) {
+	c := &domain.Case{ContainerID: "actual-id", RepoRelativePath: "task-repo"}
+	r := []domain.Round{{Prompt: "请在 task-repo 中实现加法功能", Cwd: "/workspace", Status: "complete"}}
+	if err := validateTraceSource(c, "/host/task-repo", r, "实现加法功能"); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateTraceSource(c, "/host/task-repo", r, "实现登录功能"); err == nil {
+		t.Fatal("accepted different task prompt")
+	}
+	r[0].Cwd = "/workspace/another-repo"
+	if err := validateTraceSource(c, "/host/task-repo", r, "实现加法功能"); err == nil {
+		t.Fatal("accepted other repository")
+	}
+}
+
+func TestExistingRepositoryMustContainPreparedBaseline(t *testing.T) {
+	s, _, source := annotationFixture(t)
+	c, err := s.loadCase("题目-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyInitialAncestry(context.Background(), source, c.InitialSHA); err != nil {
+		t.Fatal(err)
+	}
+	unrelated := t.TempDir()
+	os.WriteFile(filepath.Join(unrelated, "other.txt"), []byte("other project"), 0600)
+	if _, err := prepareRepository(context.Background(), unrelated); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyInitialAncestry(context.Background(), unrelated, c.InitialSHA); err == nil {
+		t.Fatal("accepted unrelated baseline")
+	}
+}
+
+func TestAnnotationFormalExportKeepsLowScoresAndIncludesReviewEvidence(t *testing.T) {
+	s, trace, _ := annotationFixture(t)
+	s.cli, _ = fakeReviewCLI(t)
+	c, err := s.Capture(CaptureRequest{TaskID: "题目-1", TracePath: trace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err = s.Review(ReviewRequest{TaskID: "题目-1", PromptID: "p1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err = s.SaveCaseSettings(SettingsRequest{TaskID: "题目-1", SnapshotURL: "https://github.com/example/project/commit/" + c.InitialSHA, Completed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.verifySnapshot = func(context.Context, string) error { return errors.New("remote unavailable") }
+	if _, err = s.Export(ExportRequest{ProjectID: "batch", Submitter: "标注员", SubmittedAt: "2026-09-12"}); err == nil {
+		t.Fatal("unreachable snapshot formally exported")
+	}
+	s.verifySnapshot = func(context.Context, string) error { return nil }
+	result, err := s.Export(ExportRequest{ProjectID: "batch", Submitter: "标注员", SubmittedAt: "2026-09-12"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Rows != 1 || len(result.Issues) != 0 {
+		t.Fatalf("formal export: %+v", result)
+	}
+	foundLog := false
+	if err := filepath.WalkDir(filepath.Join(filepath.Dir(result.OutputPath), "attachments"), func(p string, d os.DirEntry, e error) error {
+		if e != nil {
+			return e
+		}
+		if d.Name() == "evaluator.log" {
+			foundLog = true
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !foundLog {
+		t.Fatal("formal bundle omitted evaluator verification log")
+	}
+}
+
+func TestBindFreshContainerWithoutProjectsDirectory(t *testing.T) {
+	s, _, _ := annotationFixture(t)
+	workspace := t.TempDir()
+	inspect, _ := json.Marshal(map[string]any{"ID": "real-container-id", "Name": "/claude-fixture", "State": "running", "Image": "fixture", "Mounts": []map[string]string{{"Type": "bind", "Source": workspace, "Destination": "/workspace"}}})
+	absenceConfirmed := false
+	s.command = func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+		if name != "docker" {
+			t.Fatalf("unexpected command %s %v", name, args)
+		}
+		switch args[0] {
+		case "inspect":
+			return inspect, nil
+		case "cp":
+			return nil, errors.New("projects does not exist")
+		case "exec":
+			if strings.Join(args, " ") != "exec real-container-id test ! -e "+containerTraceRoot {
+				t.Fatalf("unexpected exec %v", args)
+			}
+			absenceConfirmed = true
+			return nil, nil
+		default:
+			t.Fatalf("unexpected Docker command %v", args)
+			return nil, nil
+		}
+	}
+	c, err := s.BindContainer(BindRequest{TaskID: "题目-1", ContainerID: "claude-fixture", RepoRelativePath: "task-repo", CopyRepository: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !absenceConfirmed || c.ContainerID != "real-container-id" {
+		t.Fatalf("binding %+v", c)
+	}
+	if err := verifyInitialAncestry(context.Background(), filepath.Join(workspace, "task-repo"), c.InitialSHA); err != nil {
+		t.Fatal(err)
+	}
+}

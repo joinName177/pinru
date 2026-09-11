@@ -14,6 +14,7 @@ type ServiceResult<S extends ServiceName, M extends MethodName<S>> =
   ServiceMethodDef<S, M> extends { result: infer Result } ? Result : never;
 
 const servicePrefixes: Record<ServiceName, readonly string[]> = {
+  AnnotationService: ['github.com/blueship581/pinru/app/annotation', 'main'],
   ChatService: ['github.com/blueship581/pinru/app/chat', 'main'],
   CliService: ['github.com/blueship581/pinru/app/cli', 'main'],
   CodePushService: ['github.com/blueship581/pinru/app/codepush', 'main'],

@@ -34,6 +34,7 @@ PinRu 是一个 AI 模型代码评审工作站：从 GitLab 领取评审任务�
 | [how-to-submit-pr.md](guide/how-to-submit-pr.md) | 从源码上传到 GitHub PR 创建的完整操作参数与注意事项 |
 | [how-to-generate-prompt.md](guide/how-to-generate-prompt.md) | GeneratePromptRequest 字段详解与提示词生成调用方式 |
 | [frontend-board-workflow.md](guide/frontend-board-workflow.md) | 前端看板 React 组件结构、Zustand 状态管理、Wails RPC 调用方式 |
+| [claude-container-annotation.md](guide/claude-container-annotation.md) | Claude Docker 题目准备、逐轮五维审核缓存和整批 Excel 导出 |
 
 ---
 
