@@ -243,6 +243,14 @@ func verifyTraceArtifacts(ctx context.Context, c domain.Capture) error {
 }
 
 func normalizeNextPrompt(e *domain.Evaluation, count int) {
+	// Do not hide a contradictory Bug result by clearing its prompt. Validation
+	// must reject it; even at the round limit keep the repair advice for review.
+	for _, issue := range e.Issues {
+		if issue.Kind == "bug" {
+			e.NextPrompt = strings.TrimSpace(e.NextPrompt)
+			return
+		}
+	}
 	hasLow := false
 	for _, v := range e.Scores {
 		if v != nil && *v < 5 {

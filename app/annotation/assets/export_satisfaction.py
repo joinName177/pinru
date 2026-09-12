@@ -149,6 +149,16 @@ def _validate_evaluation(evaluation, scope):
         for index, score in enumerate(scores, 1):
             if isinstance(score, bool) or not isinstance(score, int) or not 1 <= score <= 5:
                 issues.append(_issue(scope, f"evaluation score {index} must be an integer from 1 to 5"))
+    prompt = _as_text(evaluation.get("nextPrompt")).strip()
+    prompt_type = _as_text(evaluation.get("nextPromptType")).strip()
+    if scores == [5, 5, 5, 5, 5] and (prompt or prompt_type):
+        issues.append(_issue(scope, "五维满分不能包含修复提示词，请重新审核"))
+    has_bug = any(isinstance(item, dict) and item.get("kind") == "bug" for item in (evaluation.get("issues") or []))
+    if has_bug:
+        if not isinstance(scores, list) or not scores or type(scores[0]) is not int or not 1 <= scores[0] < 5:
+            issues.append(_issue(scope, "存在功能遗漏或 Bug，交付完整性必须低于 5 分，请重新审核"))
+        if not prompt.startswith("修复") or not prompt[2:].strip() or prompt_type != "Bug修复":
+            issues.append(_issue(scope, "Bug 必须有以“修复”开头的具体修复提示词，请重新审核"))
     descriptions = evaluation.get("descriptions")
     if not isinstance(descriptions, list) or len(descriptions) != 5:
         issues.append(_issue(scope, "evaluation descriptions must contain five strings"))

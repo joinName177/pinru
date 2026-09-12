@@ -7,7 +7,6 @@ const api = vi.hoisted(() => ({
   getConfig: vi.fn(),
   bindContainer: vi.fn(),
   cancelAnnotationJob: vi.fn(),
-  captureCase: vi.fn(),
   captureAndPrepareTable: vi.fn(),
   exportCases: vi.fn(),
   getAnnotationJob: vi.fn(),
@@ -132,14 +131,15 @@ describe('AnnotationWorkspace', () => {
     expect(screen.queryByText('题目进度')).not.toBeInTheDocument();
     expect(screen.queryByText('批次预检与统一导出')).not.toBeInTheDocument();
     expect(await screen.findByDisplayValue('repo-two')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '采集轨迹' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '采集轨迹' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '采集并准备制表数据' })).toBeInTheDocument();
     expect(api.listTraces).toHaveBeenCalledWith('task-2');
-    api.captureCase.mockResolvedValue({ id: 'detail-capture', status: 'pending' });
+    api.captureAndPrepareTable.mockResolvedValue({ id: 'detail-capture', status: 'pending' });
     api.getAnnotationJob.mockResolvedValue({ id: 'detail-capture', status: 'done', outputPayload: JSON.stringify(makeCase({ taskId: 'task-2', taskName: '当前详情题目' })) });
     fireEvent.change(screen.getByLabelText('本机 JSONL 绝对路径'), { target: { value: '/tmp/task-two.jsonl' } });
-    fireEvent.click(screen.getByRole('button', { name: '采集轨迹' }));
-    await waitFor(() => expect(api.captureCase).toHaveBeenCalledWith({ taskId: 'task-2', tracePath: '/tmp/task-two.jsonl' }));
-    expect(await screen.findByText('采集轨迹已完成')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '采集并准备制表数据' }));
+    await waitFor(() => expect(api.captureAndPrepareTable).toHaveBeenCalledWith({ taskId: 'task-2', tracePath: '/tmp/task-two.jsonl' }));
+    expect(await screen.findByText('采集并准备制表数据已完成')).toBeInTheDocument();
   });
 
   it('refreshes trace candidates even when the saved case revision has not changed', async () => {
@@ -309,7 +309,7 @@ describe('AnnotationWorkspace', () => {
       { path: '/home/node/.claude/projects/a.jsonl', sessionId: 'a', size: 10 },
       { path: '/home/node/.claude/projects/b.jsonl', sessionId: 'b', size: 20 },
     ]);
-    api.captureCase.mockResolvedValue({ id: 'job-capture', status: 'pending' });
+    api.captureAndPrepareTable.mockResolvedValue({ id: 'job-capture', status: 'pending' });
     api.getAnnotationJob.mockResolvedValue({
       id: 'job-capture',
       status: 'done',
@@ -319,9 +319,9 @@ describe('AnnotationWorkspace', () => {
     render(<AnnotationWorkspace projectId="project-1" />);
     const localPath = await screen.findByLabelText('本机 JSONL 绝对路径');
     fireEvent.change(localPath, { target: { value: '/tmp/manual.jsonl' } });
-    fireEvent.click(screen.getByRole('button', { name: '采集轨迹' }));
+    fireEvent.click(screen.getByRole('button', { name: '采集并准备制表数据' }));
 
-    await waitFor(() => expect(api.captureCase).toHaveBeenCalledWith({
+    await waitFor(() => expect(api.captureAndPrepareTable).toHaveBeenCalledWith({
       taskId: 'task-1',
       tracePath: '/tmp/manual.jsonl',
     }));

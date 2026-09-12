@@ -15,7 +15,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   bindContainer,
   cancelAnnotationJob,
-  captureCase,
   captureAndPrepareTable,
   exportCases,
   listCases,
@@ -224,7 +223,14 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
       const nextCases = caseResult.status === 'fulfilled' ? caseResult.value : [];
       const nextContainers = containerResult.status === 'fulfilled' ? containerResult.value : [];
       setCases(nextCases);
-      setContainers(nextContainers);
+      setContainers([...nextContainers].sort((a, b) => {
+        const aIsCyc = /^cyc/i.test(a.name);
+        const bIsCyc = /^cyc/i.test(b.name);
+        if (aIsCyc !== bIsCyc) return aIsCyc ? -1 : 1;
+        if (!aIsCyc) return 0;
+        const sortName = (name: string) => name.replace(/^cyc[-_ ]*/i, 'cyc');
+        return sortName(b.name).localeCompare(sortName(a.name), 'en', { numeric: true, sensitivity: 'base' });
+      }));
       setSelectedTaskId((current) => nextCases.some((item) => item.taskId === current) ? current : (nextCases[0]?.taskId ?? ''));
       const errors = [
         caseResult.status === 'rejected' ? `题目加载失败：${errorMessage(caseResult.reason)}` : '',
@@ -602,18 +608,13 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                     </label>
                     <div className="flex flex-wrap gap-2 lg:col-span-2">
                     <button
-                      className={SECONDARY_BUTTON}
-                      disabled={Boolean(selectedBusy) || !selectedTracePath.trim()}
-                      onClick={() => void runCaseJob(selectedCase.taskId, '采集轨迹', () => captureCase({ taskId: selectedCase.taskId, tracePath: selectedTracePath.trim() }))}
-                    ><FileSearch className="h-4 w-4" />采集轨迹</button>
-                    <button
                       className={PRIMARY_BUTTON}
                       disabled={Boolean(selectedBusy) || !selectedTracePath.trim()}
                       onClick={() => void runCaseJob(selectedCase.taskId, '采集并准备制表数据', () => captureAndPrepareTable({ taskId: selectedCase.taskId, tracePath: selectedTracePath.trim() }))}
                     ><FileSearch className="h-4 w-4" />采集并准备制表数据</button>
                     </div>
                   </div>
-                  <p className="mt-3 text-xs leading-5 text-stone-500">采集轨迹仅保存材料；采集并准备制表数据会调用 coding-agent-satisfaction 分析已完成的有效轮次，保存五维评分和依据，此时不生成 Excel。点击单题或统一导出时，才将已保存的数据生成 Excel，无需重新评分。低分也可以结束并导出，修复提示词仅供选择，不会自动执行下一轮。</p>
+                  <p className="mt-3 text-xs leading-5 text-stone-500">采集并准备制表数据会保存轨迹与代码，逐轮复核提示词要求是否完成、是否引入新问题，并保存五维评分和依据。确认存在功能遗漏或 Bug 时，评分不能全满分，必须提供以“修复”开头的提示词；五维全满分时不生成修复提示词。此时不生成 Excel，单题或统一导出时才生成文件。修复建议仅供复制，不会自动执行下一轮。</p>
                   {traceCandidates.length === 0 && selectedCase.containerId && <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">当前绑定未发现可选轨迹，请确认容器会话已产生记录。</p>}
                   {taskId && <p className="mt-3 text-xs text-stone-500">已采集 {selectedCase.rounds.length} 轮、{selectedCase.captures.length} 份代码与轨迹快照。评分详情在“AI复审”查看；导出按钮位于本页顶部。</p>}
                 </section>

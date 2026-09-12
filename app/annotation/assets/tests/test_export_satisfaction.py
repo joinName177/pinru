@@ -1,4 +1,5 @@
 import json
+import importlib.util
 import hashlib
 import os
 from pathlib import Path
@@ -22,6 +23,28 @@ NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 
 
 class ExportSatisfactionTests(unittest.TestCase):
+    def test_repair_consistency_blocks_contradictory_saved_results(self):
+        spec = importlib.util.spec_from_file_location("repair_exporter", EXPORTER)
+        exporter = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, str(ASSETS))
+        try:
+            spec.loader.exec_module(exporter)
+        finally:
+            sys.path.pop(0)
+        e = self.evaluation("h")
+        e["issues"] = [{"kind": "bug", "description": "空值提交无提示", "evidence": "code/form.ts"}]
+        self.assertTrue(exporter._validate_evaluation(e, "round"))
+        e["scores"][0] = 4
+        self.assertTrue(exporter._validate_evaluation(e, "round"))
+        e["nextPrompt"] = "补充错误提示"
+        e["nextPromptType"] = "Bug修复"
+        self.assertTrue(exporter._validate_evaluation(e, "round"))
+        e["nextPrompt"] = "修复空值提交无提示的问题，显示错误信息"
+        self.assertEqual(exporter._validate_evaluation(e, "round"), [])
+        e["issues"] = []
+        e["scores"][0] = 5
+        self.assertTrue(exporter._validate_evaluation(e, "round"))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
@@ -70,7 +93,7 @@ class ExportSatisfactionTests(unittest.TestCase):
             "missing": [],
             "issues": [],
             "nextPrompt": "",
-            "nextPromptType": "none",
+            "nextPromptType": "",
             "reviewPath": str(review),
             "reviewHash": "review-hash-" + evidence_hash,
         }

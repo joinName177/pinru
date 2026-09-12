@@ -144,6 +144,31 @@ func ValidateEvaluation(round Round, evaluation Evaluation) error {
 			return fmt.Errorf("evaluation issue %d evidence is required", index+1)
 		}
 	}
+	return ValidateRepairConsistency(evaluation)
+}
+
+// ValidateRepairConsistency also checks saved evaluations before export.
+func ValidateRepairConsistency(e Evaluation) error {
+	perfect := true
+	for _, score := range e.Scores {
+		if score == nil || *score != 5 {
+			perfect = false
+		}
+	}
+	if perfect && (strings.TrimSpace(e.NextPrompt) != "" || strings.TrimSpace(e.NextPromptType) != "") {
+		return fmt.Errorf("五维满分不能包含修复提示词，请重新审核")
+	}
+	for _, issue := range e.Issues {
+		if issue.Kind != "bug" {
+			continue
+		}
+		if e.Scores[0] == nil || *e.Scores[0] >= 5 {
+			return fmt.Errorf("存在已确认的功能遗漏或 Bug，交付完整性必须有依据地评为低于 5 分，请重新审核")
+		}
+		if !strings.HasPrefix(strings.TrimSpace(e.NextPrompt), "修复") || strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(e.NextPrompt), "修复")) == "" || e.NextPromptType != "Bug修复" {
+			return fmt.Errorf("存在 Bug 时必须提供以“修复”开头、说明具体问题的 Bug修复提示词，请重新审核")
+		}
+	}
 	return nil
 }
 

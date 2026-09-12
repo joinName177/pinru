@@ -19,7 +19,7 @@ func TestSatisfactionPromptKeepsFiveDimensionRulesAndEvidenceBoundaries(t *testi
 			t.Errorf("missing %q", want)
 		}
 	}
-	for _, bad := range []string{"90 分", "过程不满意：", "必须以“修复”", "最多三句"} {
+	for _, bad := range []string{"90 分", "过程不满意：", "最多三句"} {
 		if strings.Contains(p, bad) {
 			t.Errorf("legacy rule %q leaked", bad)
 		}

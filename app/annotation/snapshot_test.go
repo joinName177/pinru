@@ -15,10 +15,18 @@ func TestPublishInitialUsesFrozenBaselineAndIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	c, _ := s.loadCase("题目-1")
+	c.TaskName = "cyc-05"
+	c.SourcePath = filepath.Join(filepath.Dir(source), "cyc-05-0-1代码生成-1")
+	if _, err := s.store.SaveAnnotationCase(*c, c.Revision); err != nil {
+		t.Fatal(err)
+	}
 	os.WriteFile(filepath.Join(source, "later.txt"), []byte("uncommitted later output"), 0600)
 	calls := 0
 	s.publishInitial = func(ctx context.Context, baseline, repo, sha string, account store.GitHubAccount) (string, error) {
 		calls++
+		if repo != "cyc-05-1" {
+			t.Fatalf("repository = %q", repo)
+		}
 		if baseline == source || sha != c.InitialSHA {
 			t.Fatal("not using frozen initial state")
 		}

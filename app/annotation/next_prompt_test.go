@@ -27,3 +27,23 @@ func TestNextPromptUsesScoresWithoutDissatisfactionOrBugRequirement(t *testing.T
 		})
 	}
 }
+
+func TestBugAdviceSurvivesRoundLimitAndContradictionsAreRejected(t *testing.T) {
+	five, four := 5, 4
+	e := &domain.Evaluation{Scores: [5]*int{&four, &five, &five, &five, &five}, Issues: []domain.Issue{{Kind: "bug"}}, NextPrompt: "修复空值提交无反馈的问题，应显示错误", NextPromptType: "Bug修复"}
+	normalizeNextPrompt(e, 10)
+	if err := domain.ValidateRepairConsistency(*e); err != nil {
+		t.Fatal(err)
+	}
+	e.Scores[0] = &five
+	normalizeNextPrompt(e, 1)
+	if err := domain.ValidateRepairConsistency(*e); err == nil {
+		t.Fatal("full scores with a bug must be rejected, not silently cleared")
+	}
+	e.Scores[0] = &four
+	e.NextPrompt = ""
+	normalizeNextPrompt(e, 1)
+	if err := domain.ValidateRepairConsistency(*e); err == nil {
+		t.Fatal("missing bug advice must be rejected")
+	}
+}

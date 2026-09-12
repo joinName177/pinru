@@ -315,6 +315,21 @@ func selectExportCases(cases []domain.Case, req ExportRequest) ([]domain.Case, e
 			}
 			c.Rounds = rounds
 		}
+		for _, r := range c.Rounds {
+			if r.Status == "excluded" {
+				continue
+			}
+			for i := len(r.Evaluations) - 1; i >= 0; i-- {
+				e := r.Evaluations[i]
+				if e.EvidenceHash != r.EvidenceHash {
+					continue
+				}
+				if err := domain.ValidateRepairConsistency(e); err != nil {
+					return nil, fmt.Errorf("题目 %s 第 %d 轮：%w", c.TaskName, r.Order, err)
+				}
+				break
+			}
+		}
 		selected = append(selected, c)
 	}
 	if !found {
