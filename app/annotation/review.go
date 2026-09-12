@@ -242,7 +242,7 @@ func verifyTraceArtifacts(ctx context.Context, c domain.Capture) error {
 	return nil
 }
 
-func normalizeNextPrompt(e *domain.Evaluation, count int) {
+func normalizeNextPrompt(e *domain.Evaluation, _ int) {
 	// Do not hide a contradictory Bug result by clearing its prompt. Validation
 	// must reject it; even at the round limit keep the repair advice for review.
 	for _, issue := range e.Issues {
@@ -251,20 +251,10 @@ func normalizeNextPrompt(e *domain.Evaluation, count int) {
 			return
 		}
 	}
-	hasLow := false
-	for _, v := range e.Scores {
-		if v != nil && *v < 5 {
-			hasLow = true
-		}
-	}
-	if !hasLow || count >= 10 {
-		e.NextPrompt = ""
-		e.NextPromptType = ""
-		return
-	}
-	if strings.TrimSpace(e.NextPrompt) != "" {
-		e.NextPromptType = "Bug修复"
-	}
+	// Process deductions do not establish an outstanding code defect. Keep the
+	// evidence and scores intact, but never turn them into a repair assignment.
+	e.NextPrompt = ""
+	e.NextPromptType = ""
 }
 
 // reviewSkill resolves the installed skill and hashes exactly the source copied for review.

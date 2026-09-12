@@ -12,6 +12,8 @@ func TestRepairConsistency(t *testing.T) {
 		wantError    bool
 	}{
 		{"perfect", false, &five, "", "", false},
+		{"low score without code defect", false, &four, "", "", false},
+		{"low score cannot justify repair", false, &four, "修复重复检索", "Bug修复", true},
 		{"perfect with advice", false, &five, "修复空值提示", "Bug修复", true},
 		{"bug with perfect delivery", true, &five, "修复空值提示", "Bug修复", true},
 		{"bug with missing delivery", true, nil, "修复空值提示", "Bug修复", true},

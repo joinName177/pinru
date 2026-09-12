@@ -154,6 +154,8 @@ def _validate_evaluation(evaluation, scope):
     if scores == [5, 5, 5, 5, 5] and (prompt or prompt_type):
         issues.append(_issue(scope, "五维满分不能包含修复提示词，请重新审核"))
     has_bug = any(isinstance(item, dict) and item.get("kind") == "bug" for item in (evaluation.get("issues") or []))
+    if not has_bug and (prompt or prompt_type):
+        issues.append(_issue(scope, "修复提示词缺少已确认的代码问题依据，不能仅因低分生成，请重新审核"))
     if has_bug:
         if not isinstance(scores, list) or not scores or type(scores[0]) is not int or not 1 <= scores[0] < 5:
             issues.append(_issue(scope, "存在功能遗漏或 Bug，交付完整性必须低于 5 分，请重新审核"))

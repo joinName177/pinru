@@ -42,6 +42,15 @@ class ExportSatisfactionTests(unittest.TestCase):
         e["nextPrompt"] = "修复空值提交无提示的问题，显示错误信息"
         self.assertEqual(exporter._validate_evaluation(e, "round"), [])
         e["issues"] = []
+        self.assertTrue(exporter._validate_evaluation(e, "round"))
+        e["nextPrompt"] = ""
+        e["nextPromptType"] = ""
+        e["scores"] = [5, 5, 4, 5, 4]
+        e["issues"] = [{"kind": "process", "description": "重复检索", "evidence": "原始调用记录"}]
+        self.assertEqual(exporter._validate_evaluation(e, "round"), [])
+        e["scores"] = [5, 5, 5, 5, 5]
+        e["nextPrompt"] = "修复重复检索"
+        e["nextPromptType"] = "Bug修复"
         e["scores"][0] = 5
         self.assertTrue(exporter._validate_evaluation(e, "round"))
 

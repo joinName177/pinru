@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestNextPromptUsesScoresWithoutDissatisfactionOrBugRequirement(t *testing.T) {
+func TestProcessDeductionsDoNotGenerateRepairsOrChangeScores(t *testing.T) {
 	five, four := 5, 4
 	for _, tc := range []struct {
 		name   string
@@ -14,13 +14,19 @@ func TestNextPromptUsesScoresWithoutDissatisfactionOrBugRequirement(t *testing.T
 		want   string
 	}{
 		{"all five", [5]*int{&five, &five, &five, &five, &five}, 1, ""},
-		{"process deduction", [5]*int{&five, &five, &four, &five, &five}, 1, "补充边界验证并说明结果"},
+		{"process deduction", [5]*int{&five, &five, &four, &five, &five}, 1, ""},
 		{"missing evidence", [5]*int{&five, &five, nil, &five, &five}, 1, ""},
 		{"round limit", [5]*int{&five, &five, &four, &five, &five}, 10, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			e := &domain.Evaluation{Scores: tc.scores, Status: "ready", NextPrompt: "补充边界验证并说明结果"}
+			e := &domain.Evaluation{Scores: tc.scores, Status: "ready", NextPrompt: "补充边界验证并说明结果", NextPromptType: "Bug修复", Issues: []domain.Issue{{Kind: "process", Description: "存在不必要的重复读取", Evidence: "原轨迹工具调用"}}}
 			normalizeNextPrompt(e, tc.count)
+			if e.Scores != tc.scores || e.NextPromptType != "" || len(e.Issues) != 1 {
+				t.Fatal("process scores or evidence changed, or repair type retained")
+			}
+			if err := domain.ValidateRepairConsistency(*e); err != nil {
+				t.Fatal(err)
+			}
 			if e.NextPrompt != tc.want {
 				t.Fatalf("got %q want %q", e.NextPrompt, tc.want)
 			}
