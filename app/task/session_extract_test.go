@@ -8,6 +8,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/blueship581/pinru/app/testutil"
+	"github.com/blueship581/pinru/internal/annotation"
+	"github.com/blueship581/pinru/internal/store"
 )
 
 func TestBestTraeWorkspacePathMatchMatchesCrossRootPeerModel(t *testing.T) {
@@ -32,6 +36,84 @@ func TestBestTraeWorkspacePathMatchMatchesCrossRootPeerModel(t *testing.T) {
 	}
 	if matchScore != 170 {
 		t.Fatalf("matchScore = %d, want 170", matchScore)
+	}
+}
+
+func TestExtractTaskSessionsPrefersClaudeAnnotationRounds(t *testing.T) {
+	testStore := testutil.OpenTestStore(t)
+	defer testStore.Close()
+
+	localPath := filepath.Join(t.TempDir(), "cyc-03-0-1代码生成-1")
+	if err := testStore.CreateTask(store.Task{
+		ID:              "task-claude",
+		GitLabProjectID: 8815673652081984,
+		ProjectName:     "cyc-03",
+		TaskType:        "0-1代码生成",
+		LocalPath:       &localPath,
+	}); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	if _, err := testStore.SaveAnnotationCase(annotation.Case{
+		TaskID:           "task-claude",
+		TaskName:         "cyc-03",
+		SourcePath:       localPath,
+		ContainerID:      "container-123",
+		ContainerName:    "cyc03-claude-1",
+		WorkspacePath:    "/Users/alice/claude-runs/run-01/workspace",
+		RepoRelativePath: "cyc-03-0-1代码生成-1",
+		SessionID:        "session-jsonl",
+		TracePath:        "/home/node/.claude/projects/-workspace/session-jsonl.jsonl",
+		Rounds: []annotation.Round{
+			{
+				PromptID:  "prompt-1",
+				SessionID: "session-jsonl",
+				Prompt:    "实现登录页面",
+				Order:     1,
+				Status:    "complete",
+			},
+			{
+				PromptID:  "prompt-2",
+				SessionID: "session-jsonl",
+				Prompt:    "修复按钮禁用态",
+				Order:     2,
+				Status:    "complete",
+			},
+		},
+	}, 0); err != nil {
+		t.Fatalf("SaveAnnotationCase() error = %v", err)
+	}
+
+	result, err := New(testStore, nil).ExtractTaskSessions("task-claude")
+	if err != nil {
+		t.Fatalf("ExtractTaskSessions() error = %v", err)
+	}
+	if result.Source != "claude_code" {
+		t.Fatalf("result.Source = %q, want claude_code", result.Source)
+	}
+	if result.Message != "" {
+		t.Fatalf("result.Message = %q, want empty message when rounds exist", result.Message)
+	}
+	if len(result.Candidates) != 1 {
+		t.Fatalf("len(result.Candidates) = %d, want 1", len(result.Candidates))
+	}
+	candidate := result.Candidates[0]
+	if candidate.MatchKind != "claude_code" {
+		t.Fatalf("candidate.MatchKind = %q, want claude_code", candidate.MatchKind)
+	}
+	if candidate.WorkspacePath != localPath || candidate.MatchedPath != localPath {
+		t.Fatalf("candidate paths = %q/%q, want local source path %q", candidate.WorkspacePath, candidate.MatchedPath, localPath)
+	}
+	if candidate.CurrentSessionID != "session-jsonl" {
+		t.Fatalf("candidate.CurrentSessionID = %q, want session-jsonl", candidate.CurrentSessionID)
+	}
+	if len(candidate.Sessions) != 2 {
+		t.Fatalf("len(candidate.Sessions) = %d, want 2", len(candidate.Sessions))
+	}
+	if candidate.Sessions[0].SessionID != "session-jsonl#prompt-1" || candidate.Sessions[0].UserConversation != "实现登录页面" {
+		t.Fatalf("first Claude session = %+v", candidate.Sessions[0])
+	}
+	if candidate.Sessions[1].SessionID != "session-jsonl#prompt-2" || !candidate.Sessions[1].IsCurrent {
+		t.Fatalf("second Claude session = %+v", candidate.Sessions[1])
 	}
 }
 

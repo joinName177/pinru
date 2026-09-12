@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blueship581/pinru/internal/annotation"
 	"github.com/blueship581/pinru/internal/errs"
 	"github.com/blueship581/pinru/internal/store"
 	"github.com/blueship581/pinru/internal/util"
@@ -68,6 +69,8 @@ type ExtractTaskSessionCandidate struct {
 
 type ExtractTaskSessionsResult struct {
 	TaskID     string                        `json:"taskId"`
+	Source     string                        `json:"source,omitempty"`
+	Message    string                        `json:"message,omitempty"`
 	Candidates []ExtractTaskSessionCandidate `json:"candidates"`
 }
 
@@ -154,6 +157,14 @@ func (s *TaskService) ExtractTaskSessions(taskID string) (*ExtractTaskSessionsRe
 		return nil, fmt.Errorf(errs.FmtCardNotFound, taskID)
 	}
 
+	annotationCase, err := s.store.GetAnnotationCase(taskID)
+	if err != nil {
+		return nil, err
+	}
+	if annotationCase != nil {
+		return buildClaudeAnnotationSessionResult(taskID, annotationCase), nil
+	}
+
 	modelRuns, err := s.store.ListModelRuns(taskID)
 	if err != nil {
 		return nil, err
@@ -202,6 +213,88 @@ func (s *TaskService) ExtractTaskSessions(taskID string) (*ExtractTaskSessionsRe
 		TaskID:     taskID,
 		Candidates: candidates,
 	}, nil
+}
+
+func buildClaudeAnnotationSessionResult(taskID string, annotationCase *annotation.Case) *ExtractTaskSessionsResult {
+	result := &ExtractTaskSessionsResult{
+		TaskID:     taskID,
+		Source:     "claude_code",
+		Candidates: []ExtractTaskSessionCandidate{},
+	}
+	if annotationCase == nil {
+		return result
+	}
+
+	candidate := buildClaudeAnnotationCandidate(annotationCase)
+	if candidate == nil {
+		if strings.TrimSpace(annotationCase.ContainerID) == "" {
+			result.Message = "该题已创建容器标注快照，但还没有绑定 Claude Code 容器。请先到“容器标注”页面绑定容器。"
+		} else {
+			result.Message = "该题已绑定 Claude Code 容器，但还没有采集可用轨迹。请先到“容器标注”页面选择 JSONL 并采集轨迹。"
+		}
+		return result
+	}
+	result.Candidates = []ExtractTaskSessionCandidate{*candidate}
+	return result
+}
+
+func buildClaudeAnnotationCandidate(annotationCase *annotation.Case) *ExtractTaskSessionCandidate {
+	if annotationCase == nil {
+		return nil
+	}
+	rounds := make([]annotation.Round, 0, len(annotationCase.Rounds))
+	for _, round := range annotationCase.Rounds {
+		if strings.TrimSpace(round.Status) != "complete" {
+			continue
+		}
+		if strings.TrimSpace(round.SessionID) == "" || strings.TrimSpace(round.PromptID) == "" {
+			continue
+		}
+		if strings.TrimSpace(round.Prompt) == "" {
+			continue
+		}
+		rounds = append(rounds, round)
+	}
+	if len(rounds) == 0 {
+		return nil
+	}
+	sort.SliceStable(rounds, func(i, j int) bool {
+		if rounds[i].Order != rounds[j].Order {
+			return rounds[i].Order < rounds[j].Order
+		}
+		return rounds[i].PromptID < rounds[j].PromptID
+	})
+
+	sourcePath := strings.TrimSpace(annotationCase.SourcePath)
+	if sourcePath == "" {
+		sourcePath = strings.TrimSpace(annotationCase.WorkspacePath)
+	}
+	sessions := make([]ExtractedTraeSession, 0, len(rounds))
+	for index, round := range rounds {
+		sessionID := strings.TrimSpace(round.SessionID) + "#" + strings.TrimSpace(round.PromptID)
+		sessions = append(sessions, ExtractedTraeSession{
+			SessionID:        sessionID,
+			UserConversation: strings.TrimSpace(round.Prompt),
+			UserMessageCount: 1,
+			FirstUserMessage: strings.TrimSpace(round.Prompt),
+			IsCurrent:        index == len(rounds)-1,
+		})
+	}
+	lastActivityAt := annotationCase.UpdatedAt
+	return &ExtractTaskSessionCandidate{
+		ID:               "claude-code:" + strings.TrimSpace(annotationCase.TaskID),
+		WorkspacePath:    sourcePath,
+		MatchedPath:      sourcePath,
+		MatchKind:        "claude_code",
+		SessionCount:     len(sessions),
+		UserID:           strings.TrimSpace(annotationCase.ContainerID),
+		Username:         strings.TrimSpace(annotationCase.ContainerName),
+		CurrentSessionID: strings.TrimSpace(annotationCase.SessionID),
+		UserMessageCount: len(sessions),
+		Summary:          "Claude Code 容器轨迹",
+		LastActivityAt:   &lastActivityAt,
+		Sessions:         sessions,
+	}
 }
 
 func collectTraeTargetPaths(taskLocalPath *string, modelRuns []store.ModelRun) []string {

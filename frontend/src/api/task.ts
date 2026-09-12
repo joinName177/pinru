@@ -52,6 +52,8 @@ export interface ExtractTaskSessionCandidate {
 
 export interface ExtractTaskSessionsResult {
   taskId: string;
+  source?: 'trae' | 'claude_code' | string;
+  message?: string;
   candidates: ExtractTaskSessionCandidate[];
 }
 

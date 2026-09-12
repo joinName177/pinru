@@ -1357,18 +1357,25 @@ export function useBoardTaskDetail({
     setSessionExtracting(true);
     setSessionExtractCandidates([]);
     setDrawerError('');
-    try {
-      const result = await extractTaskSessions(selected.id);
-      const scopedCandidates = filterCandidatesForModel(
-        result.candidates,
-        selectedModelRuns,
-        selectedSessionModelName,
-      );
+	    try {
+	      const result = await extractTaskSessions(selected.id);
+	      const isClaudeCodeSource = result.source === 'claude_code';
+	      const scopedCandidates = isClaudeCodeSource
+	        ? result.candidates
+	        : filterCandidatesForModel(
+	          result.candidates,
+	          selectedModelRuns,
+	          selectedSessionModelName,
+	        );
 
-      if (scopedCandidates.length === 0) {
-        if (selectedSessionModelName) {
-          setDrawerError(
-            `未在 Trae 中找到与模型 ${selectedSessionModelName} 对应的对话`,
+	      if (scopedCandidates.length === 0) {
+	        if (isClaudeCodeSource) {
+	          setDrawerError(result.message || '未采集到 Claude Code 容器轨迹，请先到“容器标注”页面绑定容器并采集 JSONL。');
+	          return;
+	        }
+	        if (selectedSessionModelName) {
+	          setDrawerError(
+	            `未在 Trae 中找到与模型 ${selectedSessionModelName} 对应的对话`,
           );
         } else {
           setDrawerError('未在 Trae 中找到与当前题卡匹配的对话');

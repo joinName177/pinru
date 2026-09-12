@@ -20,6 +20,7 @@ export function matchKindLabel(matchKind: string) {
   if (matchKind === 'sibling') return '同项目模型目录';
   if (matchKind === 'peer_model') return '同项目跨目录模型';
   if (matchKind === 'peer_task') return '同项目跨目录';
+  if (matchKind === 'claude_code') return 'Claude Code 容器';
   return matchKind || '未知';
 }
 
