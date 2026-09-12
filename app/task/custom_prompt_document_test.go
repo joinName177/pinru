@@ -83,8 +83,8 @@ func TestValidateCustomPromptDocumentBatchRules(t *testing.T) {
 	}
 
 	tooFew := entries[:10]
-	if err := validateCustomPromptDocumentBatch(tooFew); err == nil || !strings.Contains(err.Error(), "17 条") {
-		t.Fatalf("validate too few error = %v, want count error", err)
+	if err := validateCustomPromptDocumentBatch(tooFew); err != nil {
+		t.Fatalf("custom counts rejected: %v", err)
 	}
 }
 
@@ -122,6 +122,19 @@ func TestNormalizeCustomPromptDocumentBatchDifficulties(t *testing.T) {
 	}
 	if counts["一般"] != 16 || counts["困难"] != 0 {
 		t.Fatalf("difficulty counts = %+v, want 一般 16", counts)
+	}
+}
+
+func TestCustomPromptDocumentLimitsOnlyFixedTypes(t *testing.T) {
+	for _, kind := range []string{"代码理解", "工程化", "代码测试", "代码重构", "Bug修复", "Feature迭代", "0-1代码生成"} {
+		t.Run(kind, func(t *testing.T) {
+			entry := customPromptEntry{TaskType: kind, PromptDifficulty: "一般", PromptText: "真实需求并生成 README"}
+			err := validateCustomPromptDocumentBatch([]customPromptEntry{entry, entry})
+			fixed := kind == "代码理解" || kind == "工程化" || kind == "代码测试" || kind == "代码重构"
+			if (err != nil) != fixed {
+				t.Fatalf("duplicate type %s: %v", kind, err)
+			}
+		})
 	}
 }
 

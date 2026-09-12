@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   deleteQuestionBankItem,
   importSelectedCustomProjects,
@@ -29,6 +29,7 @@ import {
   readCustomProjectPromptDocument,
   saveCustomProjectPromptDocument,
   type CustomProjectPromptDocumentDetail,
+  type CustomPromptCounts,
   type GenerateCustomProjectPromptDocumentsResult,
 } from '../../../api/llm';
 import { useAppStore } from '../../../store';
@@ -163,7 +164,7 @@ export type QuestionBankState = {
   customProjectPickerOpen: boolean;
   closeCustomProjectPicker: () => void;
   handleScanCustomProjects: () => Promise<void>;
-  handleImportSelectedCustomProjects: (projectNames: string[]) => Promise<void>;
+  handleImportSelectedCustomProjects: (projectNames: string[], counts?: CustomPromptCounts) => Promise<void>;
   handleCreateTasksFromGeneratedPromptDocs: () => Promise<void>;
   handleCreateTasksFromPickedPromptDocs: () => Promise<void>;
   closeCustomPromptPreview: () => void;
@@ -315,7 +316,8 @@ export function useQuestionBank(projectId: string, questionBankProjectIdsRaw: st
     setCustomProjectPickerOpen(false);
   }, [customProjectImporting, customProjectPromptDocGenerating]);
 
-  const handleImportSelectedCustomProjects = useCallback(async (projectNames: string[]) => {
+  const documentCounts = useRef<Record<string, CustomPromptCounts>>({});
+  const handleImportSelectedCustomProjects = useCallback(async (projectNames: string[], counts?: CustomPromptCounts) => {
     if (!projectId || projectNames.length === 0) return;
     let generatingPromptDocs = false;
     setCustomProjectImporting(true);
@@ -338,7 +340,9 @@ export function useQuestionBank(projectId: string, questionBankProjectIdsRaw: st
         const docRequest = {
           projectId,
           projectNames: importedNames,
+          counts,
         };
+        if (counts) importedNames.forEach((name) => { documentCounts.current[`${projectId}:${name}`] = counts; });
         const docJob = await submitCustomPromptDocumentGenerateJob(docRequest);
         await loadBackgroundJobs();
         const docResult = await waitForJobOutput<GenerateCustomProjectPromptDocumentsResult>(
@@ -466,6 +470,7 @@ export function useQuestionBank(projectId: string, questionBankProjectIdsRaw: st
       const job = await submitCustomPromptDocumentGenerateJob({
         projectId,
         projectNames: [projectName],
+        counts: documentCounts.current[`${projectId}:${projectName}`],
       });
       await loadBackgroundJobs();
       const result = await waitForJobOutput<GenerateCustomProjectPromptDocumentsResult>(

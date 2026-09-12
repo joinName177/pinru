@@ -37,7 +37,7 @@ FULL_SHA = re.compile(r"[0-9a-fA-F]{40}\Z")
 SNAPSHOT = re.compile(r"https://github\.com/[^/]+/[^/]+/commit/([0-9a-fA-F]{40})\Z")
 ROUND_STATUSES = {"complete", "pending", "conflict", "excluded"}
 ENVIRONMENTS = {"无外部依赖", "有外部依赖，未容器化", "已容器化，可一键起环境"}
-TASK_TYPES = {"Bug修复", "0-1代码生成", "feature迭代", "代码理解", "代码重构", "工程化", "代码测试"}
+TASK_TYPES = {"Bug修复", "0-1代码生成", "feature迭代", "Feature迭代", "代码理解", "代码重构", "工程化", "代码测试"}
 DIFFICULTIES = {"简单", "中等", "困难", "地狱"}
 OPERATING_SYSTEMS = {"MacOS/Linux", "Windows"}
 FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
@@ -343,6 +343,10 @@ def _build_workbook(rows, destination):
                     if match:
                         column = match.group(1)
                         validation.set("sqref", f"{column}2:{column}{validation_end}")
+                        if column == "J":
+                            formula = validation.find(NS + "formula1")
+                            if formula is not None:
+                                formula.text = '"Bug修复,0-1代码生成,Feature迭代,feature迭代,代码理解,代码重构,工程化,代码测试"'
             replacement = ET.tostring(root, encoding="utf-8", xml_declaration=True)
             break
     if replacement is None:
@@ -389,7 +393,7 @@ def _row_values(batch, case, round_item, evaluation, trace_relative, draft, over
         "Claude Code" if harness_version else "",
         harness_version,
         _as_text(evaluation.get("os")) if has_evaluation else "",
-        _as_text(evaluation.get("taskType")) if has_evaluation else "",
+        _as_text(case.get("taskType")) or (_as_text(evaluation.get("taskType")) if has_evaluation else ""),
         _as_text(evaluation.get("difficulty")) if has_evaluation else "",
         _as_text(evaluation.get("language")) if has_evaluation else "",
         scores[0],
@@ -626,6 +630,8 @@ def export_batch(batch, input_dir, input_hash, output, draft):
                     seen_rounds[identity] = round_scope
 
             evaluation = _matching_evaluation(round_item)
+            if evaluation and case.get("taskType"):
+                evaluation = dict(evaluation, taskType=case["taskType"])
             if included:
                 blockers.extend(_validate_evaluation(evaluation, round_scope))
             review_attachment = ""

@@ -4,6 +4,7 @@ type Case struct {
 	TaskID           string    `json:"taskId"`
 	ProjectID        string    `json:"projectId"`
 	TaskName         string    `json:"taskName"`
+	TaskType         string    `json:"taskType,omitempty"`
 	SourcePath       string    `json:"sourcePath"`
 	InitialSHA       string    `json:"initialSha"`
 	SnapshotURL      string    `json:"snapshotUrl"`

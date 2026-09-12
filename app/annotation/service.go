@@ -55,12 +55,13 @@ type SettingsRequest struct {
 	Completed   bool   `json:"completed"`
 }
 type ExportRequest struct {
-	TaskID       string `json:"taskId,omitempty"`
-	ReviewedOnly bool   `json:"reviewedOnly,omitempty"`
-	ProjectID    string `json:"projectId"`
-	Submitter    string `json:"submitter"`
-	SubmittedAt  string `json:"submittedAt"`
-	Draft        bool   `json:"draft"`
+	TaskIDs      []string `json:"taskIds,omitempty"`
+	TaskID       string   `json:"taskId,omitempty"`
+	ReviewedOnly bool     `json:"reviewedOnly,omitempty"`
+	ProjectID    string   `json:"projectId"`
+	Submitter    string   `json:"submitter"`
+	SubmittedAt  string   `json:"submittedAt"`
+	Draft        bool     `json:"draft"`
 }
 type ExportResult struct {
 	OutputPath string   `json:"outputPath"`
@@ -102,6 +103,7 @@ func (s *AnnotationService) loadCase(id string) (*domain.Case, error) {
 		return nil, err
 	}
 	if c != nil {
+		c.TaskType = task.TaskType
 		return c, nil
 	}
 	project := ""
@@ -121,7 +123,7 @@ func (s *AnnotationService) loadCase(id string) (*domain.Case, error) {
 	if source == "" && task.LocalPath != nil {
 		source = *task.LocalPath
 	}
-	return &domain.Case{TaskID: id, ProjectID: project, TaskName: task.ProjectName, SourcePath: source, RepoRelativePath: filepath.Base(source), Rounds: []domain.Round{}, Captures: []domain.Capture{}}, nil
+	return &domain.Case{TaskID: id, ProjectID: project, TaskName: task.ProjectName, TaskType: task.TaskType, SourcePath: source, RepoRelativePath: filepath.Base(source), Rounds: []domain.Round{}, Captures: []domain.Capture{}}, nil
 }
 
 // ListCases includes every project task, including tasks not yet prepared.

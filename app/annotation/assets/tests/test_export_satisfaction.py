@@ -219,6 +219,21 @@ class ExportSatisfactionTests(unittest.TestCase):
         self.assertTrue(any("duplicate SessionID + PromptID" in issue for issue in result["issues"]))
         self.assertFalse((output / "submission.xlsx").exists())
 
+    @unittest.skipIf(openpyxl is None, "openpyxl is needed for workbook checks")
+    def test_export_uses_card_type_for_all_rounds_over_cached_ai_classification(self):
+        for task_type in ("0-1代码生成", "Feature迭代", "Bug修复", "代码理解", "工程化", "代码测试", "代码重构"):
+            with self.subTest(task_type=task_type):
+                capture = self.capture("capture-" + task_type)
+                rounds = [self.round("first-" + task_type, capture["id"], 1), self.round("second-" + task_type, capture["id"], 2)]
+                case = self.case("task-a", rounds, [capture])
+                case["taskType"] = task_type
+                proc, result, _ = self.run_export(self.payload([case]), output_name=task_type)
+                self.assertEqual(proc.returncode, 0, proc.stderr + str(result))
+                sheet = openpyxl.load_workbook(result["outputPath"]).active
+                self.assertEqual([sheet["J2"].value, sheet["J3"].value], [task_type, task_type])
+                checked = subprocess.run([sys.executable, str(CHECKER), result["outputPath"]], capture_output=True, text=True)
+                self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+
     def test_draft_keeps_conflicting_duplicate_rounds_and_flags_identity(self):
         capture = self.capture("capture-a")
         first = self.round("same", "capture-a", 1, prompt="first text", status="conflict", evaluations=[])

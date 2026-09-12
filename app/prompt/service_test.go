@@ -10,6 +10,7 @@ import (
 
 	appcli "github.com/blueship581/pinru/app/cli"
 	"github.com/blueship581/pinru/app/testutil"
+	internalprompt "github.com/blueship581/pinru/internal/prompt"
 	"github.com/blueship581/pinru/internal/store"
 )
 
@@ -59,6 +60,12 @@ func TestGenerateCustomProjectPromptDocumentsWritesMarkdownToCustomRoot(t *testi
 		"**代码理解**",
 		"",
 		"1. 【一般】梳理发布流程从填写到提交完成的关键状态流和失败分支，并沉淀为 README 文档。",
+		"**工程化**",
+		"1. 【一般】统一构建环境和依赖安装流程。",
+		"**代码测试**",
+		"1. 【一般】补充发布失败后的回归验证。",
+		"**代码重构**",
+		"1. 【一般】整理发布状态处理逻辑并保持现有行为。",
 	}, "\n")
 	svc := &PromptService{
 		store:  testStore,
@@ -77,6 +84,7 @@ func TestGenerateCustomProjectPromptDocumentsWritesMarkdownToCustomRoot(t *testi
 	result, err := svc.GenerateCustomProjectPromptDocuments(GenerateCustomProjectPromptDocumentsRequest{
 		ProjectID:    "project-custom-doc",
 		ProjectNames: []string{"zw-001"},
+		Counts:       &internalprompt.DocumentCounts{CodeGen: 1, Feature: 1},
 	})
 	if err != nil {
 		t.Fatalf("GenerateCustomProjectPromptDocuments() error = %v", err)
@@ -110,7 +118,7 @@ func TestBuildCustomProjectPromptDocumentPromptUsesFixedBatchRules(t *testing.T)
 	prompt := buildCustomProjectPromptDocumentPrompt("zw-001", nil)
 
 	requiredSnippets := []string{
-		"只生成 17 条，其中 0-1代码生成 8 条，Feature迭代 8 条，代码理解 1 条",
+		"只生成 20 条，其中 0-1代码生成 8 条，Feature迭代 8 条，Bug修复 0 条",
 		"全部统一为【一般】",
 		"不要生成【简单】、【困难】或【地狱】",
 		"交付边界点到为止",
@@ -200,6 +208,24 @@ func TestGenerateCustomProjectPromptDocumentsRejectsInvalidCliOutput(t *testing.
 	}
 	if len(result.Details) != 1 || result.Details[0].Status != "error" {
 		t.Fatalf("expected detail status error, got: %+v", result.Details)
+	}
+}
+
+func TestCustomDocumentUsesRequestedCountsAndAllowsNoCodeGeneration(t *testing.T) {
+	counts := internalprompt.DocumentCounts{Feature: 2, BugFix: 1}
+	prompt := buildCustomProjectPromptDocumentPrompt("cyc-05", nil, counts)
+	if !strings.Contains(prompt, "只生成 7 条，其中 0-1代码生成 0 条，Feature迭代 2 条，Bug修复 1 条") {
+		t.Fatal("generation prompt did not use configured counts")
+	}
+	content := "**Feature迭代**\n1. 【一般】需求一\n2. 【一般】需求二\n**Bug修复**\n1. 【一般】修复已有问题\n**代码理解**\n1. 【一般】梳理并生成 README\n**工程化**\n1. 【一般】规范依赖安装\n**代码测试**\n1. 【一般】回归测试\n**代码重构**\n1. 【一般】整理代码"
+	svc := &PromptService{requirementDocGenerator: func(context.Context, string, string, string) (string, error) { return "生成说明\n" + content, nil }}
+	got, err := svc.generateCustomProjectPromptDocument(context.Background(), t.TempDir(), "cyc-05", "", counts)
+	if err != nil || got != content {
+		t.Fatalf("no-codegen output rejected: %q %v", got, err)
+	}
+	counts.Feature++
+	if _, err := svc.generateCustomProjectPromptDocument(context.Background(), t.TempDir(), "cyc-05", "", counts); err == nil {
+		t.Fatal("generated output with fewer tasks was accepted")
 	}
 }
 

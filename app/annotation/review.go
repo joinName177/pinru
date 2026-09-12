@@ -159,6 +159,7 @@ func (s *AnnotationService) reviewLocked(ctx context.Context, req ReviewRequest)
 	cleanRound := r
 	cleanRound.Evaluations = nil
 	input := map[string]any{
+		"taskType":    c.TaskType,
 		"skillSource": skillDir, "taskName": c.TaskName, "round": cleanRound, "sessionRounds": c.Rounds, "initialSha": c.InitialSHA, "snapshotUrl": c.SnapshotURL,
 		"initial": initialPath, "tracePath": filepath.Join(work, "evidence", relative), "code": filepath.Join(work, "evidence", "code"),
 		"verification": filepath.Join(work, "verification"), "exactRoundEndState": exactState, "skillHash": skillHash,
@@ -192,6 +193,13 @@ func (s *AnnotationService) reviewLocked(ctx context.Context, req ReviewRequest)
 		}
 	}
 	evaluation.ID = id
+	// Card metadata is authoritative; keep the evaluator's other findings intact.
+	if c.TaskType != "" {
+		evaluation.TaskType = c.TaskType
+		if evaluation.TaskType == "Feature迭代" {
+			evaluation.TaskType = "feature迭代"
+		}
+	}
 	evaluation.CreatedAt = time.Now().Unix()
 	evaluation.EvidenceHash = r.EvidenceHash
 	evaluation.SkillHash = skillHash

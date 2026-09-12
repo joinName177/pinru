@@ -522,48 +522,30 @@ func normalizeCustomPromptDocumentBatchDifficulties(entries []customPromptEntry)
 }
 
 func validateCustomPromptDocumentBatch(entries []customPromptEntry) error {
-	if len(entries) != 17 {
-		return fmt.Errorf("提示词文档必须正好包含 17 条：0-1代码生成 8 条、Feature迭代 8 条、代码理解 1 条；当前解析到 %d 条", len(entries))
+	if len(entries) == 0 {
+		return errors.New("提示词文档至少需要一条有效提示词")
 	}
-
-	typeCounts := map[string]int{}
-	nonUnderstandingDifficultyCounts := map[string]int{}
+	counts := map[string]int{}
 	for index, entry := range entries {
-		taskType := internalprompt.NormalizeTaskType(entry.TaskType)
-		difficulty := strings.TrimSpace(entry.PromptDifficulty)
-		typeCounts[taskType]++
-
-		switch taskType {
-		case "0-1代码生成", "Feature迭代":
-			if difficulty != "一般" {
-				return fmt.Errorf("第 %d 条 %s 题难度必须是【一般】，当前为【%s】", index+1, taskType, difficulty)
-			}
-			nonUnderstandingDifficultyCounts[difficulty]++
-		case "代码理解":
-			if difficulty != "一般" {
-				return fmt.Errorf("代码理解题必须是【一般】，当前为【%s】", difficulty)
-			}
-			if !strings.Contains(strings.ToLower(entry.PromptText), "readme") {
-				return errors.New("代码理解题必须明确要求生成 README 文档")
-			}
+		kind := internalprompt.NormalizeTaskType(entry.TaskType)
+		switch kind {
+		case "0-1代码生成", "Feature迭代", "Bug修复", "代码理解", "工程化", "代码测试", "代码重构":
 		default:
-			return fmt.Errorf("提示词文档只允许 0-1代码生成、Feature迭代、代码理解，发现：%s", taskType)
+			return fmt.Errorf("不支持的题型：%s", kind)
 		}
-	}
-
-	if typeCounts["0-1代码生成"] != 8 || typeCounts["Feature迭代"] != 8 || typeCounts["代码理解"] != 1 {
-		return fmt.Errorf(
-			"提示词文档题型数量必须是 0-1代码生成 8 条、Feature迭代 8 条、代码理解 1 条，当前为 0-1代码生成 %d 条、Feature迭代 %d 条、代码理解 %d 条",
-			typeCounts["0-1代码生成"],
-			typeCounts["Feature迭代"],
-			typeCounts["代码理解"],
-		)
-	}
-	if nonUnderstandingDifficultyCounts["一般"] != 16 {
-		return fmt.Errorf(
-			"除代码理解外的 16 条难度必须全部是【一般】，当前为【一般】%d 条",
-			nonUnderstandingDifficultyCounts["一般"],
-		)
+		if strings.TrimSpace(entry.PromptDifficulty) != "一般" {
+			return fmt.Errorf("第 %d 条 %s 题难度必须是【一般】", index+1, kind)
+		}
+		if kind == "代码理解" && !strings.Contains(strings.ToLower(entry.PromptText), "readme") {
+			return errors.New("代码理解题必须明确要求生成 README 文档")
+		}
+		counts[kind]++
+		switch kind {
+		case "代码理解", "工程化", "代码测试", "代码重构":
+			if counts[kind] > 1 {
+				return fmt.Errorf("%s 每份文档最多 1 条", kind)
+			}
+		}
 	}
 	return nil
 }

@@ -52,6 +52,60 @@ func TestExportDirectoryUsesGlobalConfig(t *testing.T) {
 	}
 }
 
+func TestCaseAlwaysReadsCurrentCardTypeInsteadOfSavedReviewType(t *testing.T) {
+	s, trace, _ := annotationFixture(t)
+	s.cli, _ = fakeReviewCLI(t)
+	if _, err := s.Capture(CaptureRequest{TaskID: "题目-1", TracePath: trace}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.Review(ReviewRequest{TaskID: "题目-1", PromptID: "p1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.TaskType != "0-1代码生成" || c.Rounds[0].Evaluations[0].TaskType != "0-1代码生成" {
+		t.Fatalf("card type lost: %+v", c)
+	}
+	if err := s.store.UpdateTaskType("题目-1", "Feature迭代"); err != nil {
+		t.Fatal(err)
+	}
+	c, err = s.loadCase("题目-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.TaskType != "Feature迭代" {
+		t.Fatalf("stale case type: %s", c.TaskType)
+	}
+	if c.Rounds[0].Evaluations[0].TaskType != "0-1代码生成" {
+		t.Fatal("reading card metadata rewrote historical review")
+	}
+}
+
+func TestExportExplicitSubsetRequiresAvailableReviewedTasks(t *testing.T) {
+	r := domain.Round{Status: "complete", EvidenceHash: "h", Evaluations: []domain.Evaluation{{Status: "ready", EvidenceHash: "h"}}}
+	cases := []domain.Case{{TaskID: "a", Rounds: []domain.Round{r}}, {TaskID: "b", Rounds: []domain.Round{r}}, {TaskID: "c", Rounds: []domain.Round{r}}, {TaskID: "empty"}}
+	got, err := selectExportCases(cases, ExportRequest{TaskIDs: []string{"c", "a", "a"}, ReviewedOnly: true})
+	if err != nil || len(got) != 2 || got[0].TaskID != "a" || got[1].TaskID != "c" {
+		t.Fatalf("wrong subset: %+v %v", got, err)
+	}
+	for _, req := range []ExportRequest{
+		{TaskIDs: []string{}, ReviewedOnly: true},
+		{TaskIDs: []string{" "}, ReviewedOnly: true},
+		{TaskIDs: []string{"other"}, ReviewedOnly: true},
+		{TaskIDs: []string{"a", "other"}, ReviewedOnly: true},
+		{TaskIDs: []string{"a", "empty"}, ReviewedOnly: true},
+		{TaskIDs: []string{"a"}, TaskID: "b", ReviewedOnly: true},
+		{TaskIDs: []string{"a"}},
+	} {
+		if _, err := selectExportCases(cases, req); err == nil {
+			t.Fatalf("accepted invalid selection: %+v", req)
+		}
+	}
+	cases[0].Rounds = []domain.Round{{Status: "complete", EvidenceHash: "new", Evaluations: r.Evaluations}}
+	if _, err := selectExportCases(cases, ExportRequest{TaskIDs: []string{"a"}, ReviewedOnly: true}); err == nil {
+		t.Fatal("accepted stale selected data")
+	}
+}
+
 func TestReviewedExportWritesOnlySelectedTaskToConfiguredDirectory(t *testing.T) {
 	s, trace, _ := annotationFixture(t)
 	s.cli, _ = fakeReviewCLI(t)

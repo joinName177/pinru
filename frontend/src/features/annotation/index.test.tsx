@@ -123,6 +123,33 @@ describe('AnnotationWorkspace', () => {
     await screen.findByText(/一键导出已制表完成/);
   });
 
+  it('exports only checked prepared tasks and resets the selection between projects', async () => {
+    const first = makeCase({ taskName: '第一题' });
+    first.rounds[0].evaluations![0].status = 'ready';
+    const second = makeCase({ taskId: 'task-2', taskName: '第二题' });
+    second.rounds[0].evaluations![0].status = 'ready';
+    api.listCases.mockResolvedValue([first, second, makeCase({ taskId: 'task-3', taskName: '未制表题', rounds: [] })]);
+    api.exportCases.mockResolvedValue({ id: 'selected-export', status: 'pending' });
+    api.getAnnotationJob.mockResolvedValue({ id: 'selected-export', status: 'done', outputPayload: JSON.stringify({ outputPath: '/exports/selected.xlsx', rows: 1, issues: [] }) });
+    const { rerender } = render(<AnnotationWorkspace projectId="project-1" taskId="task-1" />);
+    const open = await screen.findByRole('button', { name: '选择题目导出' });
+    await waitFor(() => expect(open).toBeEnabled());
+    fireEvent.click(open);
+    expect(screen.getByRole('button', { name: '导出所选题目（0）' })).toBeDisabled();
+    expect(screen.queryByRole('checkbox', { name: /导出 未制表题/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '全选已制表' }));
+    expect(screen.getByRole('button', { name: '导出所选题目（2）' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: '清空选择' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /导出 第二题/ }));
+    fireEvent.click(screen.getByRole('button', { name: '导出所选题目（1）' }));
+    await waitFor(() => expect(api.exportCases).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'project-1', taskIds: ['task-2'], taskId: undefined, reviewedOnly: true })));
+    await screen.findByText(/所选题目导出完成/);
+    rerender(<AnnotationWorkspace projectId="project-2" taskId="task-1" />);
+    await waitFor(() => expect(screen.getByRole('button', { name: '选择题目导出' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: '选择题目导出' }));
+    expect(screen.getByRole('button', { name: '导出所选题目（0）' })).toBeDisabled();
+  });
+
   it('scopes the detail capture panel to the requested task without batch controls', async () => {
     api.listCases.mockResolvedValue([makeCase(), makeCase({ taskId: 'task-2', taskName: '当前详情题目', repoRelativePath: 'repo-two' })]);
     render(<AnnotationWorkspace projectId="project-1" taskId="task-2" />);

@@ -194,6 +194,10 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
   const [submittedAt, setSubmittedAt] = useState('');
   const [exportResult, setExportResult] = useState<AnnotationExportResult | null>(null);
   const [exportBusy, setExportBusy] = useState<BusyAction | null>(null);
+  const [showExportSelection, setShowExportSelection] = useState(false);
+  const [exportTaskIds, setExportTaskIds] = useState<string[]>([]);
+  const exportableCases = cases.filter((item) => getTableProgress(item).prepared > 0);
+  const eligibleExportIds = exportTaskIds.filter((id) => exportableCases.some((item) => item.taskId === id));
   const projectEpoch = useRef(0);
   const settingsEpoch = useRef(0);
   const activeProjectId = useRef(projectId);
@@ -252,6 +256,8 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     setExportResult(null);
     setCaseBusy({});
     setExportBusy(null);
+    setShowExportSelection(false);
+    setExportTaskIds([]);
     setSaving(false);
     setPreflightLoading(false);
     settingsEpoch.current += 1;
@@ -385,14 +391,15 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     }
   };
 
-  const handleExport = async (draft: boolean, exportTaskId?: string, reviewedOnly = false) => {
+  const handleExport = async (draft: boolean, exportTaskId?: string, reviewedOnly = false, taskIds?: string[]) => {
+    if (taskIds && taskIds.length === 0) return;
     setActionError('');
     setExportResult(null);
     const targetProjectId = activeProjectId.current;
-    const label = reviewedOnly ? (exportTaskId ? '单题导出' : '一键导出已制表') : draft ? '草稿导出' : '正式导出';
+    const label = taskIds ? '所选题目导出' : reviewedOnly ? (exportTaskId ? '单题导出' : '一键导出已制表') : draft ? '草稿导出' : '正式导出';
     setExportBusy({ taskId: '', label, jobId: '', progress: 0, message: '正在提交后台任务' });
     try {
-      const submitted = await exportCases({ projectId, submitter, submittedAt, draft, ...(reviewedOnly ? { reviewedOnly, taskId: exportTaskId } : {}) });
+      const submitted = await exportCases({ projectId, submitter, submittedAt, draft, ...(reviewedOnly ? { reviewedOnly, taskId: exportTaskId } : {}), ...(taskIds ? { taskIds } : {}) });
       if (targetProjectId !== activeProjectId.current) return;
       setExportBusy({ taskId: '', label, jobId: submitted.id, progress: submitted.progress ?? 0, message: submitted.progressMessage ?? '等待执行' });
       const finished = await waitForAnnotationJob(submitted.id, (job) => {
@@ -437,6 +444,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <button className={SECONDARY_BUTTON} disabled={loading || Boolean(exportBusy)} aria-expanded={showExportSelection} onClick={() => setShowExportSelection((open) => !open)}><Download className="h-4 w-4" />选择题目导出</button>
             <button className={PRIMARY_BUTTON} disabled={loading || Boolean(exportBusy) || Object.keys(caseBusy).length > 0} onClick={() => void handleExport(true, taskId, true)}><Download className="h-4 w-4" />{taskId ? '导出本题 Excel' : '一键导出已制表'}</button>
             {taskId && <button className={SECONDARY_BUTTON} disabled={loading || Boolean(exportBusy) || Object.keys(caseBusy).length > 0} onClick={() => void handleExport(true, undefined, true)}><Download className="h-4 w-4" />导出全项目已制表</button>}
           <button className={SECONDARY_BUTTON} onClick={() => void loadProject(projectId)} disabled={loading}>
@@ -444,6 +452,28 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
           </button>
           </div>
         </div>
+
+        {showExportSelection && (
+          <section aria-label="选择导出题目" className="mb-5 rounded-2xl border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
+            <h2 className="font-semibold text-stone-800 dark:text-stone-100">选择本项目已制表的题目</h2>
+            <p className="my-2 text-xs text-stone-500">仅列出已有制表数据的题目；部分制表的题仅导出已保存轮次。所选题目合并为一个 Excel，沿用设置中的统一目录。</p>
+            <div className="mb-3 flex flex-wrap gap-2">
+              <button className={SECONDARY_BUTTON} disabled={Boolean(exportBusy) || loading || !exportableCases.length} onClick={() => setExportTaskIds(exportableCases.map((item) => item.taskId))}>全选已制表</button>
+              <button className={SECONDARY_BUTTON} disabled={Boolean(exportBusy) || !exportTaskIds.length} onClick={() => setExportTaskIds([])}>清空选择</button>
+            </div>
+            <div className="max-h-64 space-y-2 overflow-y-auto">
+              {exportableCases.length === 0 && <p className="py-4 text-sm text-stone-500">暂无已制表题目</p>}
+              {exportableCases.map((item) => {
+                const progress = getTableProgress(item);
+                return <label key={item.taskId} className="flex items-start gap-3 rounded-xl border border-stone-200 p-3 text-sm dark:border-stone-700 dark:text-stone-100">
+                  <input type="checkbox" aria-label={`导出 ${item.taskName} ${folderName(item.sourcePath)}`} checked={eligibleExportIds.includes(item.taskId)} disabled={Boolean(exportBusy) || loading} onChange={(event) => setExportTaskIds((ids) => event.target.checked ? [...ids.filter((id) => id !== item.taskId), item.taskId] : ids.filter((id) => id !== item.taskId))} />
+                  <span className="min-w-0"><span className="font-semibold">{item.taskName} · {folderName(item.sourcePath)}</span><span className="ml-2 text-xs text-emerald-600">已制表 {progress.prepared}/{progress.total} 轮</span><span className="block break-all text-xs text-stone-500">{item.sourcePath}</span></span>
+                </label>;
+              })}
+            </div>
+            <button className={`${PRIMARY_BUTTON} mt-3`} disabled={loading || Boolean(exportBusy) || Object.keys(caseBusy).length > 0 || eligibleExportIds.length === 0} onClick={() => void handleExport(true, undefined, true, eligibleExportIds)}>导出所选题目（{eligibleExportIds.length}）</button>
+          </section>
+        )}
 
         {(loadError || actionError) && (
           <div role="alert" className="mb-4 flex items-start gap-2 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-300">

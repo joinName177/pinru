@@ -47,10 +47,13 @@ export interface PromptGenerationResult {
 }
 
 export interface GenerateCustomProjectPromptDocumentsRequest {
+  counts?: CustomPromptCounts;
   projectId: string;
   projectNames: string[];
   providerId?: string | null;
 }
+
+export interface CustomPromptCounts { codeGen: number; feature: number; bugFix: number }
 
 export interface CustomProjectPromptDocumentDetail {
   projectName: string;

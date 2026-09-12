@@ -290,9 +290,24 @@ func bytesLastJSON(data []byte) []byte {
 }
 
 func selectExportCases(cases []domain.Case, req ExportRequest) ([]domain.Case, error) {
+	wanted := make(map[string]bool)
+	if req.TaskIDs != nil {
+		if len(req.TaskIDs) == 0 || req.TaskID != "" || !req.ReviewedOnly {
+			return nil, errors.New("请选择至少一道已制表题目，指定题目导出不能同时指定单题范围")
+		}
+		for _, id := range req.TaskIDs {
+			if strings.TrimSpace(id) == "" {
+				return nil, errors.New("导出题目编号不能为空")
+			}
+			wanted[id] = true
+		}
+	}
 	selected := make([]domain.Case, 0, len(cases))
 	found := req.TaskID == ""
 	for _, c := range cases {
+		if req.TaskIDs != nil && !wanted[c.TaskID] {
+			continue
+		}
 		if req.TaskID != "" && req.TaskID != c.TaskID {
 			continue
 		}
@@ -311,6 +326,9 @@ func selectExportCases(cases []domain.Case, req ExportRequest) ([]domain.Case, e
 				}
 			}
 			if len(rounds) == 0 {
+				if req.TaskIDs != nil {
+					return nil, fmt.Errorf("题目 %s 暂无可导出的制表数据，请刷新后重新选择", c.TaskName)
+				}
 				continue
 			}
 			c.Rounds = rounds
@@ -331,6 +349,9 @@ func selectExportCases(cases []domain.Case, req ExportRequest) ([]domain.Case, e
 			}
 		}
 		selected = append(selected, c)
+	}
+	if req.TaskIDs != nil && len(selected) != len(wanted) {
+		return nil, errors.New("部分所选题目不存在或不属于当前项目，请刷新后重新选择")
 	}
 	if !found {
 		return nil, errors.New("题目不属于当前项目")

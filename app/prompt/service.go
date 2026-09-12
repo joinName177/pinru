@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -56,9 +57,10 @@ type PromptGenerationResult struct {
 }
 
 type GenerateCustomProjectPromptDocumentsRequest struct {
-	ProjectID    string   `json:"projectId"`
-	ProjectNames []string `json:"projectNames"`
-	ProviderID   *string  `json:"providerId"`
+	Counts       *internalprompt.DocumentCounts `json:"counts,omitempty"`
+	ProjectID    string                         `json:"projectId"`
+	ProjectNames []string                       `json:"projectNames"`
+	ProviderID   *string                        `json:"providerId"`
 }
 
 type CustomProjectPromptDocumentDetail struct {
@@ -312,6 +314,13 @@ func (s *PromptService) GenerateCustomProjectPromptDocumentsWithOptions(
 	req GenerateCustomProjectPromptDocumentsRequest,
 	options *GenerateCustomProjectPromptDocumentsOptions,
 ) (*GenerateCustomProjectPromptDocumentsResult, error) {
+	counts := internalprompt.DefaultDocumentCounts()
+	if req.Counts != nil {
+		counts = *req.Counts
+	}
+	if err := counts.Validate(); err != nil {
+		return nil, err
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -403,7 +412,7 @@ func (s *PromptService) GenerateCustomProjectPromptDocumentsWithOptions(
 		detail.OutputPath = outputPath
 
 		emitProgress(projectName, progressIndex, "generating")
-		content, genErr := s.generateCustomProjectPromptDocument(ctx, sourcePath, item.DisplayName, selection.Model)
+		content, genErr := s.generateCustomProjectPromptDocument(ctx, sourcePath, item.DisplayName, selection.Model, counts)
 		if genErr != nil {
 			detail.Message = genErr.Error()
 			result.Details = append(result.Details, detail)
@@ -490,7 +499,11 @@ func (s *PromptService) runPromptHumanizer(ctx context.Context, workDir, prompt,
 	return "", nil
 }
 
-func (s *PromptService) generateCustomProjectPromptDocument(ctx context.Context, workDir, projectName, model string) (string, error) {
+func (s *PromptService) generateCustomProjectPromptDocument(ctx context.Context, workDir, projectName, model string, requested ...internalprompt.DocumentCounts) (string, error) {
+	counts := internalprompt.DefaultDocumentCounts()
+	if len(requested) > 0 {
+		counts = requested[0]
+	}
 	var output string
 	var err error
 	if s.requirementDocGenerator != nil {
@@ -503,19 +516,22 @@ func (s *PromptService) generateCustomProjectPromptDocument(ctx context.Context,
 				"error", profileErr,
 			)
 		}
-		prompt := buildCustomProjectPromptDocumentPrompt(projectName, projectProfile)
+		prompt := buildCustomProjectPromptDocumentPrompt(projectName, projectProfile, counts)
 		output, err = s.executeCliRaw(ctx, workDir, prompt, model)
 	}
 	if err != nil {
 		return "", err
 	}
 	content := cleanCustomProjectPromptDocument(output)
-	if strings.TrimSpace(content) == "" || !strings.Contains(content, "0-1代码生成") {
+	if strings.TrimSpace(content) == "" {
 		trimmedOutput := strings.TrimSpace(output)
 		if trimmedOutput == "" {
 			return "", errors.New("模型未返回可写入的提示词文档")
 		}
 		return "", fmt.Errorf("模型未返回有效的提示词需求文档: %s", trimmedOutput)
+	}
+	if err := counts.ValidateDocument(content); err != nil {
+		return "", err
 	}
 	return content, nil
 }
@@ -785,20 +801,25 @@ func appendProjectProfilePrompt(sb *strings.Builder, projectProfile *promptProje
 	sb.WriteString("项目分析方式：请优先基于上面的项目画像、任务类型和已有提示词生成任务。只有画像信息不足以支撑真实业务判断时，才补充读取少量相关源码；不要每次从零开始全量扫描项目。\n")
 }
 
-func buildCustomProjectPromptDocumentPrompt(projectName string, projectProfile *promptProjectProfile) string {
+func buildCustomProjectPromptDocumentPrompt(projectName string, projectProfile *promptProjectProfile, requested ...internalprompt.DocumentCounts) string {
+	counts := internalprompt.DefaultDocumentCounts()
+	if len(requested) > 0 {
+		counts = requested[0]
+	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "项目名称：%s\n", strings.TrimSpace(projectName))
 	sb.WriteString("角色要求：请以有实际研发排期经验的产品经理视角生成提示词，同时理解基本工程实现约束。输出要像真实业务交付任务，但复杂度控制在小中型研发需求，不要写成概念 PRD、营销文案、课堂作业或重型架构改造清单。\n")
 	sb.WriteString("请基于当前项目一次性生成提示词需求文档，不要逐条调用单题出题逻辑。\n")
-	sb.WriteString("数量要求：只生成 17 条，其中 0-1代码生成 8 条，Feature迭代 8 条，代码理解 1 条；不要生成 Bug修复、代码重构、工程化、代码测试或其他分类。\n")
-	sb.WriteString("难度要求：每条必须带任务难度标签，全部统一为【一般】。代码理解固定为【一般】；其余 16 条全部统一为【一般】，不要生成【简单】、【困难】或【地狱】。任务难度整体放开，聚焦真实自然的业务研发需求，不要为了刻意增加难度而强行增加复杂链路压力。\n")
-	sb.WriteString("去重要求：17 条提示词之间不得重复或换皮，不得只替换对象名、页面名、状态名后复用同一类需求。每条必须在业务目标、用户路径、状态链路、数据对象、交付边界中至少有两个维度明显不同。输出前必须自检整批内容，如发现重复或相似度过高，必须删除并补充新的不同角度。\n")
+	fmt.Fprintf(&sb, "数量要求：只生成 %d 条，其中 0-1代码生成 %d 条，Feature迭代 %d 条，Bug修复 %d 条；代码理解、工程化、代码测试、代码重构各固定 1 条。数量为 0 的分类不生成题目。严格按数量生成，不擅自增减。\n", counts.CodeGen+counts.Feature+counts.BugFix+4, counts.CodeGen, counts.Feature, counts.BugFix)
+	sb.WriteString("难度要求：每条必须带任务难度标签，全部统一为【一般】，不要生成【简单】、【困难】或【地狱】。聚焦真实自然的业务研发需求，不要为了刻意增加难度而强行增加复杂链路压力。\n")
+	sb.WriteString("去重要求：所有提示词之间不得重复或换皮，不得只替换对象名、页面名、状态名后复用同一类需求。每条必须在业务目标、用户路径、状态链路、数据对象、交付边界中至少有两个维度明显不同。输出前自检整批内容，如发现重复须替换为不同角度。\n")
+	sb.WriteString("Bug修复须基于当前代码中真实存在的缺陷，写清触发条件、异常表现和修复后的结果，不能为凑数量编造问题。工程化关注构建依赖或交付流程；代码测试关注实际功能和回归验证；代码重构保持业务行为不变。\n")
 	sb.WriteString("内容要求：提示词必须像真实项目排期里的研发任务，包含背景、触发场景和用户可感知行为即可，交付边界点到为止；不要强行拔高复杂度，不要默认堆砌复杂权限、事务一致性、异步恢复、多角色协作、复杂统计口径或跨系统联动。允许灵活、自然地表达业务需求，重点关注项目实际功能的补充和完善。不要出现代码片段、文件路径、类名、方法名、接口名、变量名、命令或具体实现步骤；只有代码理解题允许明确要求生成 README 文档。\n")
 	sb.WriteString("文风要求：参考 PINRU 历史提示词的自然写法，每条像真实领题描述的一段中文。不要固定写成“小标题：正文”，不要每条都用冒号切分，也不要先起一个功能名再解释；可以自然使用“当前...”“现在...”“希望...”“新增...”“需要...”等开头，但整批不要同一种句式。不要在每条末尾固定追加“验收时...”“验证时...”“需要确保...”这类验收句；如果必须表达交付结果，要自然融入业务描述里。\n")
 	sb.WriteString("0-1代码生成要求：应是此前不存在的中小模块、新页面组或新主流程，不要写成完整大型子系统；重点体现目标用户、核心操作和基本结果。\n")
 	sb.WriteString("Feature迭代要求：应是在已有功能基础上补能力或改进流程，说明现有流程哪里不够、扩展后解决什么摩擦即可；尽量控制在适度范围，体现清晰的输入和处理结果衔接即可。\n")
 	sb.WriteString("代码理解要求：只输出 1 条且难度固定为【一般】，聚焦梳理一个核心页面、一次提交流程或一条主要数据链路，明确最终需要回答的问题，并要求把梳理结果沉淀为 README 文档；不要要求全量风险盘点，也不要写成需要改代码或改多文件的任务。\n")
-	sb.WriteString("输出格式：只返回 Markdown 正文，不要包裹代码块，不要解释生成过程。分类标题固定为 **0-1代码生成**、**Feature迭代**、**代码理解**。每条格式只保留序号、难度标签和自然正文，建议每条 50-100 字。例如：1. 【一般】当前会员预约后到场情况不清楚，管理员无法知道实际到课率。需要补一个签到核销入口，把预约状态和到场结果记录下来，并在取消、迟到和重复核销时给出清楚反馈，方便后续查看课程运营情况。不要输出成“会员签到核销子系统：...”这类固定标题格式。\n")
+	sb.WriteString("输出格式：只返回 Markdown 正文，不要包裹代码块，不要解释生成过程。分类标题按顺序使用 **0-1代码生成**、**Feature迭代**、**Bug修复**、**代码理解**、**工程化**、**代码测试**、**代码重构**，数量为 0 的分类省略。每条格式只保留序号、难度标签和自然正文，建议每条 50-100 字。例如：1. 【一般】当前会员预约后到场情况不清楚，管理员无法知道实际到课率。需要补一个签到核销入口，把预约状态和到场结果记录下来，并在取消、迟到和重复核销时给出清楚反馈，方便后续查看课程运营情况。不要输出成“会员签到核销子系统：...”这类固定标题格式。\n")
 
 	if projectProfile == nil || strings.TrimSpace(projectProfile.ProfileText) == "" {
 		sb.WriteString("\n项目分析方式：当前没有可用项目画像缓存，请先快速阅读项目结构和关键文件，再生成文档；只在必要时读取源码，不要无目的全量扫描。\n")
@@ -813,21 +834,10 @@ func buildCustomProjectPromptDocumentPrompt(projectName string, projectProfile *
 }
 
 func cleanCustomProjectPromptDocument(output string) string {
-	trimmed := strings.TrimSpace(output)
-	if trimmed == "" {
-		return ""
-	}
-	trimmed = stripMarkdownFence(trimmed)
-	if idx := strings.Index(trimmed, "0-1代码生成"); idx >= 0 {
-		start := idx
-		prefix := trimmed[:idx]
-		for _, marker := range []string{"**", "### ", "## ", "# "} {
-			if strings.HasSuffix(prefix, marker) {
-				start = len(prefix) - len(marker)
-				break
-			}
-		}
-		trimmed = trimmed[start:]
+	trimmed := stripMarkdownFence(strings.TrimSpace(output))
+	heading := regexp.MustCompile(`(?m)^\s{0,3}(?:#{1,6}\s*)?(?:\*\*)?\s*(?:0-1代码生成|Feature迭代|Bug修复|代码理解|工程化|代码测试|代码重构)\s*(?:\*\*)?\s*$`)
+	if loc := heading.FindStringIndex(trimmed); loc != nil {
+		trimmed = trimmed[loc[0]:]
 	}
 	return strings.TrimSpace(trimmed)
 }

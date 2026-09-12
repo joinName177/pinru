@@ -8,6 +8,7 @@ import type {
 } from '../../../api/git';
 import type {
   CustomProjectPromptDocumentDetail,
+  CustomPromptCounts,
   GenerateCustomProjectPromptDocumentsResult,
 } from '../../../api/llm';
 import type { CreateTasksFromCustomPromptDocumentsResult } from '../../../api/task';
@@ -416,11 +417,21 @@ export function CustomProjectPickerModal({
   error: string;
   promptDocError: string;
   onClose: () => void;
-  onImport: (projectNames: string[]) => void;
+  onImport: (projectNames: string[], counts: CustomPromptCounts) => void;
 }) {
   const candidates = scanResult?.candidates ?? [];
   const prefixLabel = formatCustomProjectPrefixes(scanResult?.prefixes);
   const [selectedNames, setSelectedNames] = useState<string[]>([]);
+  const [quantities, setQuantities] = useState({ codeGen: '8', feature: '8', bugFix: '0' });
+  const counts: CustomPromptCounts = {
+    codeGen: Number(quantities.codeGen),
+    feature: Number(quantities.feature),
+    bugFix: Number(quantities.bugFix),
+  };
+  const totalCount = counts.codeGen + counts.feature + counts.bugFix + 4;
+  const validCounts = [quantities.codeGen, quantities.feature, quantities.bugFix].every((value: string) => /^\d+$/.test(value))
+    && Object.values(counts).every((n) => Number.isSafeInteger(n) && n >= 0)
+    && Number.isSafeInteger(totalCount);
   const selectedNameSet = useMemo(() => new Set(selectedNames), [selectedNames]);
 
   useEffect(() => {
@@ -473,6 +484,31 @@ export function CustomProjectPickerModal({
               {error || promptDocError}
             </div>
           )}
+          <fieldset className="mb-4 rounded-xl border border-stone-200 p-3 dark:border-stone-700" disabled={importing || promptDocGenerating}>
+            <legend className="px-1 text-sm font-semibold dark:text-stone-100">每个项目生成数量</legend>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {([['codeGen', '0-1代码生成'], ['feature', 'Feature迭代'], ['bugFix', 'Bug修复']] as const).map(([key, label]) => (
+                <label key={key} className="text-xs text-stone-600 dark:text-stone-300">
+                  {label}
+                  <input
+                    type="number" min="0" step="1" value={quantities[key]}
+                    onChange={(event) => setQuantities((current) => ({ ...current, [key]: event.target.value }))}
+                    className="mt-1 w-full rounded-lg border border-stone-300 bg-transparent p-2 dark:border-stone-700"
+                  />
+                </label>
+              ))}
+              {['代码理解', '工程化', '代码测试', '代码重构'].map((label) => (
+                <label key={label} className="text-xs text-stone-500">
+                  {label}
+                  <input type="number" value={1} disabled className="mt-1 w-full rounded-lg border border-stone-200 bg-stone-100 p-2 dark:border-stone-700 dark:bg-stone-800" />
+                </label>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-stone-500">
+              前三类可输入非负整数，填 0 表示不生成；其他四类固定各 1 题。
+              {validCounts ? `每个项目共 ${totalCount} 题。` : '请输入有效的非负整数。'}
+            </p>
+          </fieldset>
           {candidates.length === 0 ? (
             <div className="rounded-xl border border-dashed border-stone-200 px-4 py-8 text-center text-sm text-stone-500 dark:border-stone-800 dark:text-stone-400">
               没有可导入的新项目。
@@ -525,8 +561,8 @@ export function CustomProjectPickerModal({
             </button>
             <button
               type="button"
-              onClick={() => onImport(selectedNames)}
-              disabled={importing || promptDocGenerating || selectedNames.length === 0}
+              onClick={() => onImport(selectedNames, counts)}
+              disabled={importing || promptDocGenerating || selectedNames.length === 0 || !validCounts}
               className="inline-flex items-center gap-1.5 rounded-lg border border-stone-900 bg-stone-900 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-50 dark:border-stone-100 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-200 cursor-default"
             >
               {(importing || promptDocGenerating) && <Loader2 className="h-3.5 w-3.5 animate-spin" />}

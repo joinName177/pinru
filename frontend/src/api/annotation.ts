@@ -133,6 +133,7 @@ export interface SaveCaseSettingsRequest {
 }
 
 export interface ExportAnnotationRequest {
+  taskIds?: string[];
   taskId?: string;
   reviewedOnly?: boolean;
   projectId: string;
