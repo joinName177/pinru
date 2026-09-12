@@ -739,10 +739,14 @@ def export_batch(batch, input_dir, input_hash, output, draft):
             destination.write_text(item["prompt"], encoding="utf-8")
 
     workbook_path = output / "submission.xlsx"
-    values = [
-        _row_values(batch, item["case"], item["round"], item["evaluation"] or {}, item["traceRelative"], draft, item["overlongPrompt"])
-        for item in prepared_rows
-    ]
+    values = []
+    previous_task = None
+    for item in prepared_rows:
+        task_identity = (item["case"].get("projectId"), item["case"].get("taskId"))
+        if batch.get("separateTasks") and previous_task is not None and previous_task != task_identity:
+            values.append([None] * 28)
+        values.append(_row_values(batch, item["case"], item["round"], item["evaluation"] or {}, str((output / item["traceRelative"]).resolve()) if item["traceRelative"] else "", draft, item["overlongPrompt"]))
+        previous_task = task_identity
     _build_workbook(values, workbook_path)
     checker = inspect_submission(workbook_path, manifest, allow_draft=draft)
     checker_issues = [
@@ -754,11 +758,11 @@ def export_batch(batch, input_dir, input_hash, output, draft):
         workbook_path.unlink(missing_ok=True)
         report_path.write_text(_report_markdown(batch, draft, 0, all_issues, checker), encoding="utf-8")
         return {"outputPath": "", "reportPath": str(report_path), "rows": 0, "issues": all_issues}, 2
-    report_path.write_text(_report_markdown(batch, draft, len(values), all_issues, checker), encoding="utf-8")
+    report_path.write_text(_report_markdown(batch, draft, len(prepared_rows), all_issues, checker), encoding="utf-8")
     return {
         "outputPath": str(workbook_path),
         "reportPath": str(report_path),
-        "rows": len(values),
+        "rows": len(prepared_rows),
         "issues": all_issues,
     }, 0
 

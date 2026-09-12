@@ -13,6 +13,8 @@ import { getTaskTypePresentation } from '../../../api/config';
 import type { PromptGenerationStatus, ReviewStatus } from '../../../api/task';
 import { extractTaskClaimSequence, formatTaskDisplayId, formatTaskSubtitle } from '../../../shared/lib/taskId';
 import type { TaskTypeOverviewSummary } from '../../../shared/lib/taskTypeOverview';
+import { TableStatusBadge } from '../../annotation/TableStatusBadge';
+import type { TableProgress } from '../../annotation/tableProgress';
 
 export type CardSize = 'sm' | 'four' | 'md' | 'lg';
 
@@ -191,6 +193,7 @@ function TaskAiReviewBadge({
 
 export function TaskCard({
   task,
+  tableProgress,
   size,
   onClick,
   onContextMenu,
@@ -200,6 +203,7 @@ export function TaskCard({
   onToggleSelect,
 }: {
   task: Task;
+  tableProgress?: TableProgress;
   size: CardSize;
   onClick: () => void;
   onContextMenu: (event: MouseEvent) => void;
@@ -284,6 +288,7 @@ export function TaskCard({
           </span>
           <TaskRoundBadge rounds={task.executionRounds} compact />
           <TaskAiReviewBadge rounds={task.aiReviewRounds} status={task.aiReviewStatus} compact />
+          <TableStatusBadge progress={tableProgress} />
         </div>
         {task.totalModels > 0 && (
           <div className="mt-2.5 flex items-center gap-1.5">
@@ -347,6 +352,7 @@ export function TaskCard({
             </span>
             <TaskRoundBadge rounds={task.executionRounds} />
             <TaskAiReviewBadge rounds={task.aiReviewRounds} status={task.aiReviewStatus} />
+            <TableStatusBadge progress={tableProgress} />
           </div>
           <div className="ml-auto flex items-center gap-2">
             <TaskSequenceBadge sequence={taskSequence} />
@@ -464,6 +470,7 @@ export function TaskCard({
         </span>
         <TaskRoundBadge rounds={task.executionRounds} />
         <TaskAiReviewBadge rounds={task.aiReviewRounds} status={task.aiReviewStatus} />
+        <TableStatusBadge progress={tableProgress} />
       </div>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5 text-xs text-stone-500 dark:text-stone-400">

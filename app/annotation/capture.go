@@ -133,6 +133,11 @@ func (s *AnnotationService) capture(ctx context.Context, req CaptureRequest) (*d
 		return nil, err
 	}
 	defer unlock()
+	return s.captureLocked(ctx, req)
+}
+
+// captureLocked requires the caller to hold the task lock.
+func (s *AnnotationService) captureLocked(ctx context.Context, req CaptureRequest) (*domain.Case, error) {
 	c, err := s.loadCase(req.TaskID)
 	if err != nil {
 		return nil, err

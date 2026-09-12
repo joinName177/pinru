@@ -7,14 +7,22 @@ import (
 	"time"
 
 	"github.com/blueship581/pinru/app/testutil"
+	domain "github.com/blueship581/pinru/internal/annotation"
 )
 
 func TestAnnotationJobUsesRegisteredHandlerAndPersistsOutput(t *testing.T) {
+	for _, kind := range []string{"annotation_export", "annotation_capture_table"} {
+		t.Run(kind, func(t *testing.T) { testAnnotationJobHandler(t, kind) })
+	}
+}
+
+func testAnnotationJobHandler(t *testing.T, kind string) {
 	st := testutil.OpenTestStore(t)
 	svc := New(st, nil, nil, nil, nil, nil, func(ctx context.Context, kind, payload string) (any, error) {
+		domain.ReportProgress(ctx, 15, "正在使用 skill 准备制表数据")
 		return map[string]string{"result": "frozen", "kind": kind}, nil
 	})
-	j, err := svc.SubmitJob(SubmitJobRequest{JobType: "annotation_export", InputPayload: `{"projectId":"p"}`, MaxRetries: 1, TimeoutSeconds: 10})
+	j, err := svc.SubmitJob(SubmitJobRequest{JobType: kind, InputPayload: `{"projectId":"p"}`, MaxRetries: 1, TimeoutSeconds: 10})
 	if err != nil {
 		t.Fatal(err)
 	}

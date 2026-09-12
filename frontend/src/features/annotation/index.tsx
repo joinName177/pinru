@@ -16,12 +16,14 @@ import {
   bindContainer,
   cancelAnnotationJob,
   captureCase,
+  captureAndPrepareTable,
   exportCases,
   listCases,
   listContainers,
   listTraces,
   preflight,
   prepareCase,
+  publishSnapshot,
   reviewRound,
   saveCaseSettings,
   type AnnotationCase,
@@ -35,6 +37,10 @@ import {
 import type { BackgroundJob } from '../../api/job';
 import { useAppStore } from '../../store';
 import { waitForAnnotationJob } from './job';
+import { buildContainerCommand } from './containerCommand';
+import { getConfig } from '../../api/config';
+import { getTableProgress } from './tableProgress';
+import { TableStatusBadge } from './TableStatusBadge';
 
 const INPUT_CLASS = 'w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-800 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:border-stone-700 dark:bg-[#171B22] dark:text-stone-100 dark:focus:border-slate-500 dark:focus:ring-slate-800';
 const PRIMARY_BUTTON = 'inline-flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white';
@@ -53,6 +59,8 @@ type BusyAction = {
 type AnnotationWorkspaceProps = {
   projectId: string;
   projectName?: string;
+  taskId?: string;
+  view?: 'capture' | 'review';
 };
 
 function folderName(path: string) {
@@ -85,6 +93,10 @@ function parseJobOutput<T>(job: BackgroundJob, fallback: string): T {
 
 function evaluationsFor(round: AnnotationRound) {
   return round.evaluations ?? [];
+}
+
+function isPerfectEvaluation(evaluation: AnnotationEvaluation) {
+  return evaluation.scores.length === 5 && evaluation.scores.every((score) => score === 5);
 }
 
 function ScoreGrid({ evaluation }: { evaluation: AnnotationEvaluation }) {
@@ -121,7 +133,7 @@ function EvaluationCard({ evaluation, index }: { evaluation: AnnotationEvaluatio
           </p>
         </div>
         <span className="rounded-full bg-stone-100 px-2.5 py-1 text-[11px] font-semibold text-stone-600 dark:bg-stone-800 dark:text-stone-300">
-          {evaluation.status || '未知状态'}
+          {isPerfectEvaluation(evaluation) ? '审核通过 · 五维满分' : evaluation.scores.some((score) => score === null) ? '审核待补证据' : '未通过 · 有待改进项'}
         </span>
       </div>
       <ScoreGrid evaluation={evaluation} />
@@ -161,7 +173,7 @@ function EvaluationCard({ evaluation, index }: { evaluation: AnnotationEvaluatio
   );
 }
 
-export function AnnotationWorkspace({ projectId, projectName }: AnnotationWorkspaceProps) {
+export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'capture' }: AnnotationWorkspaceProps) {
   const [cases, setCases] = useState<AnnotationCase[]>([]);
   const [containers, setContainers] = useState<AnnotationContainer[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState('');
@@ -188,10 +200,15 @@ export function AnnotationWorkspace({ projectId, projectName }: AnnotationWorksp
   const activeProjectId = useRef(projectId);
 
   const selectedCase = useMemo(
-    () => cases.find((item) => item.taskId === selectedTaskId) ?? null,
-    [cases, selectedTaskId],
+    () => cases.find((item) => item.taskId === (taskId ?? selectedTaskId)) ?? null,
+    [cases, selectedTaskId, taskId],
   );
   const selectedBusy = selectedCase ? caseBusy[selectedCase.taskId] ?? null : null;
+  const startup = useMemo(() => {
+    if (!selectedCase) return null;
+    try { return { value: buildContainerCommand(selectedCase), error: '' }; }
+    catch (error) { return { value: null, error: errorMessage(error) }; }
+  }, [selectedCase?.taskId, selectedCase?.taskName, selectedCase?.sourcePath]);
   const visibleBusy = exportBusy ?? selectedBusy ?? Object.values(caseBusy)[0] ?? null;
 
   const loadProject = useCallback(async (targetProjectId: string) => {
@@ -252,6 +269,7 @@ export function AnnotationWorkspace({ projectId, projectName }: AnnotationWorksp
   }, [selectedCase?.taskId]);
 
   useEffect(() => {
+    if (loading) return;
     if (!selectedCase?.containerId) {
       setTraceCandidates([]);
       return;
@@ -271,7 +289,7 @@ export function AnnotationWorkspace({ projectId, projectName }: AnnotationWorksp
       })
       .catch((error) => { if (current) setActionError(errorMessage(error)); });
     return () => { current = false; };
-  }, [selectedCase?.containerId, selectedCase?.taskId, selectedCase?.tracePath, selectedCase?.revision]);
+  }, [loading, selectedCase?.containerId, selectedCase?.taskId, selectedCase?.tracePath, selectedCase?.revision]);
 
   const replaceCase = useCallback((updated: AnnotationCase) => {
     if (updated.projectId && updated.projectId !== activeProjectId.current) return;
@@ -311,7 +329,17 @@ export function AnnotationWorkspace({ projectId, projectName }: AnnotationWorksp
       replaceCase(updated);
       setNotice(`${label}已完成`);
     } catch (error) {
-      if (targetProjectId === activeProjectId.current) setActionError(errorMessage(error));
+      if (targetProjectId === activeProjectId.current) {
+        setActionError(errorMessage(error));
+        if (label === '采集并准备制表数据') {
+          // A failed later round may still have saved the capture and earlier scores.
+          try {
+            const savedCases = await listCases(targetProjectId);
+            const savedCase = savedCases.find((item) => item.taskId === taskId);
+            if (targetProjectId === activeProjectId.current && savedCase) replaceCase(savedCase);
+          } catch { /* Keep the original job error visible; manual refresh can retry. */ }
+        }
+      }
     } finally {
       if (targetProjectId === activeProjectId.current) updateCaseBusy(taskId, null);
     }
@@ -351,14 +379,14 @@ export function AnnotationWorkspace({ projectId, projectName }: AnnotationWorksp
     }
   };
 
-  const handleExport = async (draft: boolean) => {
+  const handleExport = async (draft: boolean, exportTaskId?: string, reviewedOnly = false) => {
     setActionError('');
     setExportResult(null);
     const targetProjectId = activeProjectId.current;
-    const label = draft ? '草稿导出' : '正式导出';
+    const label = reviewedOnly ? (exportTaskId ? '单题导出' : '一键导出已制表') : draft ? '草稿导出' : '正式导出';
     setExportBusy({ taskId: '', label, jobId: '', progress: 0, message: '正在提交后台任务' });
     try {
-      const submitted = await exportCases({ projectId, submitter, submittedAt, draft });
+      const submitted = await exportCases({ projectId, submitter, submittedAt, draft, ...(reviewedOnly ? { reviewedOnly, taskId: exportTaskId } : {}) });
       if (targetProjectId !== activeProjectId.current) return;
       setExportBusy({ taskId: '', label, jobId: submitted.id, progress: submitted.progress ?? 0, message: submitted.progressMessage ?? '等待执行' });
       const finished = await waitForAnnotationJob(submitted.id, (job) => {
@@ -366,8 +394,9 @@ export function AnnotationWorkspace({ projectId, projectName }: AnnotationWorksp
         setExportBusy({ taskId: '', label, jobId: submitted.id, progress: job.progress, message: job.progressMessage || '执行中' });
       });
       if (targetProjectId !== activeProjectId.current) return;
-      setExportResult(parseJobOutput<AnnotationExportResult>(finished, '导出完成但没有返回文件信息'));
-      setNotice(draft ? '草稿材料包已导出' : '本批材料已正式导出');
+      const result = parseJobOutput<AnnotationExportResult>(finished, '导出完成但没有返回文件信息');
+      setExportResult(result);
+      setNotice(`${label}完成，共 ${result.rows} 条：${result.outputPath}`);
     } catch (error) {
       if (targetProjectId === activeProjectId.current) setActionError(errorMessage(error));
     } finally {
@@ -396,14 +425,18 @@ export function AnnotationWorkspace({ projectId, projectName }: AnnotationWorksp
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
               <Container className="h-4 w-4" /> Claude Code Docker
             </div>
-            <h1 className="mt-2 text-2xl font-bold text-stone-900 dark:text-stone-50">容器标注</h1>
+            <h1 className="mt-2 text-2xl font-bold text-stone-900 dark:text-stone-50">{taskId ? (view === 'review' ? '五维 AI 复审' : '容器与轨迹') : '容器标注'}</h1>
             <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
-              {projectName ? `${projectName} · ` : ''}逐题绑定容器、采集真实轨迹并保存五维评价，完成后统一导出。
+              {taskId ? '采集并准备制表数据后即可导出，无需继续下一轮；单题和全项目导出均使用设置中的统一目录。' : `${projectName ? `${projectName} · ` : ''}逐题采集并准备制表数据，点击右侧“一键导出已制表”合并已保存的评分。`}
             </p>
           </div>
+          <div className="flex flex-wrap gap-2">
+            <button className={PRIMARY_BUTTON} disabled={loading || Boolean(exportBusy) || Object.keys(caseBusy).length > 0} onClick={() => void handleExport(true, taskId, true)}><Download className="h-4 w-4" />{taskId ? '导出本题 Excel' : '一键导出已制表'}</button>
+            {taskId && <button className={SECONDARY_BUTTON} disabled={loading || Boolean(exportBusy) || Object.keys(caseBusy).length > 0} onClick={() => void handleExport(true, undefined, true)}><Download className="h-4 w-4" />导出全项目已制表</button>}
           <button className={SECONDARY_BUTTON} onClick={() => void loadProject(projectId)} disabled={loading}>
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> 刷新
           </button>
+          </div>
         </div>
 
         {(loadError || actionError) && (
@@ -412,13 +445,13 @@ export function AnnotationWorkspace({ projectId, projectName }: AnnotationWorksp
           </div>
         )}
         {notice && (
-          <div className="mb-4 flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:text-emerald-300">
+          <div className="mb-4 flex items-center gap-2 break-all rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:text-emerald-300">
             <CheckCircle2 className="h-4 w-4" /> {notice}
           </div>
         )}
 
-        <div className="grid gap-5 xl:grid-cols-[300px_minmax(0,1fr)]">
-          <aside className="self-start rounded-3xl border border-stone-200 bg-white p-3 shadow-sm dark:border-stone-800 dark:bg-stone-900">
+        <div className={taskId ? 'space-y-5' : 'grid gap-5 xl:grid-cols-[300px_minmax(0,1fr)]'}>
+          {!taskId && <aside className="self-start rounded-3xl border border-stone-200 bg-white p-3 shadow-sm dark:border-stone-800 dark:bg-stone-900">
             <div className="flex items-center justify-between px-2 pb-3 pt-1">
               <h2 className="text-sm font-bold text-stone-800 dark:text-stone-100">题目进度</h2>
               <span className="text-xs text-stone-400">{cases.filter((item) => item.completed).length}/{cases.length}</span>
@@ -428,13 +461,18 @@ export function AnnotationWorkspace({ projectId, projectName }: AnnotationWorksp
             ) : cases.length === 0 ? (
               <p className="rounded-2xl bg-stone-50 px-3 py-8 text-center text-sm text-stone-400 dark:bg-stone-800/50">当前项目暂无题目</p>
             ) : (
-              <div className="space-y-1.5">
+              <div
+                aria-label="题目进度列表"
+                tabIndex={0}
+                className="max-h-[min(32rem,60dvh)] space-y-1.5 overflow-y-auto overscroll-contain p-1 [scrollbar-gutter:stable] xl:max-h-[calc(100dvh-15rem)]"
+              >
                 {cases.map((item) => {
                   const active = item.taskId === selectedTaskId;
                   const reviewed = item.rounds.filter((round) => evaluationsFor(round).length > 0).length;
+                  const tableProgress = getTableProgress(item);
                   return (
+                    <div key={item.taskId}>
                     <button
-                      key={item.taskId}
                       onClick={() => setSelectedTaskId(item.taskId)}
                       className={`w-full rounded-2xl px-3 py-3 text-left transition ${active ? 'bg-slate-100 ring-1 ring-slate-200 dark:bg-slate-800/70 dark:ring-slate-700' : 'hover:bg-stone-50 dark:hover:bg-stone-800/50'}`}
                     >
@@ -446,14 +484,17 @@ export function AnnotationWorkspace({ projectId, projectName }: AnnotationWorksp
                         <span className="rounded-full bg-white px-2 py-1 dark:bg-stone-900">{item.initialSha ? '已准备' : '待准备'}</span>
                         <span className="rounded-full bg-white px-2 py-1 dark:bg-stone-900">{item.containerId ? '已绑定' : '待绑定'}</span>
                         <span className="rounded-full bg-white px-2 py-1 dark:bg-stone-900">审核 {reviewed}/{item.rounds.length}</span>
+                        <TableStatusBadge progress={tableProgress} />
                       </div>
                       {caseBusy[item.taskId] && <p className="mt-2 truncate text-[11px] text-slate-500">{caseBusy[item.taskId].label} · {caseBusy[item.taskId].progress}%</p>}
                     </button>
+                    <button className="mb-2 mt-1 flex w-full items-center justify-center gap-1 rounded-lg py-1.5 text-xs text-slate-600 hover:bg-stone-100 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-stone-800" disabled={Boolean(exportBusy) || Boolean(caseBusy[item.taskId]) || reviewed === 0} onClick={() => void handleExport(true, item.taskId, true)}><Download className="h-3 w-3" />导出本题 Excel</button>
+                    </div>
                   );
                 })}
               </div>
             )}
-          </aside>
+          </aside>}
 
           <div className="min-w-0 space-y-5">
             {selectedCase ? (
@@ -472,6 +513,31 @@ export function AnnotationWorkspace({ projectId, projectName }: AnnotationWorksp
                       {selectedBusy?.label === '准备题目' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Archive className="h-4 w-4" />}
                       {selectedCase.initialSha ? '已准备初始快照' : '准备题目'}
                     </button>
+                  </div>
+                  <div className="mt-4 rounded-2xl bg-stone-50 p-3 dark:bg-stone-800/50">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-stone-700 dark:text-stone-200">容器启动命令</p>
+                        <p className="mt-1 break-all text-xs text-stone-500">{startup?.value ? `${startup.value.containerName} · ${startup.value.baseDirectory}/${startup.value.runDirectory}` : startup?.error}</p>
+                      </div>
+                      <button className={SECONDARY_BUTTON} disabled={!startup?.value} onClick={() => {
+                        if (!startup?.value) return;
+                        void getConfig('annotation_container_api_key')
+                          .then((apiKey) => navigator.clipboard.writeText(buildContainerCommand(selectedCase, apiKey).command))
+                          .then(() => setNotice('容器启动命令已复制，请在本地终端执行'))
+                          .catch((error) => setActionError(errorMessage(error)));
+                      }}><Clipboard className="h-4 w-4" />复制容器启动命令</button>
+                    </div>
+                    {startup?.value && <>
+                      <p className="mt-2 text-xs text-stone-500">复制时自动带入本机保存的 API Key，预览不显示密钥；未保存时使用终端环境变量或提示输入。目录已存在时会停止。容器启动后再复制并绑定题目。</p>
+                      <details className="mt-2 text-xs text-stone-500"><summary className="cursor-pointer">查看命令</summary><pre className="mt-2 max-h-64 overflow-auto whitespace-pre rounded-xl bg-white p-3 dark:bg-stone-950">{startup.value.command}</pre></details>
+                    </>}
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    {selectedCase.snapshotUrl ? <a className="break-all text-xs text-indigo-500" href={selectedCase.snapshotUrl} target="_blank" rel="noreferrer">GitHub 初始环境快照：{selectedCase.snapshotUrl}</a> : <>
+                      <button className={SECONDARY_BUTTON} disabled={!selectedCase.initialSha || Boolean(selectedBusy)} onClick={() => void runCaseJob(selectedCase.taskId, '发布初始快照', () => publishSnapshot(selectedCase.taskId))}>发布 GitHub 初始快照</button>
+                      <span className="text-xs text-amber-600">尚未发布；可重试，不影响轨迹审核。</span>
+                    </>}
                   </div>
                   <div className="mt-4 grid gap-3 md:grid-cols-3">
                     <div className="rounded-2xl bg-stone-50 p-3 dark:bg-stone-800/50">
@@ -522,7 +588,7 @@ export function AnnotationWorkspace({ projectId, projectName }: AnnotationWorksp
                 </section>
 
                 <section className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm dark:border-stone-800 dark:bg-stone-900">
-                  <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-end">
+                  <div className="grid gap-3 lg:grid-cols-2 lg:items-end">
                     <label className="min-w-[280px] flex-1">
                       <span className="mb-1.5 block text-xs font-semibold text-stone-500">候选轨迹</span>
                       <select className={INPUT_CLASS} value={selectedTracePath} onChange={(event) => setSelectedTracePath(event.target.value)} disabled={!selectedCase.containerId}>
@@ -534,15 +600,25 @@ export function AnnotationWorkspace({ projectId, projectName }: AnnotationWorksp
                       <span className="mb-1.5 block text-xs font-semibold text-stone-500">本机 JSONL 绝对路径</span>
                       <input className={INPUT_CLASS} value={selectedTracePath} onChange={(event) => setSelectedTracePath(event.target.value)} placeholder="/absolute/path/to/session.jsonl" />
                     </label>
+                    <div className="flex flex-wrap gap-2 lg:col-span-2">
                     <button
-                      className={PRIMARY_BUTTON}
+                      className={SECONDARY_BUTTON}
                       disabled={Boolean(selectedBusy) || !selectedTracePath.trim()}
                       onClick={() => void runCaseJob(selectedCase.taskId, '采集轨迹', () => captureCase({ taskId: selectedCase.taskId, tracePath: selectedTracePath.trim() }))}
                     ><FileSearch className="h-4 w-4" />采集轨迹</button>
+                    <button
+                      className={PRIMARY_BUTTON}
+                      disabled={Boolean(selectedBusy) || !selectedTracePath.trim()}
+                      onClick={() => void runCaseJob(selectedCase.taskId, '采集并准备制表数据', () => captureAndPrepareTable({ taskId: selectedCase.taskId, tracePath: selectedTracePath.trim() }))}
+                    ><FileSearch className="h-4 w-4" />采集并准备制表数据</button>
+                    </div>
                   </div>
+                  <p className="mt-3 text-xs leading-5 text-stone-500">采集轨迹仅保存材料；采集并准备制表数据会调用 coding-agent-satisfaction 分析已完成的有效轮次，保存五维评分和依据，此时不生成 Excel。点击单题或统一导出时，才将已保存的数据生成 Excel，无需重新评分。低分也可以结束并导出，修复提示词仅供选择，不会自动执行下一轮。</p>
                   {traceCandidates.length === 0 && selectedCase.containerId && <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">当前绑定未发现可选轨迹，请确认容器会话已产生记录。</p>}
+                  {taskId && <p className="mt-3 text-xs text-stone-500">已采集 {selectedCase.rounds.length} 轮、{selectedCase.captures.length} 份代码与轨迹快照。评分详情在“AI复审”查看；导出按钮位于本页顶部。</p>}
                 </section>
 
+                {(!taskId || view === 'review') && <>
                 <section className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm dark:border-stone-800 dark:bg-stone-900">
                   <div className="flex items-center justify-between gap-3">
                     <div>
@@ -574,11 +650,11 @@ export function AnnotationWorkspace({ projectId, projectName }: AnnotationWorksp
                         {evaluationsFor(round).length > 0 && (
                           <div className="mt-4 space-y-3">
                             {evaluationsFor(round).map((evaluation, index) => <EvaluationCard key={evaluation.id || `${round.promptId}-${index}`} evaluation={evaluation} index={index} />)}
-                            {evaluationsFor(round).at(-1)?.nextPrompt && (
+                            {evaluationsFor(round).at(-1)?.nextPrompt && !isPerfectEvaluation(evaluationsFor(round).at(-1)!) && (
                               <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4 dark:border-indigo-900/50 dark:bg-indigo-950/20">
                                 <div className="flex items-center justify-between gap-2">
                                   <div>
-                                    <p className="text-xs font-bold text-indigo-700 dark:text-indigo-300">下一轮建议（仅复制）</p>
+                                    <p className="text-xs font-bold text-indigo-700 dark:text-indigo-300">下一轮修复提示词（仅复制）</p>
                                     <p className="mt-0.5 text-[10px] text-indigo-500">不会自动发送，也不会在轨迹出现前计为新轮次</p>
                                   </div>
                                   <button
@@ -615,16 +691,17 @@ export function AnnotationWorkspace({ projectId, projectName }: AnnotationWorksp
                     {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}保存题目设置
                   </button>
                 </section>
+                </>}
               </>
             ) : !loading && (
-              <div className="rounded-3xl border border-dashed border-stone-300 bg-white py-20 text-center text-sm text-stone-400 dark:border-stone-700 dark:bg-stone-900">选择一项题目开始标注</div>
+              <div className="rounded-3xl border border-dashed border-stone-300 bg-white py-20 text-center text-sm text-stone-400 dark:border-stone-700 dark:bg-stone-900">{taskId ? '当前题目暂无标注记录，请先确认题目已导入当前项目' : '选择一项题目开始标注'}</div>
             )}
 
-            <section className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm dark:border-stone-800 dark:bg-stone-900">
+            {!taskId && <section className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm dark:border-stone-800 dark:bg-stone-900">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h3 className="text-base font-bold text-stone-900 dark:text-stone-50">批次预检与统一导出</h3>
-                  <p className="mt-1 text-xs text-stone-400">正式导出前必须重新预检。材料缺失时可导出完整草稿，问题不会被静默忽略。</p>
+                  <p className="mt-1 text-xs text-stone-400">导出只汇总已保存的五维评价，不会自动审核。请先完成各轮审核；草稿允许评分留空。</p>
                 </div>
                 <button className={SECONDARY_BUTTON} onClick={() => void handlePreflight()} disabled={preflightLoading || Boolean(exportBusy) || Object.keys(caseBusy).length > 0 || saving}>
                   {preflightLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}批次预检
@@ -654,7 +731,7 @@ export function AnnotationWorkspace({ projectId, projectName }: AnnotationWorksp
                 {formalExportReady ? (
                   <button className={PRIMARY_BUTTON} disabled={Boolean(exportBusy)} onClick={() => void handleExport(false)}><Download className="h-4 w-4" />正式导出</button>
                 ) : (
-                  <button className={SECONDARY_BUTTON} disabled={Boolean(exportBusy) || Object.keys(caseBusy).length > 0 || saving || cases.length === 0} onClick={() => void handleExport(true)}><Download className="h-4 w-4" />草稿导出</button>
+                  <button className={SECONDARY_BUTTON} disabled={Boolean(exportBusy) || Object.keys(caseBusy).length > 0 || saving || cases.length === 0} onClick={() => void handleExport(true)}><Download className="h-4 w-4" />导出待补草稿</button>
                 )}
                 {!report && <span className="self-center text-xs text-amber-600 dark:text-amber-400">正式导出前请先执行批次预检</span>}
               </div>
@@ -666,7 +743,7 @@ export function AnnotationWorkspace({ projectId, projectName }: AnnotationWorksp
                   {exportResult.issues.length > 0 && <ul className="mt-2 space-y-1">{exportResult.issues.map((issue) => <li key={issue}>• {issue}</li>)}</ul>}
                 </div>
               )}
-            </section>
+            </section>}
           </div>
         </div>
       </div>

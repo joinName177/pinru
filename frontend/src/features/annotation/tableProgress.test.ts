@@ -1,0 +1,25 @@
+import { describe, expect, it } from 'vitest';
+import type { AnnotationRound } from '../../api/annotation';
+import { getTableProgress } from './tableProgress';
+
+function round(overrides: Partial<AnnotationRound> = {}): AnnotationRound {
+  return { promptId: 'p', sessionId: 's', prompt: '需求', order: 1, status: 'complete', reason: '', evidenceHash: 'current', sourceStart: 1, sourceEnd: 2, version: '1', cwd: '/workspace', captureId: 'c', evaluations: null, ...overrides };
+}
+
+describe('table progress', () => {
+  it('counts saved low-score and missing-evidence evaluations as table data', () => {
+    const evaluations = [{ status: 'ready', evidenceHash: 'current', scores: [1, 2, 3, 4, 5] }, { status: 'needs_evidence', evidenceHash: 'current', scores: [null, 2, 3, 4, 5] }] as AnnotationRound['evaluations'];
+    expect(getTableProgress({ rounds: [round({ evaluations: evaluations!.slice(0, 1) }), round({ evaluations: evaluations!.slice(1) })] })).toEqual({ prepared: 2, total: 2 });
+  });
+
+  it('does not count uncaptured, stale, pending or excluded rounds as prepared', () => {
+    const evaluations = [{ status: 'ready', evidenceHash: 'old' }] as AnnotationRound['evaluations'];
+    expect(getTableProgress({ rounds: [round(), round({ evaluations }), round({ status: 'pending' }), round({ status: 'excluded' })] })).toEqual({ prepared: 0, total: 3 });
+    expect(getTableProgress({ rounds: [] })).toEqual({ prepared: 0, total: 0 });
+  });
+
+  it('counts a newly captured unreviewed round in the total to remove the completed mark', () => {
+    const evaluations = [{ status: 'ready', evidenceHash: 'current' }] as AnnotationRound['evaluations'];
+    expect(getTableProgress({ rounds: [round({ evaluations }), round()] })).toEqual({ prepared: 1, total: 2 });
+  });
+});

@@ -24,10 +24,11 @@ type AnnotationService struct {
 	locks          sync.Map
 	command        func(context.Context, string, string, ...string) ([]byte, error)
 	verifySnapshot func(context.Context, string) error
+	publishInitial func(context.Context, string, string, string, store.GitHubAccount) (string, error)
 }
 
 func New(st *store.Store, cli *appcli.CliService) *AnnotationService {
-	return &AnnotationService{store: st, cli: cli, root: filepath.Join(filepath.Dir(st.DBPath()), "annotation"), command: runCommand, verifySnapshot: verifyRemoteSnapshot}
+	return &AnnotationService{store: st, cli: cli, root: filepath.Join(filepath.Dir(st.DBPath()), "annotation"), command: runCommand, verifySnapshot: verifyRemoteSnapshot, publishInitial: publishInitial}
 }
 
 type PrepareRequest struct {
@@ -54,10 +55,12 @@ type SettingsRequest struct {
 	Completed   bool   `json:"completed"`
 }
 type ExportRequest struct {
-	ProjectID   string `json:"projectId"`
-	Submitter   string `json:"submitter"`
-	SubmittedAt string `json:"submittedAt"`
-	Draft       bool   `json:"draft"`
+	TaskID       string `json:"taskId,omitempty"`
+	ReviewedOnly bool   `json:"reviewedOnly,omitempty"`
+	ProjectID    string `json:"projectId"`
+	Submitter    string `json:"submitter"`
+	SubmittedAt  string `json:"submittedAt"`
+	Draft        bool   `json:"draft"`
 }
 type ExportResult struct {
 	OutputPath string   `json:"outputPath"`
@@ -232,6 +235,12 @@ func (s *AnnotationService) SaveCaseSettings(req SettingsRequest) (*domain.Case,
 // ExecuteJob connects long operations to the application's existing job queue.
 func (s *AnnotationService) ExecuteJob(ctx context.Context, kind, payload string) (any, error) {
 	switch kind {
+	case "annotation_publish":
+		var r PrepareRequest
+		if err := json.Unmarshal([]byte(payload), &r); err != nil {
+			return nil, err
+		}
+		return s.PublishSnapshot(ctx, r)
 	case "annotation_prepare":
 		var r PrepareRequest
 		if err := json.Unmarshal([]byte(payload), &r); err != nil {
@@ -244,10 +253,13 @@ func (s *AnnotationService) ExecuteJob(ctx context.Context, kind, payload string
 			return nil, err
 		}
 		return s.bindContainer(ctx, r)
-	case "annotation_capture":
+	case "annotation_capture", "annotation_capture_table":
 		var r CaptureRequest
 		if err := json.Unmarshal([]byte(payload), &r); err != nil {
 			return nil, err
+		}
+		if kind == "annotation_capture_table" {
+			return s.captureAndPrepareTable(ctx, r)
 		}
 		return s.capture(ctx, r)
 	case "annotation_review":

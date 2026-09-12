@@ -164,7 +164,8 @@ class ExportSatisfactionTests(unittest.TestCase):
         self.assertEqual([sheet.cell(2, col).value for col in (13, 15, 17, 19, 21)], [2, 3, 4, 5, 1])
         copied_capture = self.attachment_root(output, "task-a", "capture-a")
         self.assertTrue((copied_capture / "trace" / "subagents" / "child.jsonl").is_file())
-        self.assertEqual(sheet["E2"].value, (copied_capture / "trace" / "session.jsonl").relative_to(output).as_posix())
+        self.assertEqual(sheet["E2"].value, str((copied_capture / "trace" / "session.jsonl").resolve()))
+        self.assertTrue(Path(sheet["E2"].value).is_file())
         manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual([r["prompt"] for r in manifest["rounds"]], ["first failed attempt", "later success"])
         self.assertEqual(manifest["rounds"][0]["evaluationId"], latest_match["id"])
@@ -311,13 +312,12 @@ class ExportSatisfactionTests(unittest.TestCase):
         self.assertEqual(report["validation_ranges"]["M"], "M2:M100")
         self.assertIn("score/reason consistency and natural prose", report["not_checked"])
 
-    def test_same_frozen_input_produces_identical_workbook_bytes(self):
+    def test_same_frozen_input_preserves_values_except_absolute_export_location(self):
         capture = self.capture("capture-a")
         case = self.case("task-a", [self.round("prompt-a", "capture-a", 1)], [capture])
         payload = self.payload([case])
 
         first_proc, first, _ = self.run_export(payload)
-        first_bytes = Path(first["outputPath"]).read_bytes()
         input_path = self.root / "input.json"
         second_output = self.root / "formal-second"
         second_proc = subprocess.run([
@@ -330,7 +330,45 @@ class ExportSatisfactionTests(unittest.TestCase):
 
         self.assertEqual(first_proc.returncode, 0, first_proc.stderr)
         self.assertEqual(second_proc.returncode, 0, second_proc.stderr)
-        self.assertEqual(hashlib.sha256(first_bytes).hexdigest(), hashlib.sha256(Path(second["outputPath"]).read_bytes()).hexdigest())
+        first_rows = list(openpyxl.load_workbook(first["outputPath"]).active.values)
+        second_rows = list(openpyxl.load_workbook(second["outputPath"]).active.values)
+        self.assertEqual(len(first_rows), len(second_rows))
+        for index, (left, right) in enumerate(zip(first_rows, second_rows)):
+            if index == 0:
+                self.assertEqual(left, right)
+                continue
+            self.assertEqual(left[:4] + left[5:], right[:4] + right[5:])
+            self.assertTrue(Path(left[4]).is_absolute())
+            self.assertTrue(Path(right[4]).is_absolute())
+            self.assertEqual(Path(left[4]).read_bytes(), Path(right[4]).read_bytes())
+
+    def test_checker_rejects_relative_trace_even_when_file_exists(self):
+        capture = self.capture("capture-a")
+        proc, result, output = self.run_export(self.payload([
+            self.case("task-a", [self.round("prompt-a", "capture-a", 1)], [capture]),
+        ]))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        workbook = openpyxl.load_workbook(result["outputPath"])
+        workbook.active["E2"] = os.path.relpath(workbook.active["E2"].value, output)
+        workbook.save(result["outputPath"])
+        checked = subprocess.run([sys.executable, str(CHECKER), result["outputPath"]], text=True, capture_output=True)
+        self.assertNotEqual(checked.returncode, 0)
+        self.assertIn("local absolute JSONL file path", checked.stdout)
+
+    def test_combined_export_separates_tasks_without_counting_blank_rows(self):
+        a, b = self.capture("a"), self.capture("b")
+        payload = self.payload([
+            self.case("task-a", [self.round("p1", "a", 1), self.round("p2", "a", 2)], [a]),
+            self.case("task-b", [self.round("p3", "b", 1)], [b]),
+        ])
+        payload["separateTasks"] = True
+        proc, result, _ = self.run_export(payload)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        sheet = openpyxl.load_workbook(result["outputPath"]).active
+        self.assertEqual(result["rows"], 3)
+        self.assertEqual(sheet.max_row, 5)
+        self.assertEqual([sheet.cell(row, 3).value for row in (2, 3, 5)], ["p1", "p2", "p3"])
+        self.assertTrue(all(sheet.cell(4, col).value is None for col in range(1, 29)))
 
     def test_capture_symlink_is_rejected_without_copying_outside_content(self):
         capture = self.capture("capture-a")

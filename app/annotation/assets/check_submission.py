@@ -184,15 +184,12 @@ def inspect(path, manifest=None, selected=None, allow_draft=False):
                         flag(errors, location, "Duplicate SessionID + PromptID; first at " + seen[key])
                     seen[key] = location
                 attachment = values.get("E") or ""
-                if attachment and not re.match(r"https?://", attachment):
+                if attachment:
                     attachment_path = Path(attachment)
-                    resolved = attachment_path if attachment_path.is_absolute() else path.parent / attachment_path
-                    if not resolved.is_file():
-                        flag(errors, location + ":E", "Trace attachment missing relative to workbook")
-                    elif attachment_path.is_absolute():
-                        flag(review, location + ":E", "Local absolute path is not a delivered portable attachment")
-                elif attachment:
-                    flag(review, location + ":E", "Remote trace accessibility not checked")
+                    if not attachment_path.is_absolute():
+                        flag(errors, location + ":E", "Trace must be a local absolute JSONL file path")
+                    elif attachment_path.suffix.lower() != ".jsonl" or not attachment_path.is_file():
+                        flag(errors, location + ":E", "Local JSONL trace file does not exist")
                 if not values.get("Y"):
                     flag(review, location + ":Y", "Fill actual submission time when submission occurs")
                 if values.get("G") == "Codex CLI":

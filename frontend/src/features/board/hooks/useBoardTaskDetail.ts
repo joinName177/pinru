@@ -1099,6 +1099,11 @@ export function useBoardTaskDetail({
       return;
     }
 
+    if (currentSession?.evidence?.matchKind === 'claude_code') {
+      handleAddSession();
+      return;
+    }
+
     const existingRecord = selectedCodePushRecords.find(
       (record) => record.modelRunId === run.id && record.sessionId === sessionId,
     );

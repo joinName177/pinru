@@ -43,6 +43,8 @@ import {
   type TaskCardContextMenuState,
 } from './components/BoardLayerStack';
 import { useBoardTaskDetail } from './hooks/useBoardTaskDetail';
+import { listCases } from '../../api/annotation';
+import { getTableProgress, type TableProgress } from '../annotation/tableProgress';
 
 const COLUMNS: TaskStatus[] = [
   'Claimed',
@@ -151,6 +153,19 @@ export default function Board() {
   const loadTasks              = useAppStore(s => s.loadTasks);
   const removeTaskFromStore    = useAppStore(s => s.removeTask);
   const activeProject          = useAppStore(s => s.activeProject);
+  const [annotationRefresh, setAnnotationRefresh] = useState(0);
+  const [tableSummary, setTableSummary] = useState<{ projectId: string; byTask: Record<string, TableProgress> }>({ projectId: '', byTask: {} });
+  useEffect(() => {
+    const projectId = activeProject?.id;
+    if (!projectId) return;
+    let current = true;
+    void listCases(projectId).then((cases) => {
+      if (current) setTableSummary({ projectId, byTask: Object.fromEntries(cases.map((item) => [item.taskId, getTableProgress(item)])) });
+    }).catch(() => {
+      if (current) setTableSummary({ projectId, byTask: {} });
+    });
+    return () => { current = false; };
+  }, [activeProject?.id, tasks, annotationRefresh]);
   const setActiveProject       = useAppStore(s => s.setActiveProject);
   const loadActiveProject      = useAppStore(s => s.loadActiveProject);
   const updateTaskStatusInStore = useAppStore(s => s.updateTaskStatus);
@@ -357,6 +372,10 @@ export default function Board() {
   useEffect(() => {
     const cancel = Events.On('job:progress', (event: { data: JobProgressEvent }) => {
       const data = event.data;
+      if (data.jobType.startsWith('annotation_') && ['done', 'error', 'cancelled'].includes(data.status)) {
+        setAnnotationRefresh((value) => value + 1);
+        return;
+      }
       if (data.jobType === 'session_sync') {
         detail.handleSessionSyncEvent(data);
         if (data.status === 'done' || data.status === 'error' || data.status === 'cancelled') {
@@ -901,6 +920,7 @@ export default function Board() {
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <BoardMainContent
+        tableProgressByTask={tableSummary.projectId === activeProject?.id ? tableSummary.byTask : undefined}
         search={search}
         sortBy={sortBy}
         totalTaskCount={tasks.length}

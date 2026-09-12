@@ -4,9 +4,11 @@ import type { AnnotationCase } from '../../api/annotation';
 import { AnnotationWorkspace } from './index';
 
 const api = vi.hoisted(() => ({
+  getConfig: vi.fn(),
   bindContainer: vi.fn(),
   cancelAnnotationJob: vi.fn(),
   captureCase: vi.fn(),
+  captureAndPrepareTable: vi.fn(),
   exportCases: vi.fn(),
   getAnnotationJob: vi.fn(),
   listCases: vi.fn(),
@@ -16,6 +18,11 @@ const api = vi.hoisted(() => ({
   prepareCase: vi.fn(),
   reviewRound: vi.fn(),
   saveCaseSettings: vi.fn(),
+}));
+
+vi.mock('../../api/config', async () => ({
+  ...await vi.importActual<typeof import('../../api/config')>('../../api/config'),
+  getConfig: api.getConfig,
 }));
 
 vi.mock('../../api/annotation', async () => {
@@ -87,9 +94,117 @@ function makeCase(overrides: Partial<AnnotationCase> = {}): AnnotationCase {
 describe('AnnotationWorkspace', () => {
   beforeEach(() => {
     Object.values(api).forEach((mock) => mock.mockReset());
+    api.getConfig.mockResolvedValue('');
     api.listCases.mockResolvedValue([makeCase()]);
     api.listContainers.mockResolvedValue([]);
     api.listTraces.mockResolvedValue([]);
+  });
+
+  it('prepares table data directly from the capture panel without another round', async () => {
+    api.captureAndPrepareTable.mockResolvedValue({ id: 'table-job', status: 'pending' });
+    api.getAnnotationJob.mockResolvedValue({ id: 'table-job', status: 'done', outputPayload: JSON.stringify(makeCase()) });
+    render(<AnnotationWorkspace projectId="project-1" taskId="task-1" />);
+    const button = await screen.findByRole('button', { name: '采集并准备制表数据' });
+    fireEvent.change(screen.getByLabelText('本机 JSONL 绝对路径'), { target: { value: '/tmp/current.jsonl' } });
+    fireEvent.click(button);
+    await waitFor(() => expect(api.captureAndPrepareTable).toHaveBeenCalledWith({ taskId: 'task-1', tracePath: '/tmp/current.jsonl' }));
+    expect(await screen.findByText('采集并准备制表数据已完成')).toBeInTheDocument();
+    expect(api.reviewRound).not.toHaveBeenCalled();
+    expect(api.saveCaseSettings).not.toHaveBeenCalled();
+  });
+
+  it('offers project-wide export inside task details without limiting it to this task', async () => {
+    api.exportCases.mockResolvedValue({ id: 'export-job', status: 'pending' });
+    api.getAnnotationJob.mockResolvedValue({ id: 'export-job', status: 'done', outputPayload: JSON.stringify({ outputPath: '/exports/submission.xlsx', rows: 1, issues: [] }) });
+    render(<AnnotationWorkspace projectId="project-1" taskId="task-1" />);
+    const button = await screen.findByRole('button', { name: '导出全项目已制表' });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    await waitFor(() => expect(api.exportCases).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'project-1', reviewedOnly: true, taskId: undefined })));
+    await screen.findByText(/一键导出已制表完成/);
+  });
+
+  it('scopes the detail capture panel to the requested task without batch controls', async () => {
+    api.listCases.mockResolvedValue([makeCase(), makeCase({ taskId: 'task-2', taskName: '当前详情题目', repoRelativePath: 'repo-two' })]);
+    render(<AnnotationWorkspace projectId="project-1" taskId="task-2" />);
+    expect(await screen.findByText('当前详情题目')).toBeInTheDocument();
+    expect(screen.queryByText('低分也保留的任务')).not.toBeInTheDocument();
+    expect(screen.queryByText('题目进度')).not.toBeInTheDocument();
+    expect(screen.queryByText('批次预检与统一导出')).not.toBeInTheDocument();
+    expect(await screen.findByDisplayValue('repo-two')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '采集轨迹' })).toBeInTheDocument();
+    expect(api.listTraces).toHaveBeenCalledWith('task-2');
+    api.captureCase.mockResolvedValue({ id: 'detail-capture', status: 'pending' });
+    api.getAnnotationJob.mockResolvedValue({ id: 'detail-capture', status: 'done', outputPayload: JSON.stringify(makeCase({ taskId: 'task-2', taskName: '当前详情题目' })) });
+    fireEvent.change(screen.getByLabelText('本机 JSONL 绝对路径'), { target: { value: '/tmp/task-two.jsonl' } });
+    fireEvent.click(screen.getByRole('button', { name: '采集轨迹' }));
+    await waitFor(() => expect(api.captureCase).toHaveBeenCalledWith({ taskId: 'task-2', tracePath: '/tmp/task-two.jsonl' }));
+    expect(await screen.findByText('采集轨迹已完成')).toBeInTheDocument();
+  });
+
+  it('refreshes trace candidates even when the saved case revision has not changed', async () => {
+    render(<AnnotationWorkspace projectId="project-1" taskId="task-1" />);
+    await waitFor(() => expect(api.listTraces).toHaveBeenCalledTimes(1));
+    api.listTraces.mockResolvedValue([{ path: '/new.jsonl', sessionId: 'new-session', size: 10 }]);
+    fireEvent.click(screen.getByRole('button', { name: '刷新' }));
+    expect(await screen.findByRole('option', { name: /new-session/ })).toBeInTheDocument();
+  });
+
+  it('does not fall back to another task when the detail task is missing', async () => {
+    render(<AnnotationWorkspace projectId="project-1" taskId="missing-task" />);
+    expect(await screen.findByText('当前题目暂无标注记录，请先确认题目已导入当前项目')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '采集轨迹' })).not.toBeInTheDocument();
+    expect(api.listTraces).not.toHaveBeenCalled();
+  });
+
+  it('exports saved evaluations for the whole project or a single card', async () => {
+    api.exportCases.mockResolvedValue({ id: 'export-job', status: 'pending' });
+    api.getAnnotationJob.mockResolvedValue({ id: 'export-job', status: 'done', outputPayload: JSON.stringify({ outputPath: '/exports/submission.xlsx', reportPath: '/exports/report.md', rows: 1, issues: [] }) });
+    render(<AnnotationWorkspace projectId="project-1" />);
+    await screen.findByText('题目进度');
+    await waitFor(() => expect(screen.getByRole('button', { name: '一键导出已制表' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: '一键导出已制表' }));
+    await waitFor(() => expect(api.exportCases).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'project-1', reviewedOnly: true, taskId: undefined })));
+    await screen.findByText(/一键导出已制表完成/);
+    fireEvent.click(screen.getByRole('button', { name: '导出本题 Excel' }));
+    await waitFor(() => expect(api.exportCases).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'project-1', reviewedOnly: true, taskId: 'task-1' })));
+    await screen.findByText(/单题导出完成/);
+  });
+
+  it('copies the startup command for the fixed task number in the detail panel', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    try {
+      api.listCases.mockResolvedValue([makeCase({ taskId: 'p1__feat__label-123-9', taskName: 'cyc-03', sourcePath: '/tasks/cyc-03-feature迭代-9' })]);
+      render(<AnnotationWorkspace projectId="project-1" taskId="p1__feat__label-123-9" />);
+      const copy = await screen.findByRole('button', { name: '复制容器启动命令' });
+      await waitFor(() => expect(copy).toBeEnabled());
+      fireEvent.click(copy);
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining('CONTAINER_NAME="cyc03-claude-9"')));
+      expect(writeText).toHaveBeenCalledWith(expect.stringContaining('RUN_DIR="$BASE_DIR/run-9"'));
+      expect(await screen.findByText('容器启动命令已复制，请在本地终端执行')).toBeInTheDocument();
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, 'clipboard', clipboard);
+      else Reflect.deleteProperty(navigator, 'clipboard');
+    }
+  });
+
+  it('shows approval and hides a stale repair prompt when all five scores are perfect', async () => {
+    const item = makeCase();
+    item.rounds[0].evaluations![0].scores = [5, 5, 5, 5, 5];
+    api.listCases.mockResolvedValue([item]);
+    render(<AnnotationWorkspace projectId="project-1" taskId="task-1" view="review" />);
+    expect(await screen.findByText('审核通过 · 五维满分')).toBeInTheDocument();
+    expect(screen.queryByText('下一轮修复提示词（仅复制）')).not.toBeInTheDocument();
+  });
+
+  it('shows five-dimensional review in the detail review view and keeps batch export separate', async () => {
+    render(<AnnotationWorkspace projectId="project-1" taskId="task-1" view="review" />);
+    expect(await screen.findByText('真实轮次与评价')).toBeInTheDocument();
+    expect(screen.getByText('1 分')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '重新审核' })).toBeInTheDocument();
+    expect(screen.queryByText('批次预检与统一导出')).not.toBeInTheDocument();
   });
 
   it('shows every case and all five score cells without filtering low or missing scores', async () => {

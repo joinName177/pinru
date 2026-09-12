@@ -51,6 +51,8 @@ import {
   type ProviderTestResult,
 } from './components/SettingsPanels';
 
+import { AnnotationExportSettings } from './components/AnnotationExportSettings';
+
 const TABS = [
   { id: 'gitlab', label: 'GitLab', icon: Gitlab },
   { id: 'github', label: 'GitHub', icon: Github },
@@ -745,6 +747,8 @@ export default function Settings() {
             )}
 
             {activeTab === 'general' && (
+              <>
+                <AnnotationExportSettings />
               <GeneralSettingsPanel
                 theme={theme}
                 onThemeChange={setTheme}
@@ -764,6 +768,7 @@ export default function Settings() {
                 onCustomProjectRootPathPick={handlePickCustomProjectPath}
                 onCustomProjectPathSave={handleSaveCustomProjectPath}
               />
+              </>
             )}
 
             {activeTab === 'data' && <DataManagementPanel />}

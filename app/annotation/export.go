@@ -87,7 +87,10 @@ func (s *AnnotationService) preflight(ctx context.Context, cases []domain.Case) 
 	if len(cases) == 0 {
 		report.Issues = append(report.Issues, "当前批次没有题目")
 	}
-	skillHash := AssetsHash()
+	_, skillHash, skillErr := s.reviewSkill(ctx)
+	if skillErr != nil {
+		report.Issues = append(report.Issues, "读取审核技能失败："+skillErr.Error())
+	}
 	urls := map[string]bool{}
 	for _, c := range cases {
 		if c.SnapshotURL != "" {
@@ -205,7 +208,12 @@ func (s *AnnotationService) export(ctx context.Context, req ExportRequest) (*Exp
 	if err != nil {
 		return nil, err
 	}
+	cases, err = selectExportCases(cases, req)
+	if err != nil {
+		return nil, err
+	}
 	report := s.preflight(ctx, cases)
+
 	if strings.TrimSpace(req.Submitter) == "" {
 		report.Issues = append(report.Issues, "提交人未填写")
 	}
@@ -223,17 +231,22 @@ func (s *AnnotationService) export(ctx context.Context, req ExportRequest) (*Exp
 	if err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(s.root, "exports", time.Now().Format("20060102-150405")+"-"+uuid.NewString())
+	root, err := s.exportDirectory()
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(root, time.Now().Format("20060102-150405")+"-"+uuid.NewString())
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
 	input := struct {
-		ProjectName string        `json:"projectName"`
-		Submitter   string        `json:"submitter"`
-		SubmittedAt string        `json:"submittedAt"`
-		Cases       []domain.Case `json:"cases"`
-		Issues      []string      `json:"issues"`
-	}{project.Name, req.Submitter, req.SubmittedAt, cases, report.Issues}
+		SeparateTasks bool          `json:"separateTasks"`
+		ProjectName   string        `json:"projectName"`
+		Submitter     string        `json:"submitter"`
+		SubmittedAt   string        `json:"submittedAt"`
+		Cases         []domain.Case `json:"cases"`
+		Issues        []string      `json:"issues"`
+	}{req.ReviewedOnly, project.Name, req.Submitter, req.SubmittedAt, cases, report.Issues}
 	raw, err := json.MarshalIndent(input, "", "  ")
 	if err != nil {
 		return nil, err
@@ -274,4 +287,56 @@ func bytesLastJSON(data []byte) []byte {
 		}
 	}
 	return data
+}
+
+func selectExportCases(cases []domain.Case, req ExportRequest) ([]domain.Case, error) {
+	selected := make([]domain.Case, 0, len(cases))
+	found := req.TaskID == ""
+	for _, c := range cases {
+		if req.TaskID != "" && req.TaskID != c.TaskID {
+			continue
+		}
+		found = true
+		if req.ReviewedOnly {
+			rounds := make([]domain.Round, 0, len(c.Rounds))
+			for _, r := range c.Rounds {
+				if r.Status != "complete" {
+					continue
+				}
+				for _, e := range r.Evaluations {
+					if e.EvidenceHash == r.EvidenceHash && (e.Status == "ready" || e.Status == "needs_evidence") {
+						rounds = append(rounds, r)
+						break
+					}
+				}
+			}
+			if len(rounds) == 0 {
+				continue
+			}
+			c.Rounds = rounds
+		}
+		selected = append(selected, c)
+	}
+	if !found {
+		return nil, errors.New("题目不属于当前项目")
+	}
+	if req.ReviewedOnly && len(selected) == 0 {
+		return nil, errors.New("暂无已制表内容，请先完成至少一轮五维审核")
+	}
+	return selected, nil
+}
+
+func (s *AnnotationService) exportDirectory() (string, error) {
+	value, err := s.store.GetConfig("annotation_export_directory")
+	if err != nil {
+		return "", err
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return filepath.Join(s.root, "exports"), nil
+	}
+	if !filepath.IsAbs(value) {
+		return "", errors.New("请在设置中填写导出目录的本机绝对路径")
+	}
+	return filepath.Clean(value), nil
 }

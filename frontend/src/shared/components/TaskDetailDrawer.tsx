@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronRight,
   CircleDashed,
+  Container,
   Copy,
   ExternalLink,
   FileText,
@@ -53,8 +54,9 @@ import {
 import { formatModelRunDisplayLabel } from '../lib/sourceFolders';
 import { CopyIconButton } from './CopyIconButton';
 import MarkdownPreview from './MarkdownPreview';
+import { AnnotationWorkspace } from '../../features/annotation';
 
-export type TaskDetailDrawerTab = 'sessions' | 'prompt' | 'model-runs' | 'ai-review' | 'readme';
+export type TaskDetailDrawerTab = 'container' | 'sessions' | 'prompt' | 'model-runs' | 'ai-review' | 'readme';
 export type TaskDetailDrawerModelOption = {
   modelName: string;
   localPath: string | null;
@@ -175,6 +177,7 @@ interface TaskDetailDrawerProps {
 }
 
 const TAB_ITEMS: Array<{ id: TaskDetailDrawerTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
+  { id: 'container', label: '容器与轨迹', icon: Container },
   { id: 'sessions', label: 'Session 视图', icon: LayoutDashboard },
   { id: 'prompt', label: '提示词', icon: Terminal },
   { id: 'model-runs', label: '执行概况', icon: FileText },
@@ -296,6 +299,10 @@ export default function TaskDetailDrawer({
   const [conversationEditMode, setConversationEditMode] = useState<string | null>(null);
   const [copiedConversation, setCopiedConversation] = useState<string | null>(null);
   const [sessionIdEditMode, setSessionIdEditMode] = useState<string | null>(null);
+  const [containerPanelTaskId, setContainerPanelTaskId] = useState<string | null>(null);
+  useEffect(() => {
+    if (activeDrawerTab === 'container') setContainerPanelTaskId(selected.id);
+  }, [activeDrawerTab, selected.id]);
   const [copiedDetailSessionId, setCopiedDetailSessionId] = useState<string | null>(null);
   const safeLlmProviders = useMemo(
     () => (Array.isArray(llmProviders) ? llmProviders : []),
@@ -663,7 +670,7 @@ export default function TaskDetailDrawer({
   const availableTabItems = useMemo(
     () =>
       TAB_ITEMS.filter((tab) => {
-        if (!aiReviewVisible && tab.id === 'ai-review') {
+        if (!aiReviewVisible && !selectedTaskDetail?.projectConfigId && tab.id === 'ai-review') {
           return false;
         }
         if (!hasTaskReadme && tab.id === 'readme') {
@@ -671,10 +678,10 @@ export default function TaskDetailDrawer({
         }
         return true;
       }),
-    [aiReviewVisible, hasTaskReadme],
+    [aiReviewVisible, hasTaskReadme, selectedTaskDetail?.projectConfigId],
   );
   const effectiveActiveDrawerTab =
-    !aiReviewVisible && activeDrawerTab === 'ai-review'
+    !aiReviewVisible && !selectedTaskDetail?.projectConfigId && activeDrawerTab === 'ai-review'
       ? 'model-runs'
       : !hasTaskReadme && activeDrawerTab === 'readme'
         ? (selected.status === 'Submitted' || selected.status === 'ExecutionCompleted'
@@ -1653,7 +1660,7 @@ export default function TaskDetailDrawer({
                             aria-label={run.reviewStatus === 'running' ? '复审中…' : 'AI 复审'}
                             disabled={!run.localPath || run.reviewStatus === 'running'}
                             onClick={() => {
-                              onAiReview(run);
+                              if (!selectedTaskDetail?.projectConfigId) onAiReview(run);
                               handleTabSwitch('ai-review');
                             }}
                             title={!run.localPath ? '需要先记录副本目录后才能发起 AI 复审' : undefined}
@@ -1707,7 +1714,7 @@ export default function TaskDetailDrawer({
                     disabled={!runContextMenu.run.localPath || runContextMenu.run.reviewStatus === 'running'}
                     onClick={() => {
                       if (onAiReview) {
-                        onAiReview(runContextMenu.run);
+                        if (!selectedTaskDetail?.projectConfigId) onAiReview(runContextMenu.run);
                         handleTabSwitch('ai-review');
                       }
                       setRunContextMenu(null);
@@ -2358,7 +2365,7 @@ export default function TaskDetailDrawer({
                         type="button"
                         disabled={!group.localPath || latestStatus === 'running'}
                         onClick={() => {
-                          onAiReview(matchingModelRun);
+                          if (!selectedTaskDetail?.projectConfigId) onAiReview(matchingModelRun);
                         }}
                         className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-violet-500/25 bg-violet-500/10 px-3 py-1.5 text-xs font-medium text-violet-200 transition hover:bg-violet-500/15 disabled:cursor-not-allowed disabled:opacity-40"
                       >
@@ -2526,10 +2533,23 @@ export default function TaskDetailDrawer({
             ) : (
               <>
                 {effectiveActiveDrawerTab === 'sessions' && renderSessionsWorkspace()}
+                {(effectiveActiveDrawerTab === 'container' || containerPanelTaskId === selected.id) && (
+                  <div key={selected.id} hidden={effectiveActiveDrawerTab !== 'container'} className="h-full overflow-y-auto">
+                    {selectedTaskDetail?.projectConfigId ? (
+                      <AnnotationWorkspace projectId={selectedTaskDetail.projectConfigId} taskId={selected.id} />
+                    ) : (
+                      <p className="p-6 text-sm text-stone-500">当前题目尚未关联项目，请先确认题目的项目归属。</p>
+                    )}
+                  </div>
+                )}
                 {effectiveActiveDrawerTab === 'prompt' && renderPromptWorkspace()}
                 {effectiveActiveDrawerTab === 'model-runs' && renderModelRunsWorkspace()}
                 {effectiveActiveDrawerTab === 'readme' && renderReadmeWorkspace()}
-                {effectiveActiveDrawerTab === 'ai-review' && aiReviewVisible && renderAiReviewWorkspace()}
+                {effectiveActiveDrawerTab === 'ai-review' && (selectedTaskDetail?.projectConfigId ? (
+                  <div className="h-full overflow-y-auto">
+                    <AnnotationWorkspace projectId={selectedTaskDetail.projectConfigId} taskId={selected.id} view="review" />
+                  </div>
+                ) : aiReviewVisible && renderAiReviewWorkspace())}
               </>
             )}
           </div>

@@ -403,8 +403,11 @@ func (s *TaskService) createSingleCustomPromptTask(
 		}
 		return detail
 	}
+	if _, err := appannotation.New(s.store, nil).PublishSnapshot(ctx, appannotation.PrepareRequest{TaskID: created.ID}); err != nil {
+		detail.Message = "题目及本地初始快照已创建；GitHub 初始快照待发布：" + err.Error()
+	}
 	if detail.Message == "" {
-		detail.Message = "已创建"
+		detail.Message = "已创建并发布 GitHub 初始快照"
 	}
 	return detail
 }

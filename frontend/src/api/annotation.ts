@@ -133,6 +133,8 @@ export interface SaveCaseSettingsRequest {
 }
 
 export interface ExportAnnotationRequest {
+  taskId?: string;
+  reviewedOnly?: boolean;
   projectId: string;
   submitter: string;
   submittedAt: string;
@@ -174,6 +176,10 @@ export function prepareCase(taskId: string): Promise<BackgroundJob> {
   return submitAnnotationJob('annotation_prepare', taskId, { taskId });
 }
 
+export function captureAndPrepareTable(request: CaptureRequest): Promise<BackgroundJob> {
+  return submitAnnotationJob('annotation_capture_table', request.taskId, request);
+}
+
 export function bindContainer(request: BindContainerRequest): Promise<BackgroundJob> {
   return submitAnnotationJob('annotation_bind', request.taskId, request);
 }
@@ -192,3 +198,7 @@ export function exportCases(request: ExportAnnotationRequest): Promise<Backgroun
 
 export const getAnnotationJob = getJob;
 export const cancelAnnotationJob = cancelJob;
+
+export function publishSnapshot(taskId: string): Promise<BackgroundJob> {
+  return submitAnnotationJob('annotation_publish', taskId, { taskId });
+}

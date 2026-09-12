@@ -17,6 +17,7 @@ import { getTaskTypePresentation } from '../../../api/config';
 import type { TaskTypeOverviewSummary } from '../../../shared/lib/taskTypeOverview';
 import { type CardSize, STATUS, TaskCard } from './BoardPresentation';
 import type { BoardSortOption, BoardTaskGroup } from '../utils/boardTaskView';
+import type { TableProgress } from '../../annotation/tableProgress';
 
 const CARD_SIZE_OPTIONS: Array<{
   size: CardSize;
@@ -62,6 +63,7 @@ const REVIEW_STATUS_FILTERS: Array<{
 ];
 
 export function BoardMainContent({
+  tableProgressByTask,
   search,
   sortBy,
   totalTaskCount,
@@ -102,6 +104,7 @@ export function BoardMainContent({
   onToggleSelectionMode,
   onToggleTaskSelection,
 }: {
+  tableProgressByTask?: Record<string, TableProgress>;
   search: string;
   sortBy: BoardSortOption;
   totalTaskCount: number;
@@ -424,6 +427,7 @@ export function BoardMainContent({
                       >
                         <TaskCard
                           task={task}
+                          tableProgress={tableProgressByTask?.[task.id]}
                           size={cardSize}
                           onClick={() => onSelectTask(task)}
                           onContextMenu={(event) => onOpenTaskContextMenu(event, task)}

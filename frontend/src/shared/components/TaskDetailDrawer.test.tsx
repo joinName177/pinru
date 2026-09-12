@@ -20,6 +20,9 @@ vi.mock('../../api/llm', async () => {
 });
 
 const polishTextMock = vi.mocked(polishTextApi);
+vi.mock('../../features/annotation', () => ({
+  AnnotationWorkspace: ({ taskId, projectId, view }: { taskId: string; projectId: string; view?: string }) => <div data-testid="annotation-workspace">{projectId}/{taskId}/{view}</div>,
+}));
 import { createSessionDraft } from '../lib/sessionUtils';
 import type { BackgroundJob } from '../../api/job';
 
@@ -354,6 +357,19 @@ beforeEach(() => {
 });
 
 describe('TaskDetailDrawer session copy affordance', () => {
+  it('opens the container tab from the detail navigation', () => {
+    const onTabChange = vi.fn();
+    renderTaskDetailDrawer({ onTabChange });
+    fireEvent.click(screen.getByRole('button', { name: '容器与轨迹' }));
+    expect(onTabChange).toHaveBeenCalledWith('container');
+  });
+
+  it('routes project task AI review to five-dimensional annotation without a code commit', () => {
+    renderTaskDetailDrawer({ activeDrawerTab: 'ai-review', selectedTaskDetail: createTaskDetail({ projectConfigId: 'batch-project' }), selectedCodePushRecords: [] });
+    expect(screen.getByTestId('annotation-workspace')).toHaveTextContent('batch-project/task-1/review');
+    expect(screen.queryByText('请先提交代码，再发起 AI 复审')).not.toBeInTheDocument();
+  });
+
   it('keeps session id copy on the keyboard shortcut after the session card switched to user conversation', () => {
     const { draft, onCopySessionId } = renderDrawer();
 

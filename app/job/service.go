@@ -18,6 +18,7 @@ import (
 	appprompt "github.com/blueship581/pinru/app/prompt"
 	appsubmit "github.com/blueship581/pinru/app/submit"
 	apptask "github.com/blueship581/pinru/app/task"
+	annotationdomain "github.com/blueship581/pinru/internal/annotation"
 	"github.com/blueship581/pinru/internal/errs"
 	"github.com/blueship581/pinru/internal/store"
 	"github.com/blueship581/pinru/internal/util"
@@ -475,12 +476,15 @@ func (s *JobService) executeJob(id string, req SubmitJobRequest) {
 		execResult, execErr = s.executePrSubmit(ctx, id, req)
 	case "ai_review":
 		execResult, execErr = s.executeAiReview(ctx, id, req)
-	case "annotation_prepare", "annotation_bind", "annotation_capture", "annotation_review", "annotation_export":
+	case "annotation_publish", "annotation_prepare", "annotation_bind", "annotation_capture", "annotation_capture_table", "annotation_review", "annotation_export":
 		if s.annotationHandler == nil {
 			execErr = errors.New("容器标注服务尚未注册")
 		} else {
 			var output any
-			output, execErr = s.annotationHandler(ctx, req.JobType, req.InputPayload)
+			annotationCtx := annotationdomain.WithProgress(ctx, func(progress int, message string) {
+				s.emitProgress(id, req.JobType, req.TaskID, "running", progress, strPtr(message), nil)
+			})
+			output, execErr = s.annotationHandler(annotationCtx, req.JobType, req.InputPayload)
 			if execErr == nil {
 				var raw []byte
 				raw, execErr = json.Marshal(output)
