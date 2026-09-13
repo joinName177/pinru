@@ -35,6 +35,31 @@ func TestSatisfactionSchemaRequiresExactScoreAndDescriptionCounts(t *testing.T) 
 			t.Fatalf("%s not exactly five", name)
 		}
 	}
+	requirementChecks := props["requirementChecks"].(map[string]any)
+	if requirementChecks["minItems"] != 1 {
+		t.Fatalf("requirementChecks minItems = %#v, want 1", requirementChecks["minItems"])
+	}
+}
+
+func TestRunSatisfactionReviewRejectsEmptyRequirementChecks(t *testing.T) {
+	workDir := t.TempDir()
+	payload := validReviewJSON(t, 5)
+	var document map[string]any
+	if err := json.Unmarshal([]byte(payload), &document); err != nil {
+		t.Fatal(err)
+	}
+	document["requirementChecks"] = []any{}
+	raw, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := writeFakeCodex(t, fakeCodexWritesReview(t, string(raw), "", ""))
+	service := NewWithResolver(func(string) (string, error) { return binary, nil })
+	if evaluation, err := service.RunSatisfactionReview(context.Background(), SatisfactionReviewRequest{
+		WorkDir: workDir, SkillDir: filepath.Join(workDir, "skill"), InputPath: filepath.Join(workDir, "input.json"),
+	}, nil); err == nil || !strings.Contains(err.Error(), "逐项需求核验") {
+		t.Fatalf("RunSatisfactionReview() = %#v, %v; want empty requirement checks rejection", evaluation, err)
+	}
 }
 
 func TestRunSatisfactionReviewAcceptsExactlyFiveItemsAndRejectsFourOrSix(t *testing.T) {
@@ -130,7 +155,8 @@ func validReviewJSON(t *testing.T, count int) string {
 		"taskType": "feature迭代", "difficulty": "中等", "language": "Go",
 		"environment": "无外部依赖", "harnessVersion": "2.1.0", "os": "MacOS/Linux",
 		"evidence": []string{"trace.jsonl:1-3"}, "missing": []string{}, "issues": []any{},
-		"nextPrompt": "", "nextPromptType": "",
+		"requirementChecks": []any{map[string]any{"requirement": "完成用户要求", "status": "completed", "evidence": "code/service.go:10; go test ./... PASS"}},
+		"nextPrompt":        "", "nextPromptType": "",
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {

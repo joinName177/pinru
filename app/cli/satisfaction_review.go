@@ -37,10 +37,11 @@ func buildSatisfactionPrompt(req SatisfactionReviewRequest) string {
 scores/descriptions 顺序固定为上述五维。证据不足的分数用 null，并在 missing 写出对应维度与缺项，status=needs_evidence。ready 要求五项依据和可核查证据齐全。environment 依据实际项目可复现条件，不因使用 Docker CLI 就自动写可一键起环境；版本和系统依据原会话，不能用评价电脑环境回填。
 功能完成度、五维表现和是否需要代码修复分别判断。功能完成达标也可能有规划、推理或执行扣分，五维非满分不证明功能未完成。修复提示词只能基于代码与轨迹确认的原需求未完成、回归或未解决 Bug，不能为生成提示词而降低分数，也不能因低分强找问题。仅有 process/evidence 时保留真实分数和依据，nextPrompt 与 nextPromptType 留空；五维全满分时两项也必须为空。不需要填写不满意原因。提示词只写有证据的修复事项与预期结果，不扩展需求，不要求提高分数。缺证据时标记 needs_evidence 并列缺项，不把未知当缺陷。达到 10 个有效轮次后不再引导追加轮次，但确认 Bug 的修复建议仍保留供检查。issues.kind 分别用 bug/process/evidence。
 每项负面描述必须在 descriptions 正文保留实际操作节点及工具调用，并引用相关文件名、函数名或命令，不能只放 evidence。验证遗漏须定位到有证据的具体阶段、实际检查命令及结果，说明未覆盖哪项原始需求；没有记录不能编成“构建通过后”或“提交前”。命令失败必须引用完整失败命令（关键参数及目标测试文件/脚本）、关键报错和实际恢复动作，凭据脱敏。仅写 node: bad option 或 npx tsc 不足；回读原工具调用核实，禁止把用户举例的命令当作事实。没有环境和当时可得信息的支持，不称为“可避免的失败”。缺少必要原文时撤回无证据指控或标明待补证据，不为保留低分补造命令、步骤号、文件或函数。润色后再次核对这些引用仍在描述正文中。
-先逐项复核原始提示词的功能要求、约束、验收条件及本轮变更引入的回归，在 evidence 中保存每项需求、代码/轨迹/验证依据及已完成/未完成/无法验证的结论，再进行五维评分。已确认的轮末功能遗漏、新引入的功能问题和未解决 Bug 必须列入 issues.kind=bug，交付完整性按证据及锚点评为 1—4，其他维度独立评分。每个 Bug 都必须由具体修复建议覆盖，nextPrompt 正文必须以“修复”开头，后接问题、触发条件与预期结果，nextPromptType=Bug修复。五维全满分不得同时有未解决 Bug 或修复提示词。遇到矛盾必须回查证据重新评价，不能凑分、删掉真实问题或虚构验证。已恢复的过程错误和未知行为不能冒充 Bug。
+先逐项复核原始提示词的功能要求、约束、验收条件及本轮变更引入的回归，将每项原需求及其结论写入 requirementChecks，再进行五维评分。requirement、status、evidence 均不能为空；status 只用 completed、failed、unverified。evidence 写具体文件、命令输出或静态依据，明确验证是原模型执行、评价助手复验还是静态判断。failed 只用于有事实支持的轮末未完成项或未解决 Bug，并同步列入 issues.kind=bug；unverified 表示现有证据无法核实，不是 Bug，不得强行生成修复提示词，并将关键证据缺口具体写入 missing、status 标为 needs_evidence。若只有未验证项、没有已确认 Bug，交付完整性分数填 null；若同轮另有已确认的 failed/Bug，则可依据该 Bug 将交付完整性评为 1—4，同时保留 unverified、needs_evidence 和 missing。未验证项不强迫其他维度清空或降分。缺关键证据时不得以五维全 5 宣称逐项核验完成。已确认的轮末功能遗漏、新引入的功能问题和未解决 Bug 必须列入 issues.kind=bug，交付完整性按证据及锚点评为 1—4，其他维度独立评分。每个 Bug 都必须由具体修复建议覆盖，nextPrompt 正文必须以“修复”开头，后接问题、触发条件与预期结果，nextPromptType=Bug修复。五维全满分不得同时有未解决 Bug 或修复提示词。遇到矛盾必须回查证据重新评价，不能凑分、删掉真实问题或虚构验证。已恢复的过程错误和未知行为不能冒充 Bug。
 规划低分不能仅写“中途构建失败，随后修复”：必须引用真实阶段/步骤、工具调用及文件或完整命令，并指出该处计划、依赖顺序或状态追踪的独立不足与后果；如果只能证明编辑执行错误，不能借此给规划扣分，也不能编造步骤编号。命令原文须与同一次工具返回逐项配对，含实际参数及测试脚本，不能用 node: bad option 加 npx tsc 替代完整失败上下文。
 所有失败先确认执行者及原因。评价助手在独立副本未装依赖导致的构建失败，记录到 evidence/验证说明，不属于原模型执行不足，不据此降为 4，也不能混进满分描述让读者误认为原模型构建失败。满分依据写原模型实际操作及原轨迹结果；若需提复验环境限制，明确双方行为和证据归属。模型自己造成且构成执行不足的错误，不能因为后来修好就自动给执行满分；合理诊断、预期失败用例、环境故障不自动扣分。5 分描述出现失败、错误、遗漏或返工时逐条核对执行者、原因和维度归属，不以删掉负面文字代替重评，不按关键词机械扣分。无法解释的矛盾回查重写，缺必要证据时标明缺项。
 推理非满分必须定位到具体判断或验证步骤，引用实际测试命令、测试文件/用例或函数及对应输出，写清模型当时可见的判断与操作、该判断违反的需求或遗漏的条件、产生的客观结果。不能只写“从测试输出中识别出空文本返回结果不合理”。涉及空输入等边界时，保留真实输入条件、实际返回值/行为、有需求依据的预期结果及差异；静态推断须明确标注，不编造测试、返回值或内部思考。正确发现并修复问题本身不能单独支撑推理扣分；需有此前理解、条件推导、根因判断或无效试错的独立证据。没有证据时回读事件，扣分不成立则按锚点重评，必要材料缺失则列缺项，不为保留旧分补造事实。
+涉及测试脚本调整的负面判断，执行 description-quality 的“测试脚本调整须核对调整前的事实”：回读同轮原始调用、返回和文件变更，正文写明实际验证节点、完整命令、脚本路径及用例/断言/配置位置、模型当时做法、调整前实际值与预期值或关键报错、实际修改与后果。静态发现不能编造成运行失败。“虽然中途测试脚本需要调整”或仅写“后来通过”均不足；规划扣分还须有原计划或推进顺序的独立遗漏及其与结果的联系，正常 TDD 预期失败和合理调试不自动扣分。证据不支持旧扣分时按锚点重评，关键材料缺失则列 missing、必要维度用 null，不编造脚本或报错、不自动改满分。只改测试预期后通过不证明功能修好，须对照原需求；没有轮末真实缺陷不生成修复提示词。
 最后按执行者与事件配对、具体位置及原文引用、维度归因与分数、行为后果、自然表达的顺序复核，返回符合 schema 的 JSON。`, req.SkillDir, req.InputPath)
 }
 
@@ -53,9 +54,10 @@ func satisfactionSchema() map[string]any {
 		"descriptions": map[string]any{"type": "array", "minItems": 5, "maxItems": 5, "items": str()},
 		"taskType":     str(), "difficulty": str(), "language": str(), "environment": str(), "harnessVersion": str(), "os": str(),
 		"evidence": list(), "missing": list(), "nextPrompt": str(), "nextPromptType": str(),
-		"issues": map[string]any{"type": "array", "items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"description", "evidence", "kind"}, "properties": map[string]any{"description": str(), "evidence": str(), "kind": map[string]any{"type": "string", "enum": []string{"bug", "process", "evidence"}}}}},
+		"requirementChecks": map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"requirement", "status", "evidence"}, "properties": map[string]any{"requirement": map[string]any{"type": "string", "minLength": 1}, "status": map[string]any{"type": "string", "enum": []string{"completed", "failed", "unverified"}}, "evidence": map[string]any{"type": "string", "minLength": 1}}}},
+		"issues":            map[string]any{"type": "array", "items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"description", "evidence", "kind"}, "properties": map[string]any{"description": str(), "evidence": str(), "kind": map[string]any{"type": "string", "enum": []string{"bug", "process", "evidence"}}}}},
 	}
-	required := []string{"status", "scores", "descriptions", "taskType", "difficulty", "language", "environment", "harnessVersion", "os", "evidence", "missing", "nextPrompt", "nextPromptType", "issues"}
+	required := []string{"status", "scores", "descriptions", "taskType", "difficulty", "language", "environment", "harnessVersion", "os", "evidence", "missing", "requirementChecks", "nextPrompt", "nextPromptType", "issues"}
 	return map[string]any{"type": "object", "additionalProperties": false, "required": required, "properties": props}
 }
 
@@ -88,7 +90,8 @@ func (s *CliService) RunSatisfactionReview(ctx context.Context, req Satisfaction
 	}
 	defer logFile.Close()
 	writer := &satisfactionLogWriter{file: logFile, onLine: onLine}
-	cmd.Stdout, cmd.Stderr = writer, writer
+	cmd.Stdout = writer
+	cmd.Stderr = &satisfactionLogWriter{file: logFile}
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -103,11 +106,15 @@ func (s *CliService) RunSatisfactionReview(ctx context.Context, req Satisfaction
 		return nil, fmt.Errorf("审核未返回结构化评价")
 	}
 	var shape struct {
-		Scores       []json.RawMessage `json:"scores"`
-		Descriptions []json.RawMessage `json:"descriptions"`
+		Scores            []json.RawMessage `json:"scores"`
+		Descriptions      []json.RawMessage `json:"descriptions"`
+		RequirementChecks []json.RawMessage `json:"requirementChecks"`
 	}
 	if err := json.Unmarshal(raw, &shape); err != nil || len(shape.Scores) != 5 || len(shape.Descriptions) != 5 {
 		return nil, fmt.Errorf("评分 JSON 必须恰好包含五项分数和五项依据")
+	}
+	if len(shape.RequirementChecks) == 0 {
+		return nil, fmt.Errorf("评分 JSON 必须包含非空的逐项需求核验")
 	}
 	var eval domain.Evaluation
 	decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -124,9 +131,10 @@ func (s *CliService) RunSatisfactionReview(ctx context.Context, req Satisfaction
 // A writer lets os/exec drain both streams and apply WaitDelay on cancellation.
 // Keep the evaluator's verification commands/results as auditable local evidence.
 type satisfactionLogWriter struct {
-	mu     sync.Mutex
-	file   *os.File
-	onLine func(string)
+	mu      sync.Mutex
+	file    *os.File
+	onLine  func(string)
+	pending []byte
 }
 
 func (w *satisfactionLogWriter) Write(p []byte) (int, error) {
@@ -134,7 +142,14 @@ func (w *satisfactionLogWriter) Write(p []byte) (int, error) {
 	defer w.mu.Unlock()
 	n, err := w.file.Write(p)
 	if w.onLine != nil {
-		for _, line := range strings.Split(strings.TrimSpace(string(p[:n])), "\n") {
+		w.pending = append(w.pending, p[:n]...)
+		for {
+			index := bytes.IndexByte(w.pending, '\n')
+			if index < 0 {
+				break
+			}
+			line := strings.TrimSpace(string(w.pending[:index]))
+			w.pending = w.pending[index+1:]
 			if line != "" {
 				w.onLine(line)
 			}

@@ -15,6 +15,96 @@ func TestValidateEvaluationAcceptsFiveIndependentReadyScores(t *testing.T) {
 	}
 }
 
+func TestValidateEvaluationAcceptsLegacyRecordWithoutRequirementChecks(t *testing.T) {
+	round := Round{PromptID: "p-1", EvidenceHash: "evidence-hash"}
+	evaluation := validEvaluation("evidence-hash")
+	if err := ValidateEvaluation(round, evaluation); err != nil {
+		t.Fatalf("legacy evaluation rejected: %v", err)
+	}
+}
+
+func TestValidateEvaluationChecksRequirementCheckFieldsAndStatus(t *testing.T) {
+	round := Round{PromptID: "p-1", EvidenceHash: "evidence-hash"}
+	tests := []struct {
+		name  string
+		check RequirementCheck
+		want  string
+	}{
+		{"empty requirement", RequirementCheck{Status: "completed", Evidence: "service.go:10"}, "requirement"},
+		{"invalid status", RequirementCheck{Requirement: "保存数据", Status: "unknown", Evidence: "service.go:10"}, "status"},
+		{"empty evidence", RequirementCheck{Requirement: "保存数据", Status: "completed"}, "evidence"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			evaluation := validEvaluation("evidence-hash")
+			evaluation.RequirementChecks = []RequirementCheck{test.check}
+			if err := ValidateEvaluation(round, evaluation); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ValidateEvaluation() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestValidateEvaluationRequiresBugForFailedRequirement(t *testing.T) {
+	round := Round{PromptID: "p-1", EvidenceHash: "evidence-hash"}
+	evaluation := validEvaluation("evidence-hash")
+	evaluation.RequirementChecks = []RequirementCheck{{Requirement: "保存数据", Status: "failed", Evidence: "service.go:10 未实现写入"}}
+	if err := ValidateEvaluation(round, evaluation); err == nil || !strings.Contains(err.Error(), "bug") {
+		t.Fatalf("ValidateEvaluation() error = %v, want bug consistency error", err)
+	}
+
+	four := 4
+	evaluation.Scores[0] = &four
+	evaluation.Descriptions[0] = "保存功能未完成。"
+	evaluation.Issues = []Issue{{Description: "未保存数据", Evidence: "service.go:10", Kind: "bug"}}
+	evaluation.NextPrompt = "修复保存数据未落盘的问题，触发保存后应能重新读取"
+	evaluation.NextPromptType = "Bug修复"
+	if err := ValidateEvaluation(round, evaluation); err != nil {
+		t.Fatalf("failed requirement with bug rejected: %v", err)
+	}
+}
+
+func TestValidateEvaluationRequiresMissingEvidenceForUnverifiedRequirement(t *testing.T) {
+	round := Round{PromptID: "p-1", EvidenceHash: "evidence-hash"}
+	evaluation := validEvaluation("evidence-hash")
+	evaluation.RequirementChecks = []RequirementCheck{{Requirement: "浏览器交互", Status: "unverified", Evidence: "静态检查无法确认运行时交互"}}
+	if err := ValidateEvaluation(round, evaluation); err == nil || !strings.Contains(err.Error(), "needs_evidence") {
+		t.Fatalf("ValidateEvaluation() error = %v, want needs_evidence consistency error", err)
+	}
+
+	evaluation.Status = "needs_evidence"
+	evaluation.Missing = []string{"浏览器交互：缺少可定位的运行记录"}
+	if err := ValidateEvaluation(round, evaluation); err == nil || !strings.Contains(err.Error(), "delivery score") {
+		t.Fatalf("ValidateEvaluation() error = %v, want unverified delivery score error", err)
+	}
+
+	evaluation.Scores[0] = nil
+	evaluation.Descriptions[0] = ""
+	if err := ValidateEvaluation(round, evaluation); err != nil {
+		t.Fatalf("unverified requirement with missing evidence rejected: %v", err)
+	}
+}
+
+func TestValidateEvaluationAllowsFailedAndUnverifiedRequirementsTogether(t *testing.T) {
+	round := Round{PromptID: "p-1", EvidenceHash: "evidence-hash"}
+	evaluation := validEvaluation("evidence-hash")
+	four := 4
+	evaluation.Status = "needs_evidence"
+	evaluation.Scores[0] = &four
+	evaluation.Descriptions[0] = "保存功能未完成；浏览器交互缺少运行证据。"
+	evaluation.Missing = []string{"浏览器交互：缺少可定位的运行记录"}
+	evaluation.RequirementChecks = []RequirementCheck{
+		{Requirement: "保存数据", Status: "failed", Evidence: "service.go:10 未实现写入"},
+		{Requirement: "浏览器交互", Status: "unverified", Evidence: "静态检查无法确认运行时交互"},
+	}
+	evaluation.Issues = []Issue{{Description: "未保存数据", Evidence: "service.go:10", Kind: "bug"}}
+	evaluation.NextPrompt = "修复保存数据未落盘的问题，触发保存后应能重新读取"
+	evaluation.NextPromptType = "Bug修复"
+	if err := ValidateEvaluation(round, evaluation); err != nil {
+		t.Fatalf("mixed failed and unverified requirements rejected: %v", err)
+	}
+}
+
 func TestValidateEvaluationAcceptsOnlySpecificMissingEvidenceForNullableScores(t *testing.T) {
 	round := Round{PromptID: "p-1", EvidenceHash: "evidence-hash"}
 	evaluation := validEvaluation("evidence-hash")

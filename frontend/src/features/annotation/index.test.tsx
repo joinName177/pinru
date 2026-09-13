@@ -99,6 +99,38 @@ describe('AnnotationWorkspace', () => {
     api.listTraces.mockResolvedValue([]);
   });
 
+  it('restores running state and disables duplicate reviews after reopening details', async () => {
+    const c=makeCase({preparation:{jobId:'running-job',status:'running',progress:40,message:'第 1 轮：等待模型响应',error:'',startedAt:1,finishedAt:0,lastActivityAt:1}});
+    c.rounds[0].evaluations=[];
+    api.listCases.mockResolvedValue([c]);
+    render(<AnnotationWorkspace projectId="project-1" taskId="task-1" view="review" />);
+    expect(await screen.findByText('制表中 · 已复审 0/1 轮')).toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'审核本轮'})).toBeDisabled();
+    expect(screen.getByText(/超过 2 分钟没有新的审核进展/)).toBeInTheDocument();
+  });
+
+  it('shows persisted failure and offers resume without requiring the container', async () => {
+    const c=makeCase({containerId:'',preparation:{jobId:'failed-job',status:'error',progress:15,message:'第 1 轮',error:'审核执行超时',startedAt:1,finishedAt:100,lastActivityAt:50}});
+    c.rounds[0].evaluations=[];
+    api.listCases.mockResolvedValue([c]);
+    render(<AnnotationWorkspace projectId="project-1" taskId="task-1" view="review" />);
+    expect(await screen.findByText('制表失败 · 已复审 0/1 轮')).toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'继续准备未完成轮次'})).toBeEnabled();
+    expect(screen.getByText(/审核执行超时；已保存的轨迹与评分保留/)).toBeInTheDocument();
+  });
+
+  it('explains completed functionality with process deductions without demanding repair', async () => {
+    const c=makeCase();
+    const e=c.rounds[0].evaluations![0];
+    e.status='ready'; e.scores=[5,5,4,5,4]; e.issues=[{kind:'process',description:'重复读取',evidence:'原轨迹两次读取同一文件'}];e.nextPrompt='';e.missing=[];
+    e.requirementChecks=[{requirement:'支持导出',status:'completed',evidence:'评价助手执行导出测试通过'}];
+    api.listCases.mockResolvedValue([c]);
+    render(<AnnotationWorkspace projectId="project-1" taskId="task-1" view="review" />);
+    expect(await screen.findByText('已完成 · 支持导出')).toBeInTheDocument();
+    expect(screen.getByText(/本轮审核未发现待修复的代码问题/)).toBeInTheDocument();
+    expect(screen.queryByText('下一轮修复提示词（仅复制）')).not.toBeInTheDocument();
+  });
+
   it('prepares table data directly from the capture panel without another round', async () => {
     api.captureAndPrepareTable.mockResolvedValue({ id: 'table-job', status: 'pending' });
     api.getAnnotationJob.mockResolvedValue({ id: 'table-job', status: 'done', outputPayload: JSON.stringify(makeCase()) });
@@ -222,7 +254,7 @@ describe('AnnotationWorkspace', () => {
     item.rounds[0].evaluations![0].scores = [5, 5, 5, 5, 5];
     api.listCases.mockResolvedValue([item]);
     render(<AnnotationWorkspace projectId="project-1" taskId="task-1" view="review" />);
-    expect(await screen.findByText('审核通过 · 五维满分')).toBeInTheDocument();
+    expect(await screen.findByText('五维满分 · 数据已保存')).toBeInTheDocument();
     expect(screen.queryByText('下一轮修复提示词（仅复制）')).not.toBeInTheDocument();
   });
 

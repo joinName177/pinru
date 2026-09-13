@@ -13,7 +13,8 @@ func TestCaseJSONUsesPublicCamelCaseContract(t *testing.T) {
 		InitialSHA: strings.Repeat("a", 40), Revision: 3,
 		Captures: []Capture{{ID: "capture-1", TraceHash: "trace-tree-hash"}},
 		Rounds: []Round{{PromptID: "prompt-1", SourceStart: 1, SourceEnd: 3, Attachments: []string{"attachment:image sha256=abc"},
-			Evaluations: []Evaluation{{Scores: [5]*int{&score}, SourceHash: "source-hash", ReviewPath: "/evidence/review", ReviewHash: "review-hash"}}}},
+			Evaluations: []Evaluation{{Scores: [5]*int{&score}, SourceHash: "source-hash", ReviewPath: "/evidence/review", ReviewHash: "review-hash",
+				RequirementChecks: []RequirementCheck{{Requirement: "支持导出", Status: "completed", Evidence: "export.go:42"}}}}}},
 	}
 
 	payload, err := json.Marshal(input)
@@ -27,6 +28,7 @@ func TestCaseJSONUsesPublicCamelCaseContract(t *testing.T) {
 		`"attachments":["attachment:image sha256=abc"]`,
 		`"traceHash":"trace-tree-hash"`, `"sourceHash":"source-hash"`,
 		`"reviewPath":"/evidence/review"`, `"reviewHash":"review-hash"`,
+		`"requirementChecks":[{"requirement":"支持导出","status":"completed","evidence":"export.go:42"}]`,
 	} {
 		if !strings.Contains(string(payload), fragment) {
 			t.Fatalf("JSON %s does not contain %s", payload, fragment)

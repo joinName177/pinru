@@ -24,6 +24,7 @@ import {
   prepareCase,
   publishSnapshot,
   reviewRound,
+  resumeTable,
   saveCaseSettings,
   type AnnotationCase,
   type AnnotationContainer,
@@ -38,7 +39,7 @@ import { useAppStore } from '../../store';
 import { waitForAnnotationJob } from './job';
 import { buildContainerCommand } from './containerCommand';
 import { getConfig } from '../../api/config';
-import { getTableProgress } from './tableProgress';
+import { getTableProgress, latestEvaluation } from './tableProgress';
 import { TableStatusBadge } from './TableStatusBadge';
 
 const INPUT_CLASS = 'w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-800 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:border-stone-700 dark:bg-[#171B22] dark:text-stone-100 dark:focus:border-slate-500 dark:focus:ring-slate-800';
@@ -72,7 +73,7 @@ function errorMessage(error: unknown) {
 }
 
 function statusLabel(status: string) {
-  return ({ complete: '完整', pending: '未完成', conflict: '有冲突', excluded: '已排除' } as Record<string, string>)[status] ?? status;
+  return ({ complete: '轨迹完整', pending: '会话未结束', conflict: '轨迹有冲突', excluded: '已排除' } as Record<string, string>)[status] ?? status;
 }
 
 function formatBytes(size: number) {
@@ -132,10 +133,27 @@ function EvaluationCard({ evaluation, index }: { evaluation: AnnotationEvaluatio
           </p>
         </div>
         <span className="rounded-full bg-stone-100 px-2.5 py-1 text-[11px] font-semibold text-stone-600 dark:bg-stone-800 dark:text-stone-300">
-          {isPerfectEvaluation(evaluation) ? '审核通过 · 五维满分' : evaluation.scores.some((score) => score === null) ? '审核待补证据' : '未通过 · 有待改进项'}
+          {evaluation.current === false ? '历史评价 · 待重新复审' : evaluation.status === 'needs_evidence' ? '审核待补证据' : isPerfectEvaluation(evaluation) ? '五维满分 · 数据已保存' : '五维有扣分 · 数据已保存'}
         </span>
       </div>
       <ScoreGrid evaluation={evaluation} />
+      <p className="mt-3 text-sm text-stone-700 dark:text-stone-300">
+        {evaluation.issues.some((issue) => issue.kind === 'bug')
+          ? '发现待修复问题：请查看下方问题依据与修复提示词。'
+          : evaluation.status === 'needs_evidence' || evaluation.missing.length > 0
+            ? '证据不足，暂不能确认是否需要修复；未凭缺少验证记录编造缺陷。'
+            : '本轮审核未发现待修复的代码问题，因此未生成修复提示词。过程扣分不等于功能未完成，具体核验范围见证据。'}
+      </p>
+
+      <div className="mt-3 rounded-xl bg-stone-50 p-3 dark:bg-stone-800/50">
+        <p className="text-xs font-semibold text-stone-500">逐项需求核验</p>
+        {evaluation.requirementChecks?.length ? <ul className="mt-2 space-y-3 text-xs text-stone-700 dark:text-stone-300">
+          {evaluation.requirementChecks.map((check,i)=><li key={i}>
+            <span className="font-semibold">{({completed:'已完成',failed:'存在未解决问题',unverified:'尚未核实'})[check.status]} · {check.requirement}</span>
+            <p className="mt-1 whitespace-pre-wrap break-words text-stone-500">{check.evidence}</p>
+          </li>)}
+        </ul> : <p className="mt-2 text-xs text-stone-500">旧版评价未记录逐项核验清单；可查看已有依据，重新审核后补充。</p>}
+      </div>
 
       <div className="mt-3 grid gap-3 lg:grid-cols-3">
         <div className="rounded-xl bg-stone-50 p-3 dark:bg-stone-800/50">
@@ -206,7 +224,10 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     () => cases.find((item) => item.taskId === (taskId ?? selectedTaskId)) ?? null,
     [cases, selectedTaskId, taskId],
   );
-  const selectedBusy = selectedCase ? caseBusy[selectedCase.taskId] ?? null : null;
+  const persistedJob = selectedCase?.preparation;
+  const persistedBusy: BusyAction | null = selectedCase && persistedJob && ['pending','running'].includes(persistedJob.status)
+    ? {taskId:selectedCase.taskId,label:'准备制表数据',jobId:persistedJob.jobId,progress:persistedJob.progress,message:persistedJob.message} : null;
+  const selectedBusy = selectedCase ? caseBusy[selectedCase.taskId] ?? persistedBusy : null;
   const startup = useMemo(() => {
     if (!selectedCase) return null;
     try { return { value: buildContainerCommand(selectedCase), error: '' }; }
@@ -265,6 +286,20 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     void loadProject(projectId);
     return () => { projectEpoch.current += 1; };
   }, [loadProject, projectId]);
+
+  useEffect(() => {
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = async () => {
+      try {
+        const result = await listCases(projectId);
+        if (active && activeProjectId.current === projectId) setCases(result);
+      } catch { /* The last known state remains visible; manual refresh reports errors. */ }
+      finally { if (active) timer=setTimeout(refresh,3000); }
+    };
+    timer=setTimeout(refresh,3000);
+    return () => { active=false; clearTimeout(timer); };
+  }, [projectId]);
 
   useEffect(() => {
     if (!selectedCase) return;
@@ -649,6 +684,24 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                   {taskId && <p className="mt-3 text-xs text-stone-500">已采集 {selectedCase.rounds.length} 轮、{selectedCase.captures.length} 份代码与轨迹快照。评分详情在“AI复审”查看；导出按钮位于本页顶部。</p>}
                 </section>
 
+                <section className="rounded-3xl border border-stone-200 bg-white p-5 dark:border-stone-800 dark:bg-stone-900">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <h3 className="text-base font-bold dark:text-stone-100">制表数据准备状态</h3>
+                    <TableStatusBadge progress={getTableProgress(selectedCase)} />
+                    <span className="text-xs text-stone-500">可导出 {getTableProgress(selectedCase).prepared}/{getTableProgress(selectedCase).total} 轮</span>
+                  </div>
+                  <p className="mt-2 text-xs text-stone-500">采集轨迹与代码 → 按真实轮次审核需求和五维表现 → 校验并保存数据。点击导出时才生成 Excel。</p>
+                  {taskId && view !== 'review' && <p className="mt-2 text-xs text-stone-500">在“AI复审”中查看逐项需求核验、评分依据，以及是否需要修复。</p>}
+                  {selectedBusy && <p className="mt-2 text-sm text-indigo-500">{selectedBusy.message}</p>}
+                  {persistedJob && <>
+                    <p className="mt-2 text-xs text-stone-500">耗时 {Math.floor((getTableProgress(selectedCase).elapsed ?? 0)/60)} 分钟 · 最后活动 {new Date(persistedJob.lastActivityAt*1000).toLocaleTimeString()}</p>
+                    {getTableProgress(selectedCase).quiet && <p className="mt-2 text-sm text-amber-600">超过 2 分钟没有新的审核进展，可能仍在等待模型响应；尚不能判定断线。可在后台任务中取消后重试。</p>}
+                    {persistedJob.error && <p className="mt-2 break-all text-sm text-red-500">{persistedJob.error}；已保存的轨迹与评分保留。</p>}
+                  </>}
+                  {!selectedBusy && selectedCase.rounds.some((r) => r.status==='complete') && getTableProgress(selectedCase).state!=='ready' &&
+                    <button className={`${SECONDARY_BUTTON} mt-3`} onClick={() => void runCaseJob(selectedCase.taskId,'继续准备制表数据',()=>resumeTable(selectedCase.taskId))}>继续准备未完成轮次</button>}
+                </section>
+
                 {(!taskId || view === 'review') && <>
                 <section className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm dark:border-stone-800 dark:bg-stone-900">
                   <div className="flex items-center justify-between gap-3">
@@ -670,6 +723,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                             </div>
                             <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-stone-700 dark:text-stone-300">{round.prompt}</p>
                             <p className="mt-2 text-[11px] text-stone-400">来源 {round.sourceStart}-{round.sourceEnd} · cwd {round.cwd || '未记录'} · capture {round.captureId || '未记录'}</p>
+                            <p className="mt-2 text-xs text-stone-500">{!latestEvaluation(round) ? '轨迹已保存，尚无审核结果；暂不能判断功能是否完成或需要修复。' : latestEvaluation(round)?.current === false ? '评价对应的规则或证据已变化，需要重新复审。' : latestEvaluation(round)?.status === 'needs_evidence' ? '已复审，待补证据，暂不可正式导出。' : '本轮评价已保存；历史版本不重复计入复审轮数。'}</p>
                             {round.reason && <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">{round.reason}</p>}
                           </div>
                           <button
@@ -681,7 +735,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                         {evaluationsFor(round).length > 0 && (
                           <div className="mt-4 space-y-3">
                             {evaluationsFor(round).map((evaluation, index) => <EvaluationCard key={evaluation.id || `${round.promptId}-${index}`} evaluation={evaluation} index={index} />)}
-                            {evaluationsFor(round).at(-1)?.nextPrompt && !isPerfectEvaluation(evaluationsFor(round).at(-1)!) && (
+                            {latestEvaluation(round)?.current !== false && latestEvaluation(round)?.nextPrompt && !isPerfectEvaluation(latestEvaluation(round)!) && (
                               <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4 dark:border-indigo-900/50 dark:bg-indigo-950/20">
                                 <div className="flex items-center justify-between gap-2">
                                   <div>
@@ -691,12 +745,12 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                                   <button
                                     className={SECONDARY_BUTTON}
                                     onClick={() => {
-                                      const text = evaluationsFor(round).at(-1)?.nextPrompt || '';
+                                      const text = latestEvaluation(round)?.nextPrompt || '';
                                       void navigator.clipboard.writeText(text).then(() => setNotice('下一轮建议已复制')).catch((error) => setActionError(errorMessage(error)));
                                     }}
                                   ><Clipboard className="h-4 w-4" />复制</button>
                                 </div>
-                                <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-indigo-900 dark:text-indigo-100">{evaluationsFor(round).at(-1)?.nextPrompt}</p>
+                                <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-indigo-900 dark:text-indigo-100">{latestEvaluation(round)?.nextPrompt}</p>
                               </div>
                             )}
                           </div>

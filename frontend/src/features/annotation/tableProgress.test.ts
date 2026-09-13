@@ -7,19 +7,19 @@ function round(overrides: Partial<AnnotationRound> = {}): AnnotationRound {
 }
 
 describe('table progress', () => {
-  it('counts saved low-score and missing-evidence evaluations as table data', () => {
+  it('counts low scores as prepared while keeping incomplete evidence separate', () => {
     const evaluations = [{ status: 'ready', evidenceHash: 'current', scores: [1, 2, 3, 4, 5] }, { status: 'needs_evidence', evidenceHash: 'current', scores: [null, 2, 3, 4, 5] }] as AnnotationRound['evaluations'];
-    expect(getTableProgress({ rounds: [round({ evaluations: evaluations!.slice(0, 1) }), round({ evaluations: evaluations!.slice(1) })] })).toEqual({ prepared: 2, total: 2 });
+    expect(getTableProgress({ rounds: [round({ evaluations: evaluations!.slice(0, 1) }), round({ evaluations: evaluations!.slice(1) })] })).toMatchObject({ prepared: 1, reviewed:2, missing:1, total: 2 });
   });
 
   it('does not count uncaptured, stale, pending or excluded rounds as prepared', () => {
     const evaluations = [{ status: 'ready', evidenceHash: 'old' }] as AnnotationRound['evaluations'];
-    expect(getTableProgress({ rounds: [round(), round({ evaluations }), round({ status: 'pending' }), round({ status: 'excluded' })] })).toEqual({ prepared: 0, total: 3 });
-    expect(getTableProgress({ rounds: [] })).toEqual({ prepared: 0, total: 0 });
+    expect(getTableProgress({ rounds: [round(), round({ evaluations }), round({ status: 'pending' }), round({ status: 'excluded' })] })).toMatchObject({ prepared: 0, total: 3 });
+    expect(getTableProgress({ rounds: [] })).toMatchObject({ prepared: 0, total: 0 });
   });
 
   it('counts a newly captured unreviewed round in the total to remove the completed mark', () => {
     const evaluations = [{ status: 'ready', evidenceHash: 'current' }] as AnnotationRound['evaluations'];
-    expect(getTableProgress({ rounds: [round({ evaluations }), round()] })).toEqual({ prepared: 1, total: 2 });
+    expect(getTableProgress({ rounds: [round({ evaluations }), round()] })).toMatchObject({ prepared: 1, total: 2 });
   });
 });

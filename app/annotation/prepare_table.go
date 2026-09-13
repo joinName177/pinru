@@ -21,6 +21,25 @@ func (s *AnnotationService) captureAndPrepareTable(ctx context.Context, req Capt
 	if err != nil {
 		return nil, err
 	}
+	return s.prepareCapturedRounds(ctx, c)
+}
+
+// Resume uses frozen evidence, so a retry never requires a running container.
+func (s *AnnotationService) resumeTable(ctx context.Context, taskID string) (*domain.Case, error) {
+	unlock, err := s.lockTask(taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	c, err := s.loadCase(taskID)
+	if err != nil {
+		return nil, err
+	}
+	return s.prepareCapturedRounds(ctx, c)
+}
+
+func (s *AnnotationService) prepareCapturedRounds(ctx context.Context, c *domain.Case) (*domain.Case, error) {
+	var err error
 	var rounds []domain.Round
 	for _, r := range c.Rounds {
 		if r.Status == "complete" {
@@ -35,7 +54,10 @@ func (s *AnnotationService) captureAndPrepareTable(ctx context.Context, req Capt
 			return nil, err
 		}
 		domain.ReportProgress(ctx, 15+80*i/len(rounds), fmt.Sprintf("轨迹已采集，正在使用 skill 准备制表数据：第 %d 轮（%d/%d）", r.Order, i+1, len(rounds)))
-		c, err = s.reviewLocked(ctx, ReviewRequest{TaskID: req.TaskID, PromptID: r.PromptID})
+		roundCtx := domain.WithProgress(ctx, func(percent int, message string) {
+			domain.ReportProgress(ctx, 15+(80*i+80*percent/100)/len(rounds), fmt.Sprintf("第 %d 轮（%d/%d）：%s", r.Order, i+1, len(rounds), message))
+		})
+		c, err = s.reviewLocked(roundCtx, ReviewRequest{TaskID: c.TaskID, PromptID: r.PromptID})
 		if err != nil {
 			return nil, fmt.Errorf("采集已保存，第 %d 轮制表数据准备失败（已完成的评分保留）：%w", r.Order, err)
 		}

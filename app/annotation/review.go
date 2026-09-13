@@ -30,6 +30,7 @@ func (s *AnnotationService) review(ctx context.Context, req ReviewRequest) (*dom
 
 // reviewLocked requires the caller to hold the task lock.
 func (s *AnnotationService) reviewLocked(ctx context.Context, req ReviewRequest) (*domain.Case, error) {
+	domain.ReportProgress(ctx, 0, "正在核对轨迹与代码证据")
 	c, err := s.loadCase(req.TaskID)
 	if err != nil {
 		return nil, err
@@ -51,13 +52,9 @@ func (s *AnnotationService) reviewLocked(ctx context.Context, req ReviewRequest)
 	if s.cli == nil {
 		return nil, errors.New("未配置审核执行器")
 	}
-	model, err := s.store.GetConfig("annotation_review_model")
+	model, modelLabel, err := s.reviewModel()
 	if err != nil {
 		return nil, err
-	}
-	modelLabel := strings.TrimSpace(model)
-	if modelLabel == "" {
-		modelLabel = "Codex CLI 默认配置"
 	}
 	skillDir, skillHash, err := s.reviewSkill(ctx)
 	if err != nil {
@@ -109,12 +106,17 @@ func (s *AnnotationService) reviewLocked(ctx context.Context, req ReviewRequest)
 	if !req.Force {
 		for i := len(r.Evaluations) - 1; i >= 0; i-- {
 			e := r.Evaluations[i]
+			if e.EvidenceHash != r.EvidenceHash {
+				continue
+			}
 			if e.EvidenceHash == r.EvidenceHash && e.SkillHash == skillHash && e.Model == modelLabel && e.Status == "ready" && e.SourceHash == stableKey(cap.Hash+":"+cap.TraceHash) {
 				if err := verifyReviewArtifacts(ctx, e); err != nil {
 					return nil, err
 				}
+				domain.ReportProgress(ctx, 100, "已复用本轮有效评分")
 				return c, nil
 			}
+			break // A newer assessment must not be hidden by an older ready version.
 		}
 	}
 	id := uuid.NewString()
@@ -173,10 +175,12 @@ func (s *AnnotationService) reviewLocked(ctx context.Context, req ReviewRequest)
 	if err := os.WriteFile(inputPath, raw, 0600); err != nil {
 		return nil, err
 	}
-	evaluation, err := s.cli.RunSatisfactionReview(ctx, appcli.SatisfactionReviewRequest{WorkDir: work, SkillDir: filepath.Join(work, "skill"), InputPath: inputPath, Model: strings.TrimSpace(model)}, nil)
+	domain.ReportProgress(ctx, 25, "证据副本已准备，等待审核模型响应")
+	evaluation, err := s.cli.RunSatisfactionReview(ctx, appcli.SatisfactionReviewRequest{WorkDir: work, SkillDir: filepath.Join(work, "skill"), InputPath: inputPath, Model: strings.TrimSpace(model)}, reviewActivity(ctx))
 	if err != nil {
 		return nil, err
 	}
+	domain.ReportProgress(ctx, 85, "已收到评价，正在校验评分与证据")
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -225,7 +229,45 @@ func (s *AnnotationService) reviewLocked(ctx context.Context, req ReviewRequest)
 	}
 	c.Rounds[index].Evaluations = append(c.Rounds[index].Evaluations, *evaluation)
 	// Store only after full validation. Optimistic save prevents stale updates.
-	return s.store.SaveAnnotationCase(*c, c.Revision)
+	saved, err := s.store.SaveAnnotationCase(*c, c.Revision)
+	if err == nil {
+		domain.ReportProgress(ctx, 100, "本轮评价已保存")
+	}
+	return saved, err
+}
+
+// Report only observable events; never infer validation coverage from tool activity.
+func reviewActivity(ctx context.Context) func(string) {
+	var last time.Time
+	return func(line string) {
+		var event struct {
+			Type string `json:"type"`
+			Item struct {
+				Type string `json:"type"`
+			} `json:"item"`
+		}
+		if json.Unmarshal([]byte(line), &event) != nil {
+			return
+		}
+		message := ""
+		switch event.Type {
+		case "thread.started", "turn.started":
+			message = "审核会话已启动，等待模型分析"
+		case "item.started", "item.completed", "item.updated":
+			switch event.Item.Type {
+			case "command_execution", "mcp_tool_call":
+				message = "审核模型正在进行工具检查，具体覆盖范围以最终证据为准"
+			case "agent_message", "reasoning":
+				message = "已收到模型分析进展，正在准备审核结果"
+			}
+		case "turn.completed":
+			message = "模型已结束本轮分析，正在读取结果"
+		}
+		if message != "" && (last.IsZero() || time.Since(last) >= 3*time.Second || event.Type == "turn.completed") {
+			last = time.Now()
+			domain.ReportProgress(ctx, 40, message)
+		}
+	}
 }
 
 func verifyReviewArtifacts(ctx context.Context, e domain.Evaluation) error {

@@ -36,6 +36,20 @@ func TestExportSelectionKeepsReviewedRoundsAcrossTasks(t *testing.T) {
 	}
 }
 
+func TestReviewedExportRejectsLatestMissingOrStaleEvenWithOlderReady(t *testing.T) {
+	old := domain.Evaluation{Status: "ready", EvidenceHash: "h", CreatedAt: 1}
+	stale := false
+	for _, latest := range []domain.Evaluation{
+		{Status: "needs_evidence", EvidenceHash: "h", CreatedAt: 2},
+		{Status: "ready", EvidenceHash: "h", CreatedAt: 2, Current: &stale},
+	} {
+		c := domain.Case{TaskID: "a", Rounds: []domain.Round{{Status: "complete", EvidenceHash: "h", Evaluations: []domain.Evaluation{old, latest}}}}
+		if _, err := selectExportCases([]domain.Case{c}, ExportRequest{ReviewedOnly: true}); err == nil {
+			t.Fatal("export accepted stale or incomplete latest review")
+		}
+	}
+}
+
 func TestExportDirectoryUsesGlobalConfig(t *testing.T) {
 	s, _, _ := annotationFixture(t)
 	configured := filepath.Join(t.TempDir(), "shared exports")

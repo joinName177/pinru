@@ -8,12 +8,15 @@ import (
 
 // The remaining four task types are fixed at one per generated document.
 type DocumentCounts struct {
-	CodeGen int `json:"codeGen"`
-	Feature int `json:"feature"`
-	BugFix  int `json:"bugFix"`
+	CodeGen    int    `json:"codeGen"`
+	Feature    int    `json:"feature"`
+	BugFix     int    `json:"bugFix"`
+	Difficulty string `json:"difficulty,omitempty"`
 }
 
-func DefaultDocumentCounts() DocumentCounts { return DocumentCounts{CodeGen: 8, Feature: 8} }
+func DefaultDocumentCounts() DocumentCounts {
+	return DocumentCounts{CodeGen: 8, Feature: 8, Difficulty: "auto"}
+}
 
 func (c DocumentCounts) Validate() error {
 	if c.CodeGen < 0 || c.Feature < 0 || c.BugFix < 0 {
@@ -23,6 +26,11 @@ func (c DocumentCounts) Validate() error {
 	const maxCount = 9007199254740987
 	if uint64(c.CodeGen) > maxCount || uint64(c.Feature) > maxCount || uint64(c.BugFix) > maxCount || uint64(c.CodeGen)+uint64(c.Feature)+uint64(c.BugFix) > maxCount {
 		return fmt.Errorf("题型总数过大")
+	}
+	switch strings.TrimSpace(c.Difficulty) {
+	case "", "auto", "general", "challenging":
+	default:
+		return fmt.Errorf("批次难度必须是 auto、general 或 challenging")
 	}
 	return nil
 }

@@ -159,12 +159,16 @@ export default function Board() {
     const projectId = activeProject?.id;
     if (!projectId) return;
     let current = true;
-    void listCases(projectId).then((cases) => {
-      if (current) setTableSummary({ projectId, byTask: Object.fromEntries(cases.map((item) => [item.taskId, getTableProgress(item)])) });
-    }).catch(() => {
-      if (current) setTableSummary({ projectId, byTask: {} });
-    });
-    return () => { current = false; };
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = async () => {
+      try {
+        const cases = await listCases(projectId);
+        if (current) setTableSummary({ projectId, byTask: Object.fromEntries(cases.map((item) => [item.taskId, getTableProgress(item)])) });
+      } catch { /* Preserve last saved state during temporary read failures. */ }
+      finally { if (current) timer=setTimeout(refresh, 5000); }
+    };
+    void refresh();
+    return () => { current = false; clearTimeout(timer); };
   }, [activeProject?.id, tasks, annotationRefresh]);
   const setActiveProject       = useAppStore(s => s.setActiveProject);
   const loadActiveProject      = useAppStore(s => s.loadActiveProject);

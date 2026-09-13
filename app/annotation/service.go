@@ -136,10 +136,44 @@ func (s *AnnotationService) ListCases(projectID string) ([]domain.Case, error) {
 		return nil, err
 	}
 	result := make([]domain.Case, 0, len(tasks))
+	preparations, err := s.store.LatestAnnotationPreparations(projectID)
+	if err != nil {
+		return nil, err
+	}
+	_, skillHash, err := s.reviewSkill(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	_, modelLabel, err := s.reviewModel()
+	if err != nil {
+		return nil, err
+	}
 	for _, task := range tasks {
 		c, err := s.loadCase(task.ID)
 		if err != nil {
 			return nil, err
+		}
+		c.Preparation = preparations[task.ID]
+		for ri := range c.Rounds {
+			r := &c.Rounds[ri]
+			var sourceHash string
+			for _, cap := range c.Captures {
+				if cap.ID == r.CaptureID {
+					sourceHash = stableKey(cap.Hash + ":" + cap.TraceHash)
+					break
+				}
+			}
+			// Earlier rounds captured together use the same reconstruction evidence
+			// as reviewLocked; this does not assert an exact historical code state.
+			if sourceHash == "" && len(c.Captures) > 0 {
+				cap := c.Captures[len(c.Captures)-1]
+				sourceHash = stableKey(cap.Hash + ":" + cap.TraceHash)
+			}
+			for ei := range r.Evaluations {
+				e := &r.Evaluations[ei]
+				current := e.SkillHash == skillHash && e.Model == modelLabel && e.EvidenceHash == r.EvidenceHash && sourceHash != "" && e.SourceHash == sourceHash
+				e.Current = &current
+			}
 		}
 		result = append(result, *c)
 	}
@@ -237,6 +271,12 @@ func (s *AnnotationService) SaveCaseSettings(req SettingsRequest) (*domain.Case,
 // ExecuteJob connects long operations to the application's existing job queue.
 func (s *AnnotationService) ExecuteJob(ctx context.Context, kind, payload string) (any, error) {
 	switch kind {
+	case "annotation_resume":
+		var r PrepareRequest
+		if err := json.Unmarshal([]byte(payload), &r); err != nil {
+			return nil, err
+		}
+		return s.resumeTable(ctx, r.TaskID)
 	case "annotation_publish":
 		var r PrepareRequest
 		if err := json.Unmarshal([]byte(payload), &r); err != nil {

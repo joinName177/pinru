@@ -10,6 +10,8 @@ export interface AnnotationIssue {
 }
 
 export interface AnnotationEvaluation {
+	current?: boolean;
+  requirementChecks?: Array<{requirement:string; status:'completed'|'failed'|'unverified'; evidence:string}>;
   id: string;
   createdAt: number;
   skillHash: string;
@@ -61,6 +63,7 @@ export interface AnnotationCapture {
 }
 
 export interface AnnotationCase {
+	preparation?: AnnotationPreparation;
   taskId: string;
   projectId: string;
   taskName: string;
@@ -78,6 +81,17 @@ export interface AnnotationCase {
   captures: AnnotationCapture[];
   revision: number;
   updatedAt: number;
+}
+
+export interface AnnotationPreparation {
+  jobId: string;
+  status: string;
+  progress: number;
+  message: string;
+  error: string;
+  startedAt: number;
+  finishedAt: number;
+  lastActivityAt: number;
 }
 
 export interface AnnotationContainer {
@@ -179,6 +193,10 @@ export function prepareCase(taskId: string): Promise<BackgroundJob> {
 
 export function captureAndPrepareTable(request: CaptureRequest): Promise<BackgroundJob> {
   return submitAnnotationJob('annotation_capture_table', request.taskId, request);
+}
+
+export function resumeTable(taskId: string): Promise<BackgroundJob> {
+  return submitAnnotationJob('annotation_resume', taskId, { taskId });
 }
 
 export function bindContainer(request: BindContainerRequest): Promise<BackgroundJob> {

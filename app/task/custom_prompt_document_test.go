@@ -76,10 +76,16 @@ func TestValidateCustomPromptDocumentBatchRules(t *testing.T) {
 		t.Fatalf("validate without README error = %v, want README error", err)
 	}
 
-	wrongDifficulty := append([]customPromptEntry(nil), entries...)
-	wrongDifficulty[0].PromptDifficulty = "困难"
-	if err := validateCustomPromptDocumentBatch(wrongDifficulty); err == nil || !strings.Contains(err.Error(), "必须是【一般】") {
-		t.Fatalf("validate wrong difficulty error = %v, want difficulty error", err)
+	validDifficulty := append([]customPromptEntry(nil), entries...)
+	validDifficulty[0].PromptDifficulty = "困难"
+	if err := validateCustomPromptDocumentBatch(validDifficulty); err != nil {
+		t.Fatalf("validate real difficulty error = %v", err)
+	}
+
+	unknownDifficulty := append([]customPromptEntry(nil), entries...)
+	unknownDifficulty[0].PromptDifficulty = "超难"
+	if err := validateCustomPromptDocumentBatch(unknownDifficulty); err == nil || !strings.Contains(err.Error(), "难度不支持") {
+		t.Fatalf("validate unknown difficulty error = %v, want unsupported difficulty error", err)
 	}
 
 	tooFew := entries[:10]
@@ -88,7 +94,7 @@ func TestValidateCustomPromptDocumentBatchRules(t *testing.T) {
 	}
 }
 
-func TestNormalizeCustomPromptDocumentBatchDifficulties(t *testing.T) {
+func TestCustomPromptDocumentBatchPreservesDifficulties(t *testing.T) {
 	entries := []customPromptEntry{
 		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增发布审核台，支持管理员查看待审核内容并批量处理。"},
 		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增模板配置页，让运营维护发布模板并在发布流程复用。"},
@@ -109,8 +115,6 @@ func TestNormalizeCustomPromptDocumentBatchDifficulties(t *testing.T) {
 		{TaskType: "代码理解", PromptDifficulty: "一般", PromptText: "梳理发布流程从填写到提交完成的关键状态流，并生成 README 文档。"},
 	}
 
-	normalizeCustomPromptDocumentBatchDifficulties(entries)
-
 	if err := validateCustomPromptDocumentBatch(entries); err != nil {
 		t.Fatalf("validateCustomPromptDocumentBatch() error = %v", err)
 	}
@@ -120,8 +124,18 @@ func TestNormalizeCustomPromptDocumentBatchDifficulties(t *testing.T) {
 			counts[entry.PromptDifficulty]++
 		}
 	}
-	if counts["一般"] != 16 || counts["困难"] != 0 {
-		t.Fatalf("difficulty counts = %+v, want 一般 16", counts)
+	if counts["一般"] != 3 || counts["困难"] != 13 {
+		t.Fatalf("difficulty counts = %+v, want preserved labels", counts)
+	}
+}
+
+func TestParseCustomPromptDocumentKeepsUnknownDifficultyForValidation(t *testing.T) {
+	entries := parseCustomPromptDocumentEntries("**Feature迭代**\n1. 【超难】扩展已有流程")
+	if len(entries) != 1 || entries[0].PromptDifficulty != "超难" {
+		t.Fatalf("entries = %+v, want unknown label preserved", entries)
+	}
+	if err := validateCustomPromptDocumentBatch(entries); err == nil || !strings.Contains(err.Error(), "难度不支持") {
+		t.Fatalf("validate error = %v, want unsupported difficulty", err)
 	}
 }
 
@@ -275,7 +289,7 @@ func TestCreateTasksFromCustomPromptDocumentsCreatesTasksAndPromptArtifacts(t *t
 	if seenTypes["0-1代码生成"] != 8 || seenTypes["Feature迭代"] != 8 || seenTypes["代码理解"] != 1 {
 		t.Fatalf("seenTypes = %+v", seenTypes)
 	}
-	if seenDifficulties["一般"] != 16 || seenDifficulties["困难"] != 0 {
+	if seenDifficulties["一般"] != 4 || seenDifficulties["困难"] != 12 {
 		t.Fatalf("seenDifficulties = %+v", seenDifficulties)
 	}
 }

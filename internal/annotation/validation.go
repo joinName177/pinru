@@ -36,6 +36,10 @@ var allowedIssueKinds = map[string]struct{}{
 	"bug": {}, "process": {}, "evidence": {},
 }
 
+var allowedRequirementCheckStatuses = map[string]struct{}{
+	"completed": {}, "failed": {}, "unverified": {},
+}
+
 // ValidateEvaluation checks only structural, enum, evidence, and obvious
 // score-description consistency. It deliberately does not invent a semantic
 // score or claim that the underlying implementation was verified.
@@ -124,6 +128,27 @@ func ValidateEvaluation(round Round, evaluation Evaluation) error {
 			return fmt.Errorf("evaluation evidence %d is empty", index+1)
 		}
 	}
+	hasFailedRequirement := false
+	hasUnverifiedRequirement := false
+	for index, check := range evaluation.RequirementChecks {
+		if strings.TrimSpace(check.Requirement) == "" {
+			return fmt.Errorf("evaluation requirement check %d requirement is required", index+1)
+		}
+		if _, ok := allowedRequirementCheckStatuses[check.Status]; !ok {
+			return fmt.Errorf("evaluation requirement check %d status %q is invalid", index+1, check.Status)
+		}
+		if strings.TrimSpace(check.Evidence) == "" {
+			return fmt.Errorf("evaluation requirement check %d evidence is required", index+1)
+		}
+		hasFailedRequirement = hasFailedRequirement || check.Status == "failed"
+		hasUnverifiedRequirement = hasUnverifiedRequirement || check.Status == "unverified"
+	}
+	if hasUnverifiedRequirement && !needsEvidence {
+		return fmt.Errorf("unverified requirement requires needs_evidence status and specific missing evidence")
+	}
+	if hasUnverifiedRequirement && len(evaluation.Missing) == 0 {
+		return fmt.Errorf("unverified requirement requires specific missing evidence")
+	}
 	if evaluation.Status == "ready" {
 		if nilScores != 0 {
 			return fmt.Errorf("ready evaluation has %d missing scores", nilScores)
@@ -133,6 +158,7 @@ func ValidateEvaluation(round Round, evaluation Evaluation) error {
 		}
 	}
 
+	hasBug := false
 	for index, issue := range evaluation.Issues {
 		if _, ok := allowedIssueKinds[issue.Kind]; !ok {
 			return fmt.Errorf("evaluation issue %d kind %q is invalid", index+1, issue.Kind)
@@ -143,6 +169,13 @@ func ValidateEvaluation(round Round, evaluation Evaluation) error {
 		if strings.TrimSpace(issue.Evidence) == "" {
 			return fmt.Errorf("evaluation issue %d evidence is required", index+1)
 		}
+		hasBug = hasBug || issue.Kind == "bug"
+	}
+	if hasFailedRequirement && !hasBug {
+		return fmt.Errorf("failed requirement requires a corresponding bug issue")
+	}
+	if hasUnverifiedRequirement && !hasBug && evaluation.Scores[0] != nil {
+		return fmt.Errorf("unverified requirement without a confirmed bug requires a null delivery score")
 	}
 	return ValidateRepairConsistency(evaluation)
 }

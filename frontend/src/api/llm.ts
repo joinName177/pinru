@@ -53,7 +53,14 @@ export interface GenerateCustomProjectPromptDocumentsRequest {
   providerId?: string | null;
 }
 
-export interface CustomPromptCounts { codeGen: number; feature: number; bugFix: number }
+export type CustomPromptDifficulty = 'auto' | 'general' | 'challenging';
+
+export interface CustomPromptCounts {
+  codeGen: number;
+  feature: number;
+  bugFix: number;
+  difficulty?: CustomPromptDifficulty;
+}
 
 export interface CustomProjectPromptDocumentDetail {
   projectName: string;

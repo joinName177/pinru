@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -55,5 +56,38 @@ func TestCaptureAndTableKeepsCaptureOnReviewFailure(t *testing.T) {
 	c, err := s.store.GetAnnotationCase("题目-1")
 	if err != nil || len(c.Rounds) != 1 || len(c.Captures) != 1 {
 		t.Fatalf("lost capture: %+v %v", c, err)
+	}
+}
+
+func TestResumeUsesFrozenEvidenceAndKeepsCompletedRounds(t *testing.T) {
+	s, trace, source := annotationFixture(t)
+	s.cli, _ = fakeReviewCLI(t)
+	if _, err := s.captureAndPrepareTable(context.Background(), CaptureRequest{TaskID: "题目-1", TracePath: trace}); err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureTrace(t, trace, source, 2)
+	if _, err := s.Capture(CaptureRequest{TaskID: "题目-1", TracePath: trace}); err != nil {
+		t.Fatal(err)
+	}
+	s.cli = nil
+	if _, err := s.resumeTable(context.Background(), "题目-1"); err == nil {
+		t.Fatal("expected missing evaluator failure")
+	}
+	cli, count := fakeReviewCLI(t)
+	s.cli = cli
+	// The original source can disappear after collection; retries use only saved evidence.
+	if err := os.Rename(trace, filepath.Join(filepath.Dir(trace), "moved.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.resumeTable(context.Background(), "题目-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Rounds) != 2 || len(c.Rounds[0].Evaluations) != 1 || len(c.Rounds[1].Evaluations) != 1 {
+		t.Fatalf("lost rounds: %+v", c.Rounds)
+	}
+	data, _ := os.ReadFile(count)
+	if string(data) != "called\n" {
+		t.Fatalf("reran completed round: %q", data)
 	}
 }

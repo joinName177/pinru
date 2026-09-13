@@ -114,13 +114,14 @@ func TestGenerateCustomProjectPromptDocumentsWritesMarkdownToCustomRoot(t *testi
 	}
 }
 
-func TestBuildCustomProjectPromptDocumentPromptUsesFixedBatchRules(t *testing.T) {
+func TestBuildCustomProjectPromptDocumentPromptUsesActualDifficultyByDefault(t *testing.T) {
 	prompt := buildCustomProjectPromptDocumentPrompt("zw-001", nil)
 
 	requiredSnippets := []string{
 		"只生成 20 条，其中 0-1代码生成 8 条，Feature迭代 8 条，Bug修复 0 条",
-		"全部统一为【一般】",
-		"不要生成【简单】、【困难】或【地狱】",
+		"按真实实现工作量标注",
+		"不要为了多轮评测刻意提高难度",
+		"避免对项目已经具备的功能重复出题",
 		"交付边界点到为止",
 		"要求把梳理结果沉淀为 README 文档",
 		"不要写成需要改代码或改多文件的任务",
@@ -154,6 +155,23 @@ func TestBuildCustomProjectPromptDocumentPromptUsesFixedBatchRules(t *testing.T)
 		if strings.Contains(prompt, snippet) {
 			t.Fatalf("custom prompt document prompt still contains stale rule %q:\n%s", snippet, prompt)
 		}
+	}
+}
+
+func TestBuildCustomProjectPromptDocumentPromptAppliesBatchDifficultyPreference(t *testing.T) {
+	general := buildCustomProjectPromptDocumentPrompt("zw-001", nil, internalprompt.DocumentCounts{Difficulty: "general"})
+	if !strings.Contains(general, "优先生成实际工作量属于【一般】") {
+		t.Fatalf("general prompt missing preference:\n%s", general)
+	}
+
+	challenging := buildCustomProjectPromptDocumentPrompt("zw-001", nil, internalprompt.DocumentCounts{Difficulty: "challenging"})
+	for _, want := range []string{"优先寻找实际工作量属于【困难】", "真实状态流转", "数据一致性", "异常恢复", "不能编造 Bug"} {
+		if !strings.Contains(challenging, want) {
+			t.Fatalf("challenging prompt missing %q:\n%s", want, challenging)
+		}
+	}
+	if strings.Contains(challenging, "代码理解要求：只输出 1 条且难度固定为【困难】") {
+		t.Fatalf("challenging preference must not force code understanding difficulty:\n%s", challenging)
 	}
 }
 

@@ -7,12 +7,12 @@ import (
 )
 
 func TestDocumentCountsValidation(t *testing.T) {
-	for _, counts := range []DocumentCounts{{}, {CodeGen: 3, Feature: 2, BugFix: 4}, DefaultDocumentCounts()} {
+	for _, counts := range []DocumentCounts{{}, {CodeGen: 3, Feature: 2, BugFix: 4, Difficulty: "auto"}, {Difficulty: "general"}, {Difficulty: "challenging"}, DefaultDocumentCounts()} {
 		if err := counts.Validate(); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, counts := range []DocumentCounts{{CodeGen: -1}, {Feature: -1}, {BugFix: -1}, {CodeGen: 9007199254740991}} {
+	for _, counts := range []DocumentCounts{{CodeGen: -1}, {Feature: -1}, {BugFix: -1}, {CodeGen: 9007199254740991}, {Difficulty: "hard"}} {
 		if err := counts.Validate(); err == nil {
 			t.Fatalf("accepted invalid counts: %+v", counts)
 		}

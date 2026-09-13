@@ -15,12 +15,14 @@ describe('custom document quantities', () => {
     fireEvent.change(screen.getByRole('spinbutton', { name: '0-1代码生成' }), { target: { value: '0' } });
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Feature迭代' }), { target: { value: '3' } });
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Bug修复' }), { target: { value: '2' } });
+    expect(screen.getByRole('combobox', { name: '批次难度' })).toHaveValue('auto');
+    fireEvent.change(screen.getByRole('combobox', { name: '批次难度' }), { target: { value: 'challenging' } });
     for (const name of ['代码理解', '工程化', '代码测试', '代码重构']) {
       expect(screen.getByRole('spinbutton', { name })).toBeDisabled();
       expect(screen.getByRole('spinbutton', { name })).toHaveValue(1);
     }
     fireEvent.click(screen.getByRole('button', { name: '导入并生成文档' }));
-    expect(onImport).toHaveBeenCalledWith(['cyc-05'], { codeGen: 0, feature: 3, bugFix: 2 });
+    expect(onImport).toHaveBeenCalledWith(['cyc-05'], { codeGen: 0, feature: 3, bugFix: 2, difficulty: 'challenging' });
   });
 
   it('blocks empty, fractional and negative quantities', () => {

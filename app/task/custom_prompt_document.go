@@ -97,7 +97,7 @@ type managedClaimPlan struct {
 var (
 	customPromptHeadingPattern = regexp.MustCompile(`^\s{0,3}(?:#{1,6}\s*)?(?:\*\*)?\s*(0-1代码生成|Feature迭代|代码理解|Bug修复|代码重构|工程化|代码测试|未归类)\s*(?:\*\*)?\s*$`)
 	customPromptItemPattern    = regexp.MustCompile(`^\s*(?:[-*]\s+|\d+[.、)]\s+)(.*)$`)
-	customPromptDifficultyPat  = regexp.MustCompile(`^【(简单|一般|困难|地狱)】\s*(.*)$`)
+	customPromptDifficultyPat  = regexp.MustCompile(`^【([^】]+)】\s*(.*)$`)
 )
 
 func (s *TaskService) PickCustomPromptDocuments() ([]string, error) {
@@ -249,7 +249,6 @@ func (s *TaskService) prepareCustomPromptTaskJobsFromSingleDocument(
 		return detail, nil
 	}
 	entries := parseCustomPromptDocumentEntries(string(content))
-	normalizeCustomPromptDocumentBatchDifficulties(entries)
 	detail.ParsedCount = len(entries)
 	if len(entries) == 0 {
 		detail.Status = "error"
@@ -510,15 +509,9 @@ func parseCustomPromptDocumentEntries(content string) []customPromptEntry {
 func splitCustomPromptDifficulty(value string) (string, string) {
 	trimmed := strings.TrimSpace(value)
 	if matches := customPromptDifficultyPat.FindStringSubmatch(trimmed); len(matches) == 3 {
-		return matches[1], strings.TrimSpace(matches[2])
+		return strings.TrimSpace(matches[1]), strings.TrimSpace(matches[2])
 	}
 	return store.DefaultPromptDifficulty, trimmed
-}
-
-func normalizeCustomPromptDocumentBatchDifficulties(entries []customPromptEntry) {
-	for i := range entries {
-		entries[i].PromptDifficulty = store.DefaultPromptDifficulty
-	}
 }
 
 func validateCustomPromptDocumentBatch(entries []customPromptEntry) error {
@@ -533,8 +526,10 @@ func validateCustomPromptDocumentBatch(entries []customPromptEntry) error {
 		default:
 			return fmt.Errorf("不支持的题型：%s", kind)
 		}
-		if strings.TrimSpace(entry.PromptDifficulty) != "一般" {
-			return fmt.Errorf("第 %d 条 %s 题难度必须是【一般】", index+1, kind)
+		switch strings.TrimSpace(entry.PromptDifficulty) {
+		case "简单", "一般", "困难", "地狱":
+		default:
+			return fmt.Errorf("第 %d 条 %s 题难度不支持：%s", index+1, kind, entry.PromptDifficulty)
 		}
 		if kind == "代码理解" && !strings.Contains(strings.ToLower(entry.PromptText), "readme") {
 			return errors.New("代码理解题必须明确要求生成 README 文档")

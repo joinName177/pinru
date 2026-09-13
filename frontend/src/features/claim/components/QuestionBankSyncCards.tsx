@@ -423,14 +423,16 @@ export function CustomProjectPickerModal({
   const prefixLabel = formatCustomProjectPrefixes(scanResult?.prefixes);
   const [selectedNames, setSelectedNames] = useState<string[]>([]);
   const [quantities, setQuantities] = useState({ codeGen: '8', feature: '8', bugFix: '0' });
+  const [difficulty, setDifficulty] = useState<NonNullable<CustomPromptCounts['difficulty']>>('auto');
   const counts: CustomPromptCounts = {
     codeGen: Number(quantities.codeGen),
     feature: Number(quantities.feature),
     bugFix: Number(quantities.bugFix),
+    difficulty,
   };
   const totalCount = counts.codeGen + counts.feature + counts.bugFix + 4;
   const validCounts = [quantities.codeGen, quantities.feature, quantities.bugFix].every((value: string) => /^\d+$/.test(value))
-    && Object.values(counts).every((n) => Number.isSafeInteger(n) && n >= 0)
+    && [counts.codeGen, counts.feature, counts.bugFix].every((n) => Number.isSafeInteger(n) && n >= 0)
     && Number.isSafeInteger(totalCount);
   const selectedNameSet = useMemo(() => new Set(selectedNames), [selectedNames]);
 
@@ -486,6 +488,18 @@ export function CustomProjectPickerModal({
           )}
           <fieldset className="mb-4 rounded-xl border border-stone-200 p-3 dark:border-stone-700" disabled={importing || promptDocGenerating}>
             <legend className="px-1 text-sm font-semibold dark:text-stone-100">每个项目生成数量</legend>
+            <label className="mb-3 block text-xs text-stone-600 dark:text-stone-300">
+              批次难度
+              <select
+                value={difficulty}
+                onChange={(event) => setDifficulty(event.target.value as NonNullable<CustomPromptCounts['difficulty']>)}
+                className="mt-1 w-full rounded-lg border border-stone-300 bg-transparent p-2 dark:border-stone-700"
+              >
+                <option value="auto">自动（按实际难度）</option>
+                <option value="general">一般</option>
+                <option value="challenging">困难优先</option>
+              </select>
+            </label>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {([['codeGen', '0-1代码生成'], ['feature', 'Feature迭代'], ['bugFix', 'Bug修复']] as const).map(([key, label]) => (
                 <label key={key} className="text-xs text-stone-600 dark:text-stone-300">

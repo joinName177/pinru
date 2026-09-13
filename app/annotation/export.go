@@ -103,6 +103,9 @@ func (s *AnnotationService) preflight(ctx context.Context, cases []domain.Case) 
 			for i := len(r.Evaluations) - 1; i >= 0; i-- {
 				e := r.Evaluations[i]
 				if e.EvidenceHash == r.EvidenceHash {
+					if e.Current != nil && !*e.Current {
+						report.Issues = append(report.Issues, fmt.Sprintf("%s 第 %d 轮审核配置或证据已变化，请重新审核", c.TaskName, r.Order))
+					}
 					var capture *domain.Capture
 					for i := range c.Captures {
 						if c.Captures[i].ID == r.CaptureID {
@@ -318,11 +321,15 @@ func selectExportCases(cases []domain.Case, req ExportRequest) ([]domain.Case, e
 				if r.Status != "complete" {
 					continue
 				}
-				for _, e := range r.Evaluations {
-					if e.EvidenceHash == r.EvidenceHash && (e.Status == "ready" || e.Status == "needs_evidence") {
-						rounds = append(rounds, r)
-						break
+				var latest *domain.Evaluation
+				for i := range r.Evaluations {
+					e := &r.Evaluations[i]
+					if latest == nil || e.CreatedAt >= latest.CreatedAt {
+						latest = e
 					}
+				}
+				if latest != nil && latest.EvidenceHash == r.EvidenceHash && latest.Status == "ready" && (latest.Current == nil || *latest.Current) {
+					rounds = append(rounds, r)
 				}
 			}
 			if len(rounds) == 0 {
