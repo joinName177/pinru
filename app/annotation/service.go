@@ -144,10 +144,6 @@ func (s *AnnotationService) ListCases(projectID string) ([]domain.Case, error) {
 	if err != nil {
 		return nil, err
 	}
-	_, modelLabel, err := s.reviewModel()
-	if err != nil {
-		return nil, err
-	}
 	for _, task := range tasks {
 		c, err := s.loadCase(task.ID)
 		if err != nil {
@@ -171,7 +167,11 @@ func (s *AnnotationService) ListCases(projectID string) ([]domain.Case, error) {
 			}
 			for ei := range r.Evaluations {
 				e := &r.Evaluations[ei]
-				current := e.SkillHash == skillHash && e.Model == modelLabel && e.EvidenceHash == r.EvidenceHash && sourceHash != "" && e.SourceHash == sourceHash
+				// A completed table record remains exportable when the configured
+				// evaluator model changes. Model identity is retained for audit and
+				// review-cache decisions; freshness here describes the frozen
+				// evidence and scoring-rule version shown on the task card.
+				current := e.SkillHash == skillHash && e.EvidenceHash == r.EvidenceHash && sourceHash != "" && e.SourceHash == sourceHash
 				e.Current = &current
 			}
 		}

@@ -71,7 +71,7 @@ func TestExpiredPreparationRecoveryDoesNotEraseGrades(t *testing.T) {
 	}
 }
 
-func TestEarlierReconstructedRoundsAndModelChangesHaveConsistentFreshness(t *testing.T) {
+func TestEarlierReconstructedRoundsRemainPreparedAfterReviewModelSettingChanges(t *testing.T) {
 	s, trace, source := annotationFixture(t)
 	writeFixtureTrace(t, trace, source, 2)
 	s.cli, _ = fakeReviewCLI(t)
@@ -95,8 +95,8 @@ func TestEarlierReconstructedRoundsAndModelChangesHaveConsistentFreshness(t *tes
 		t.Fatal(err)
 	}
 	for _, r := range cases[0].Rounds {
-		if cur := r.Evaluations[0].Current; cur == nil || *cur {
-			t.Fatalf("round %d ignored model change", r.Order)
+		if cur := r.Evaluations[0].Current; cur == nil || !*cur {
+			t.Fatalf("round %d lost prepared data after model setting change", r.Order)
 		}
 	}
 }

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestDefaultReviewModelFingerprintInvalidatesCacheAndCurrentState(t *testing.T) {
+func TestDefaultReviewModelFingerprintInvalidatesCacheWithoutDiscardingSavedTableData(t *testing.T) {
 	s, trace, _ := annotationFixture(t)
 	configHome := t.TempDir()
 	t.Setenv("CODEX_HOME", configHome)
@@ -35,13 +35,40 @@ func TestDefaultReviewModelFingerprintInvalidatesCacheAndCurrentState(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current := cases[0].Rounds[0].Evaluations[0].Current; current == nil || *current {
-		t.Fatalf("evaluation current = %v after default model config changed", current)
+	if current := cases[0].Rounds[0].Evaluations[0].Current; current == nil || !*current {
+		t.Fatalf("saved table data was discarded after default model config changed: current = %v", current)
 	}
 	if _, err := s.Review(ReviewRequest{TaskID: "题目-1", PromptID: "p1"}); err != nil {
 		t.Fatal(err)
 	}
 	assertReviewCallCount(t, calls, 2)
+}
+
+func TestDefaultReviewModelFingerprintIgnoresCodexProjectTrustEntries(t *testing.T) {
+	s, _, _ := annotationFixture(t)
+	configHome := t.TempDir()
+	t.Setenv("CODEX_HOME", configHome)
+	configPath := filepath.Join(configHome, "config.toml")
+	base := "model_provider = \"official\"\nmodel = \"gpt-5.5\"\n\n[model_providers.official]\nbase_url = \"https://example.invalid/v1\"\n"
+	if err := os.WriteFile(configPath, []byte(base), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, before, err := s.reviewModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	withReviewDirectory := base + "\n[projects.\"/tmp/pinru-review-1\"]\ntrust_level = \"trusted\"\n"
+	if err := os.WriteFile(configPath, []byte(withReviewDirectory), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, after, err := s.reviewModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("review model fingerprint changed after Codex added a project trust entry: before %q, after %q", before, after)
+	}
 }
 
 func TestReviewModelUsesExplicitSettingWithoutReadingCodexConfig(t *testing.T) {
