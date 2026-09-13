@@ -44,6 +44,22 @@ type CaptureRequest struct {
 	TaskID    string `json:"taskId"`
 	TracePath string `json:"tracePath"`
 }
+type BatchPrepareRequest struct {
+	ProjectID string `json:"projectId"`
+}
+type BatchPrepareItem struct {
+	TaskID   string `json:"taskId"`
+	TaskName string `json:"taskName"`
+	Status   string `json:"status"`
+	Message  string `json:"message"`
+}
+type BatchPrepareResult struct {
+	Total    int                `json:"total"`
+	Prepared int                `json:"prepared"`
+	Skipped  int                `json:"skipped"`
+	Failed   int                `json:"failed"`
+	Items    []BatchPrepareItem `json:"items"`
+}
 type ReviewRequest struct {
 	TaskID   string `json:"taskId"`
 	PromptID string `json:"promptId"`
@@ -304,6 +320,12 @@ func (s *AnnotationService) ExecuteJob(ctx context.Context, kind, payload string
 			return s.captureAndPrepareTable(ctx, r)
 		}
 		return s.capture(ctx, r)
+	case "annotation_batch_capture_table":
+		var r BatchPrepareRequest
+		if err := json.Unmarshal([]byte(payload), &r); err != nil {
+			return nil, err
+		}
+		return s.batchCaptureAndPrepareTable(ctx, r)
 	case "annotation_review":
 		var r ReviewRequest
 		if err := json.Unmarshal([]byte(payload), &r); err != nil {

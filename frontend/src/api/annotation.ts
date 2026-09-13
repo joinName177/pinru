@@ -122,6 +122,21 @@ export interface AnnotationExportResult {
   issues: string[];
 }
 
+export interface AnnotationBatchPrepareItem {
+  taskId: string;
+  taskName: string;
+  status: 'prepared' | 'skipped' | 'failed';
+  message: string;
+}
+
+export interface AnnotationBatchPrepareResult {
+  total: number;
+  prepared: number;
+  skipped: number;
+  failed: number;
+  items: AnnotationBatchPrepareItem[];
+}
+
 export interface BindContainerRequest {
   taskId: string;
   containerId: string;
@@ -193,6 +208,16 @@ export function prepareCase(taskId: string): Promise<BackgroundJob> {
 
 export function captureAndPrepareTable(request: CaptureRequest): Promise<BackgroundJob> {
   return submitAnnotationJob('annotation_capture_table', request.taskId, request);
+}
+
+export function batchCaptureAndPrepareTable(projectId: string): Promise<BackgroundJob> {
+  return submitJob({
+    jobType: 'annotation_batch_capture_table',
+    taskId: '',
+    inputPayload: JSON.stringify({ projectId }),
+    maxRetries: 1,
+    timeoutSeconds: 21600,
+  });
 }
 
 export function resumeTable(taskId: string): Promise<BackgroundJob> {

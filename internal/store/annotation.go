@@ -74,6 +74,11 @@ func (s *Store) ListAnnotationCases(projectID string) ([]annotation.Case, error)
 // SaveAnnotationCase inserts at expectedRevision 0 and otherwise performs a
 // compare-and-swap update. Revision and UpdatedAt are assigned by the store.
 func (s *Store) SaveAnnotationCase(input annotation.Case, expectedRevision int) (*annotation.Case, error) {
+	// Independent reviews may finish together. SQLite still has one writer, so
+	// serialize the short compare-and-swap transaction without serializing the
+	// long-running model calls that precede it.
+	s.annotationMu.Lock()
+	defer s.annotationMu.Unlock()
 	input.TaskID = strings.TrimSpace(input.TaskID)
 	input.ProjectID = strings.TrimSpace(input.ProjectID)
 	input.ContainerID = strings.TrimSpace(input.ContainerID)

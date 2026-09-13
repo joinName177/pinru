@@ -8,14 +8,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/blueship581/pinru/internal/errs"
 	_ "modernc.org/sqlite"
 )
 
 type Store struct {
-	DB     *sql.DB
-	dbPath string
+	DB           *sql.DB
+	dbPath       string
+	annotationMu sync.Mutex
 }
 
 func Open(dbPath string, migrationSQL ...string) (*Store, error) {
@@ -24,6 +26,10 @@ func Open(dbPath string, migrationSQL ...string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	// SQLite has one writer. Queue the short database operations on one
+	// connection while long-running reviews continue concurrently outside SQL.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	s := &Store{DB: db, dbPath: dbPath}
 	if err := s.ensureMetaSchema(); err != nil {
 		db.Close()

@@ -11,7 +11,7 @@ import (
 )
 
 func TestAnnotationJobUsesRegisteredHandlerAndPersistsOutput(t *testing.T) {
-	for _, kind := range []string{"annotation_export", "annotation_capture_table"} {
+	for _, kind := range []string{"annotation_export", "annotation_capture_table", "annotation_batch_capture_table"} {
 		t.Run(kind, func(t *testing.T) { testAnnotationJobHandler(t, kind) })
 	}
 }

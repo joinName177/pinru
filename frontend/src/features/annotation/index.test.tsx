@@ -6,6 +6,7 @@ import { AnnotationWorkspace } from './index';
 const api = vi.hoisted(() => ({
   getConfig: vi.fn(),
   bindContainer: vi.fn(),
+  batchCaptureAndPrepareTable: vi.fn(),
   cancelAnnotationJob: vi.fn(),
   captureAndPrepareTable: vi.fn(),
   exportCases: vi.fn(),
@@ -228,6 +229,21 @@ describe('AnnotationWorkspace', () => {
     fireEvent.click(screen.getByRole('button', { name: '导出本题 Excel' }));
     await waitFor(() => expect(api.exportCases).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'project-1', reviewedOnly: true, taskId: 'task-1' })));
     await screen.findByText(/单题导出完成/);
+  });
+
+  it('prepares all project cases from one batch action and reports the summary', async () => {
+    api.batchCaptureAndPrepareTable.mockResolvedValue({ id: 'batch-table-job', status: 'pending' });
+    api.getAnnotationJob.mockResolvedValue({
+      id: 'batch-table-job',
+      status: 'done',
+      outputPayload: JSON.stringify({ total: 3, prepared: 2, skipped: 1, failed: 0, items: [] }),
+    });
+    render(<AnnotationWorkspace projectId="project-1" />);
+    const button = await screen.findByRole('button', { name: '批量采集并准备制表数据' });
+    fireEvent.click(button);
+    await waitFor(() => expect(api.batchCaptureAndPrepareTable).toHaveBeenCalledWith('project-1'));
+    expect(await screen.findByText(/批量制表完成：新准备 2 题，跳过 1 题，失败 0 题/)).toBeInTheDocument();
+    await waitFor(() => expect(api.listCases).toHaveBeenCalledTimes(2));
   });
 
   it('copies the startup command for the fixed task number in the detail panel', async () => {

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestDefaultReviewModelFingerprintInvalidatesCacheWithoutDiscardingSavedTableData(t *testing.T) {
+func TestDefaultReviewModelChangeKeepsCacheUntilReviewIsForced(t *testing.T) {
 	s, trace, _ := annotationFixture(t)
 	configHome := t.TempDir()
 	t.Setenv("CODEX_HOME", configHome)
@@ -39,6 +39,10 @@ func TestDefaultReviewModelFingerprintInvalidatesCacheWithoutDiscardingSavedTabl
 		t.Fatalf("saved table data was discarded after default model config changed: current = %v", current)
 	}
 	if _, err := s.Review(ReviewRequest{TaskID: "题目-1", PromptID: "p1"}); err != nil {
+		t.Fatal(err)
+	}
+	assertReviewCallCount(t, calls, 1)
+	if _, err := s.Review(ReviewRequest{TaskID: "题目-1", PromptID: "p1", Force: true}); err != nil {
 		t.Fatal(err)
 	}
 	assertReviewCallCount(t, calls, 2)

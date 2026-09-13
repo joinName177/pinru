@@ -15,7 +15,7 @@ import (
 func (s *Store) RecoverExpiredAnnotationJobs() error {
 	rows, err := s.DB.Query(`SELECT id, owner_pid FROM background_jobs
  WHERE status IN ('pending','running')
- AND job_type IN ('annotation_capture_table','annotation_review','annotation_resume')
+ AND job_type IN ('annotation_capture_table','annotation_batch_capture_table','annotation_review','annotation_resume')
  AND owner_pid>0`)
 	if err != nil {
 		return err
@@ -53,7 +53,7 @@ func (s *Store) RecoverExpiredAnnotationJobs() error {
 	_, err = s.DB.Exec(`UPDATE background_jobs SET status='error',
  error_message='已超过任务执行时限，请重试；已保存的轨迹与评分保留', finished_at=strftime('%s','now')
  WHERE status IN ('pending','running')
- AND job_type IN ('annotation_capture_table','annotation_review','annotation_resume')
+ AND job_type IN ('annotation_capture_table','annotation_batch_capture_table','annotation_review','annotation_resume')
  AND timeout_seconds>0
  AND ((status='pending' AND COALESCE(NULLIF(last_activity_at,0),created_at)+timeout_seconds < CAST(strftime('%s','now') AS INTEGER))
    OR (status='running' AND COALESCE(started_at,created_at)+timeout_seconds < CAST(strftime('%s','now') AS INTEGER)))`)

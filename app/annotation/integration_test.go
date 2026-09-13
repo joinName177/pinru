@@ -76,6 +76,10 @@ func writeFixtureTrace(t *testing.T, trace, cwd string, count int) {
 }
 
 func fakeReviewCLI(t *testing.T) (*appcli.CliService, string) {
+	return fakeReviewCLIWithDelay(t, "")
+}
+
+func fakeReviewCLIWithDelay(t *testing.T, delay string) (*appcli.CliService, string) {
 	t.Helper()
 	dir := t.TempDir()
 	payload := filepath.Join(dir, "response.json")
@@ -92,7 +96,11 @@ func fakeReviewCLI(t *testing.T) (*appcli.CliService, string) {
 		t.Fatal(err)
 	}
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
-	script := "#!/bin/sh\ncat >/dev/null\nwhile [ \"$#\" -gt 0 ]; do\nif [ \"$1\" = -o ]; then shift; cp " + quote(payload) + " \"$1\"; fi\nshift\ndone\nprintf 'called\\n' >> " + quote(count) + "\nprintf 'static verification recorded\\n'\n"
+	wait := ""
+	if delay != "" {
+		wait = "sleep " + delay + "\n"
+	}
+	script := "#!/bin/sh\ncat >/dev/null\n" + wait + "while [ \"$#\" -gt 0 ]; do\nif [ \"$1\" = -o ]; then shift; cp " + quote(payload) + " \"$1\"; fi\nshift\ndone\nprintf 'called\\n' >> " + quote(count) + "\nprintf 'static verification recorded\\n'\n"
 	binary := filepath.Join(dir, "codex-fake")
 	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
 		t.Fatal(err)

@@ -226,6 +226,12 @@ func containerPathForArchive(name string) string {
 
 // ListTraces lists candidate top-level sessions without guessing the target.
 func (s *AnnotationService) ListTraces(taskID string) ([]TraceCandidate, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30_000_000_000)
+	defer cancel()
+	return s.listTraces(ctx, taskID)
+}
+
+func (s *AnnotationService) listTraces(ctx context.Context, taskID string) ([]TraceCandidate, error) {
 	c, err := s.loadCase(taskID)
 	if err != nil {
 		return nil, err
@@ -233,8 +239,6 @@ func (s *AnnotationService) ListTraces(taskID string) ([]TraceCandidate, error) 
 	if c.ContainerID == "" {
 		return []TraceCandidate{}, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30_000_000_000)
-	defer cancel()
 	if _, err := s.verifyBinding(ctx, c); err != nil {
 		return nil, err
 	}

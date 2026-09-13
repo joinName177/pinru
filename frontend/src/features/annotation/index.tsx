@@ -14,6 +14,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   bindContainer,
+  batchCaptureAndPrepareTable,
   cancelAnnotationJob,
   captureAndPrepareTable,
   exportCases,
@@ -27,6 +28,7 @@ import {
   resumeTable,
   saveCaseSettings,
   type AnnotationCase,
+  type AnnotationBatchPrepareResult,
   type AnnotationContainer,
   type AnnotationEvaluation,
   type AnnotationExportResult,
@@ -212,6 +214,8 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
   const [submittedAt, setSubmittedAt] = useState('');
   const [exportResult, setExportResult] = useState<AnnotationExportResult | null>(null);
   const [exportBusy, setExportBusy] = useState<BusyAction | null>(null);
+  const [batchBusy, setBatchBusy] = useState<BusyAction | null>(null);
+  const [batchResult, setBatchResult] = useState<AnnotationBatchPrepareResult | null>(null);
   const [showExportSelection, setShowExportSelection] = useState(false);
   const [exportTaskIds, setExportTaskIds] = useState<string[]>([]);
   const exportableCases = cases.filter((item) => getTableProgress(item).prepared > 0);
@@ -233,7 +237,8 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     try { return { value: buildContainerCommand(selectedCase), error: '' }; }
     catch (error) { return { value: null, error: errorMessage(error) }; }
   }, [selectedCase?.taskId, selectedCase?.taskName, selectedCase?.sourcePath]);
-  const visibleBusy = exportBusy ?? selectedBusy ?? Object.values(caseBusy)[0] ?? null;
+  const visibleBusy = batchBusy ?? exportBusy ?? selectedBusy ?? Object.values(caseBusy)[0] ?? null;
+  const globalBusy = Boolean(batchBusy || exportBusy);
 
   const loadProject = useCallback(async (targetProjectId: string) => {
     const epoch = ++projectEpoch.current;
@@ -277,6 +282,8 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     setExportResult(null);
     setCaseBusy({});
     setExportBusy(null);
+    setBatchBusy(null);
+    setBatchResult(null);
     setShowExportSelection(false);
     setExportTaskIds([]);
     setSaving(false);
@@ -452,6 +459,36 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     }
   };
 
+  const handleBatchPrepare = async () => {
+    const targetProjectId = activeProjectId.current;
+    const label = '批量采集并准备制表数据';
+    setActionError('');
+    setNotice('');
+    setBatchResult(null);
+    setBatchBusy({ taskId: '', label, jobId: '', progress: 0, message: '正在提交批量后台任务' });
+    try {
+      const submitted = await batchCaptureAndPrepareTable(targetProjectId);
+      if (targetProjectId !== activeProjectId.current) return;
+      setBatchBusy({ taskId: '', label, jobId: submitted.id, progress: submitted.progress ?? 0, message: submitted.progressMessage ?? '等待执行' });
+      const finished = await waitForAnnotationJob(submitted.id, (job) => {
+        if (targetProjectId !== activeProjectId.current) return;
+        setBatchBusy({ taskId: '', label, jobId: submitted.id, progress: job.progress, message: job.progressMessage || '执行中' });
+      });
+      if (targetProjectId !== activeProjectId.current) return;
+      const result = parseJobOutput<AnnotationBatchPrepareResult>(finished, '批量制表完成但没有返回汇总结果');
+      setBatchResult(result);
+      setNotice(`批量制表完成：新准备 ${result.prepared} 题，跳过 ${result.skipped} 题，失败 ${result.failed} 题`);
+      await loadProject(targetProjectId);
+    } catch (error) {
+      if (targetProjectId === activeProjectId.current) {
+        setActionError(errorMessage(error));
+        try { await loadProject(targetProjectId); } catch { /* Preserve the batch error. */ }
+      }
+    } finally {
+      if (targetProjectId === activeProjectId.current) setBatchBusy(null);
+    }
+  };
+
   const handleCancel = async (job: BusyAction) => {
     const targetProjectId = activeProjectId.current;
     try {
@@ -475,14 +512,15 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
             </div>
             <h1 className="mt-2 text-2xl font-bold text-stone-900 dark:text-stone-50">{taskId ? (view === 'review' ? '五维 AI 复审' : '容器与轨迹') : '容器标注'}</h1>
             <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
-              {taskId ? '采集并准备制表数据后即可导出，无需继续下一轮；单题和全项目导出均使用设置中的统一目录。' : `${projectName ? `${projectName} · ` : ''}逐题采集并准备制表数据，点击右侧“一键导出已制表”合并已保存的评分。`}
+              {taskId ? '采集并准备制表数据后即可导出，无需继续下一轮；单题和全项目导出均使用设置中的统一目录。' : `${projectName ? `${projectName} · ` : ''}可批量采集并准备制表数据；已有有效评分会直接复用，导出时再生成 Excel。`}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button className={SECONDARY_BUTTON} disabled={loading || Boolean(exportBusy)} aria-expanded={showExportSelection} onClick={() => setShowExportSelection((open) => !open)}><Download className="h-4 w-4" />选择题目导出</button>
-            <button className={PRIMARY_BUTTON} disabled={loading || Boolean(exportBusy) || Object.keys(caseBusy).length > 0} onClick={() => void handleExport(true, taskId, true)}><Download className="h-4 w-4" />{taskId ? '导出本题 Excel' : '一键导出已制表'}</button>
-            {taskId && <button className={SECONDARY_BUTTON} disabled={loading || Boolean(exportBusy) || Object.keys(caseBusy).length > 0} onClick={() => void handleExport(true, undefined, true)}><Download className="h-4 w-4" />导出全项目已制表</button>}
-          <button className={SECONDARY_BUTTON} onClick={() => void loadProject(projectId)} disabled={loading}>
+            {!taskId && <button className={SECONDARY_BUTTON} disabled={loading || globalBusy || Object.keys(caseBusy).length > 0 || cases.length === 0} onClick={() => void handleBatchPrepare()}>{batchBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}批量采集并准备制表数据</button>}
+            <button className={SECONDARY_BUTTON} disabled={loading || globalBusy} aria-expanded={showExportSelection} onClick={() => setShowExportSelection((open) => !open)}><Download className="h-4 w-4" />选择题目导出</button>
+            <button className={PRIMARY_BUTTON} disabled={loading || globalBusy || Object.keys(caseBusy).length > 0} onClick={() => void handleExport(true, taskId, true)}><Download className="h-4 w-4" />{taskId ? '导出本题 Excel' : '一键导出已制表'}</button>
+            {taskId && <button className={SECONDARY_BUTTON} disabled={loading || globalBusy || Object.keys(caseBusy).length > 0} onClick={() => void handleExport(true, undefined, true)}><Download className="h-4 w-4" />导出全项目已制表</button>}
+          <button className={SECONDARY_BUTTON} onClick={() => void loadProject(projectId)} disabled={loading || Boolean(batchBusy)}>
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> 刷新
           </button>
           </div>
@@ -493,20 +531,20 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
             <h2 className="font-semibold text-stone-800 dark:text-stone-100">选择本项目已制表的题目</h2>
             <p className="my-2 text-xs text-stone-500">仅列出已有制表数据的题目；部分制表的题仅导出已保存轮次。所选题目合并为一个 Excel，沿用设置中的统一目录。</p>
             <div className="mb-3 flex flex-wrap gap-2">
-              <button className={SECONDARY_BUTTON} disabled={Boolean(exportBusy) || loading || !exportableCases.length} onClick={() => setExportTaskIds(exportableCases.map((item) => item.taskId))}>全选已制表</button>
-              <button className={SECONDARY_BUTTON} disabled={Boolean(exportBusy) || !exportTaskIds.length} onClick={() => setExportTaskIds([])}>清空选择</button>
+              <button className={SECONDARY_BUTTON} disabled={globalBusy || loading || !exportableCases.length} onClick={() => setExportTaskIds(exportableCases.map((item) => item.taskId))}>全选已制表</button>
+              <button className={SECONDARY_BUTTON} disabled={globalBusy || !exportTaskIds.length} onClick={() => setExportTaskIds([])}>清空选择</button>
             </div>
             <div className="max-h-64 space-y-2 overflow-y-auto">
               {exportableCases.length === 0 && <p className="py-4 text-sm text-stone-500">暂无已制表题目</p>}
               {exportableCases.map((item) => {
                 const progress = getTableProgress(item);
                 return <label key={item.taskId} className="flex items-start gap-3 rounded-xl border border-stone-200 p-3 text-sm dark:border-stone-700 dark:text-stone-100">
-                  <input type="checkbox" aria-label={`导出 ${item.taskName} ${folderName(item.sourcePath)}`} checked={eligibleExportIds.includes(item.taskId)} disabled={Boolean(exportBusy) || loading} onChange={(event) => setExportTaskIds((ids) => event.target.checked ? [...ids.filter((id) => id !== item.taskId), item.taskId] : ids.filter((id) => id !== item.taskId))} />
+                  <input type="checkbox" aria-label={`导出 ${item.taskName} ${folderName(item.sourcePath)}`} checked={eligibleExportIds.includes(item.taskId)} disabled={globalBusy || loading} onChange={(event) => setExportTaskIds((ids) => event.target.checked ? [...ids.filter((id) => id !== item.taskId), item.taskId] : ids.filter((id) => id !== item.taskId))} />
                   <span className="min-w-0"><span className="font-semibold">{item.taskName} · {folderName(item.sourcePath)}</span><span className="ml-2 text-xs text-emerald-600">已制表 {progress.prepared}/{progress.total} 轮</span><span className="block break-all text-xs text-stone-500">{item.sourcePath}</span></span>
                 </label>;
               })}
             </div>
-            <button className={`${PRIMARY_BUTTON} mt-3`} disabled={loading || Boolean(exportBusy) || Object.keys(caseBusy).length > 0 || eligibleExportIds.length === 0} onClick={() => void handleExport(true, undefined, true, eligibleExportIds)}>导出所选题目（{eligibleExportIds.length}）</button>
+            <button className={`${PRIMARY_BUTTON} mt-3`} disabled={loading || globalBusy || Object.keys(caseBusy).length > 0 || eligibleExportIds.length === 0} onClick={() => void handleExport(true, undefined, true, eligibleExportIds)}>导出所选题目（{eligibleExportIds.length}）</button>
           </section>
         )}
 
@@ -519,6 +557,14 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
           <div className="mb-4 flex items-center gap-2 break-all rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:text-emerald-300">
             <CheckCircle2 className="h-4 w-4" /> {notice}
           </div>
+        )}
+        {batchResult && batchResult.items.some((item) => item.status !== 'prepared') && (
+          <section aria-label="批量制表结果" className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200">
+            <p className="font-semibold">需要留意的题目</p>
+            <div className="mt-2 max-h-40 space-y-1 overflow-y-auto">
+              {batchResult.items.filter((item) => item.status !== 'prepared').map((item) => <p key={item.taskId} className="break-all"><span className="font-medium">{item.taskName}</span>：{item.message}</p>)}
+            </div>
+          </section>
         )}
 
         <div className={taskId ? 'space-y-5' : 'grid gap-5 xl:grid-cols-[300px_minmax(0,1fr)]'}>
@@ -559,7 +605,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                       </div>
                       {caseBusy[item.taskId] && <p className="mt-2 truncate text-[11px] text-slate-500">{caseBusy[item.taskId].label} · {caseBusy[item.taskId].progress}%</p>}
                     </button>
-                    <button className="mb-2 mt-1 flex w-full items-center justify-center gap-1 rounded-lg py-1.5 text-xs text-slate-600 hover:bg-stone-100 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-stone-800" disabled={Boolean(exportBusy) || Boolean(caseBusy[item.taskId]) || reviewed === 0} onClick={() => void handleExport(true, item.taskId, true)}><Download className="h-3 w-3" />导出本题 Excel</button>
+                    <button className="mb-2 mt-1 flex w-full items-center justify-center gap-1 rounded-lg py-1.5 text-xs text-slate-600 hover:bg-stone-100 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-stone-800" disabled={globalBusy || Boolean(caseBusy[item.taskId]) || reviewed === 0} onClick={() => void handleExport(true, item.taskId, true)}><Download className="h-3 w-3" />导出本题 Excel</button>
                     </div>
                   );
                 })}
@@ -578,7 +624,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                     </div>
                     <button
                       className={SECONDARY_BUTTON}
-                      disabled={Boolean(selectedBusy) || Boolean(selectedCase.initialSha)}
+                      disabled={globalBusy || Boolean(selectedBusy) || Boolean(selectedCase.initialSha)}
                       onClick={() => void runCaseJob(selectedCase.taskId, '准备题目', () => prepareCase(selectedCase.taskId))}
                     >
                       {selectedBusy?.label === '准备题目' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Archive className="h-4 w-4" />}
@@ -606,7 +652,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                   </div>
                   <div className="mt-3 flex flex-wrap items-center gap-3">
                     {selectedCase.snapshotUrl ? <a className="break-all text-xs text-indigo-500" href={selectedCase.snapshotUrl} target="_blank" rel="noreferrer">GitHub 初始环境快照：{selectedCase.snapshotUrl}</a> : <>
-                      <button className={SECONDARY_BUTTON} disabled={!selectedCase.initialSha || Boolean(selectedBusy)} onClick={() => void runCaseJob(selectedCase.taskId, '发布初始快照', () => publishSnapshot(selectedCase.taskId))}>发布 GitHub 初始快照</button>
+                      <button className={SECONDARY_BUTTON} disabled={globalBusy || !selectedCase.initialSha || Boolean(selectedBusy)} onClick={() => void runCaseJob(selectedCase.taskId, '发布初始快照', () => publishSnapshot(selectedCase.taskId))}>发布 GitHub 初始快照</button>
                       <span className="text-xs text-amber-600">尚未发布；可重试，不影响轨迹审核。</span>
                     </>}
                   </div>
@@ -647,12 +693,12 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       className={PRIMARY_BUTTON}
-                      disabled={Boolean(selectedBusy) || !selectedContainerId || !repoRelativePath.trim() || !selectedCase.initialSha}
+                      disabled={globalBusy || Boolean(selectedBusy) || !selectedContainerId || !repoRelativePath.trim() || !selectedCase.initialSha}
                       onClick={() => void runCaseJob(selectedCase.taskId, '复制并绑定', () => bindContainer({ taskId: selectedCase.taskId, containerId: selectedContainerId, repoRelativePath: repoRelativePath.trim(), copyRepository: true }))}
                     >复制并绑定</button>
                     <button
                       className={SECONDARY_BUTTON}
-                      disabled={Boolean(selectedBusy) || !selectedContainerId || !repoRelativePath.trim()}
+                      disabled={globalBusy || Boolean(selectedBusy) || !selectedContainerId || !repoRelativePath.trim()}
                       onClick={() => void runCaseJob(selectedCase.taskId, '关联已有仓库', () => bindContainer({ taskId: selectedCase.taskId, containerId: selectedContainerId, repoRelativePath: repoRelativePath.trim(), copyRepository: false }))}
                     >关联已有仓库</button>
                   </div>
@@ -674,7 +720,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                     <div className="flex flex-wrap gap-2 lg:col-span-2">
                     <button
                       className={PRIMARY_BUTTON}
-                      disabled={Boolean(selectedBusy) || !selectedTracePath.trim()}
+                      disabled={globalBusy || Boolean(selectedBusy) || !selectedTracePath.trim()}
                       onClick={() => void runCaseJob(selectedCase.taskId, '采集并准备制表数据', () => captureAndPrepareTable({ taskId: selectedCase.taskId, tracePath: selectedTracePath.trim() }))}
                     ><FileSearch className="h-4 w-4" />采集并准备制表数据</button>
                     </div>
@@ -699,7 +745,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                     {persistedJob.error && <p className="mt-2 break-all text-sm text-red-500">{persistedJob.error}；已保存的轨迹与评分保留。</p>}
                   </>}
                   {!selectedBusy && selectedCase.rounds.some((r) => r.status==='complete') && getTableProgress(selectedCase).state!=='ready' &&
-                    <button className={`${SECONDARY_BUTTON} mt-3`} onClick={() => void runCaseJob(selectedCase.taskId,'继续准备制表数据',()=>resumeTable(selectedCase.taskId))}>继续准备未完成轮次</button>}
+                    <button className={`${SECONDARY_BUTTON} mt-3`} disabled={globalBusy} onClick={() => void runCaseJob(selectedCase.taskId,'继续准备制表数据',()=>resumeTable(selectedCase.taskId))}>继续准备未完成轮次</button>}
                 </section>
 
                 {(!taskId || view === 'review') && <>
@@ -728,7 +774,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                           </div>
                           <button
                             className={SECONDARY_BUTTON}
-                            disabled={Boolean(selectedBusy) || round.status !== 'complete'}
+                            disabled={globalBusy || Boolean(selectedBusy) || round.status !== 'complete'}
                             onClick={() => void runCaseJob(selectedCase.taskId, evaluationsFor(round).length ? '重新审核' : '审核本轮', () => reviewRound({ taskId: selectedCase.taskId, promptId: round.promptId, force: evaluationsFor(round).length > 0 }))}
                           ><RefreshCw className="h-4 w-4" />{evaluationsFor(round).length ? '重新审核' : '审核本轮'}</button>
                         </div>
@@ -772,7 +818,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                     </label>
                   </div>
                   <p className="mt-2 text-xs text-stone-400">完成状态由你明确登记，不要求五项满分，也不会自动停止容器。</p>
-                  <button className={`${PRIMARY_BUTTON} mt-3`} onClick={() => void handleSaveSettings()} disabled={saving || Boolean(selectedBusy)}>
+                  <button className={`${PRIMARY_BUTTON} mt-3`} onClick={() => void handleSaveSettings()} disabled={globalBusy || saving || Boolean(selectedBusy)}>
                     {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}保存题目设置
                   </button>
                 </section>
@@ -788,7 +834,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                   <h3 className="text-base font-bold text-stone-900 dark:text-stone-50">批次预检与统一导出</h3>
                   <p className="mt-1 text-xs text-stone-400">导出只汇总已保存的五维评价，不会自动审核。请先完成各轮审核；草稿允许评分留空。</p>
                 </div>
-                <button className={SECONDARY_BUTTON} onClick={() => void handlePreflight()} disabled={preflightLoading || Boolean(exportBusy) || Object.keys(caseBusy).length > 0 || saving}>
+                <button className={SECONDARY_BUTTON} onClick={() => void handlePreflight()} disabled={preflightLoading || globalBusy || Object.keys(caseBusy).length > 0 || saving}>
                   {preflightLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}批次预检
                 </button>
               </div>
@@ -814,9 +860,9 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 {formalExportReady ? (
-                  <button className={PRIMARY_BUTTON} disabled={Boolean(exportBusy)} onClick={() => void handleExport(false)}><Download className="h-4 w-4" />正式导出</button>
+                  <button className={PRIMARY_BUTTON} disabled={globalBusy} onClick={() => void handleExport(false)}><Download className="h-4 w-4" />正式导出</button>
                 ) : (
-                  <button className={SECONDARY_BUTTON} disabled={Boolean(exportBusy) || Object.keys(caseBusy).length > 0 || saving || cases.length === 0} onClick={() => void handleExport(true)}><Download className="h-4 w-4" />导出待补草稿</button>
+                  <button className={SECONDARY_BUTTON} disabled={globalBusy || Object.keys(caseBusy).length > 0 || saving || cases.length === 0} onClick={() => void handleExport(true)}><Download className="h-4 w-4" />导出待补草稿</button>
                 )}
                 {!report && <span className="self-center text-xs text-amber-600 dark:text-amber-400">正式导出前请先执行批次预检</span>}
               </div>

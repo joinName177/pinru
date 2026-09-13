@@ -25,7 +25,7 @@ tasks:
       - mkdir -p dist/PINRU.app/Contents/MacOS dist/PINRU.app/Contents/Resources
       - cp build/bin/pinru dist/PINRU.app/Contents/MacOS/pinru
       - cp build/darwin/Info.plist dist/PINRU.app/Contents/Info.plist
-      - cp build/icons.icns dist/PINRU.app/Contents/Resources/icons.icns
+      - cp build/darwin/icons.icns dist/PINRU.app/Contents/Resources/icons.icns
       - codesign --force --deep --sign - dist/PINRU.app
       - echo "Packaged to dist/PINRU.app"
 
