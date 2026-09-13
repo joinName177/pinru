@@ -52,7 +52,7 @@ func (s *AnnotationService) reviewLocked(ctx context.Context, req ReviewRequest)
 	if s.cli == nil {
 		return nil, errors.New("未配置审核执行器")
 	}
-	model, modelLabel, err := s.reviewModel()
+	reviewProvider, modelLabel, err := s.reviewProvider()
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +176,7 @@ func (s *AnnotationService) reviewLocked(ctx context.Context, req ReviewRequest)
 		return nil, err
 	}
 	domain.ReportProgress(ctx, 25, "证据副本已准备，等待审核模型响应")
-	evaluation, err := s.cli.RunSatisfactionReview(ctx, appcli.SatisfactionReviewRequest{WorkDir: work, SkillDir: filepath.Join(work, "skill"), InputPath: inputPath, Model: strings.TrimSpace(model)}, reviewActivity(ctx))
+	evaluation, err := s.cli.RunSatisfactionReview(ctx, appcli.SatisfactionReviewRequest{WorkDir: work, SkillDir: filepath.Join(work, "skill"), InputPath: inputPath, Model: strings.TrimSpace(reviewProvider.Model), DeepSeek: &reviewProvider}, reviewActivity(ctx))
 	if err != nil {
 		return nil, err
 	}

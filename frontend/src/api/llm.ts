@@ -14,6 +14,15 @@ export interface LlmProviderConfig {
   isDefault: boolean;
 }
 
+export function isDeepSeekFlashProvider(provider: LlmProviderConfig): boolean {
+  const model = provider.model.trim().toLowerCase();
+  if (model !== 'deepseek-v4-flash' && model !== 'deepseek-flash') return false;
+  if (provider.providerType === 'claude_code_acp') return true;
+  if (provider.providerType !== 'openai_compatible' || !provider.hasApiKey) return false;
+  const baseUrl = (provider.baseUrl ?? '').trim().toLowerCase().replace(/\/$/, '');
+  return baseUrl === 'https://api.deepseek.com' || baseUrl === 'https://api.deepseek.com/v1';
+}
+
 export interface GeneratePromptRequest {
   taskId: string;
   providerId?: string | null;

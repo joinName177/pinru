@@ -406,6 +406,7 @@ export function LlmProvidersPanel({
   llmProviders,
   testingProviderId,
   providerTestStatus,
+  onCreateDeepSeekProvider,
   onCreateProvider,
   onCreateAcpProvider,
   onSetDefaultProvider,
@@ -418,6 +419,7 @@ export function LlmProvidersPanel({
   llmProviders: LlmProviderConfig[];
   testingProviderId: string;
   providerTestStatus: Record<string, ProviderTestResult>;
+  onCreateDeepSeekProvider: () => void;
   onCreateProvider: () => void;
   onCreateAcpProvider: () => void;
   onSetDefaultProvider: (providerId: string) => void;
@@ -447,7 +449,7 @@ export function LlmProvidersPanel({
     <section className="animate-in fade-in duration-150 h-full flex flex-col">
       <SectionHead
         title="提供商"
-        description="配置 AI 模型提供商，支持 ACP 协议和 OpenAI 兼容接口"
+        description="DeepSeek V4 Flash API 可统一用于提示词生成、润色、单题审核和批量审核"
       />
 
       {llmLoadError && (
@@ -460,6 +462,13 @@ export function LlmProvidersPanel({
       <div className="flex items-center justify-end gap-2 mb-4">
         {llmSaveStatus === 'saved' && <StatusBadge ok>已保存</StatusBadge>}
         {llmSaveStatus === 'error' && <StatusBadge>保存失败</StatusBadge>}
+        <button
+          onClick={onCreateDeepSeekProvider}
+          className="px-4 py-2 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 dark:hover:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 text-sm font-medium transition-colors flex items-center gap-1.5 cursor-default"
+        >
+          <Zap className="w-3.5 h-3.5" />
+          添加 DeepSeek V4 Flash
+        </button>
         <button
           onClick={onCreateAcpProvider}
           className="px-4 py-2 rounded-xl border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 hover:bg-stone-50 dark:hover:bg-stone-700 text-stone-700 dark:text-stone-300 text-sm font-medium transition-colors flex items-center gap-1.5 cursor-default"

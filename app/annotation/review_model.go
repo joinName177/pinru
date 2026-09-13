@@ -3,61 +3,55 @@ package annotation
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
-	"os"
-	"path/filepath"
+	"errors"
 	"strings"
+
+	appcli "github.com/blueship581/pinru/app/cli"
+	"github.com/blueship581/pinru/internal/store"
 )
 
-const defaultReviewModelLabel = "Codex CLI 默认配置"
+const deepSeekReviewLabel = "DeepSeek V4 Flash"
 
-// reviewModel keeps the CLI argument separate from the cache identity. When
-// Codex chooses its own model, hash the effective evaluator configuration
-// without project trust entries. Codex appends a trust entry for each ephemeral
-// review directory; those entries do not affect model behavior and must not
-// invalidate the evaluation that just created them.
-func (s *AnnotationService) reviewModel() (cliModel, label string, err error) {
-	configured, err := s.store.GetConfig("annotation_review_model")
+func (s *AnnotationService) reviewProvider() (appcli.DeepSeekCodexConfig, string, error) {
+	providers, err := s.store.ListLLMProviders()
 	if err != nil {
-		return "", "", err
+		return appcli.DeepSeekCodexConfig{}, "", err
 	}
-	if configured = strings.TrimSpace(configured); configured != "" {
-		return configured, configured, nil
-	}
-
-	codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME"))
-	if codexHome == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", "", fmt.Errorf("定位 Codex 默认模型配置失败：%w", err)
+	var selected *store.LLMProvider
+	for _, requireDefault := range []bool{true, false} {
+		for i := range providers {
+			if providers[i].IsDefault == requireDefault && isDeepSeekReviewAPIProvider(providers[i]) {
+				selected = &providers[i]
+				break
+			}
 		}
-		codexHome = filepath.Join(home, ".codex")
-	}
-	configPath := filepath.Join(codexHome, "config.toml")
-	raw, err := os.ReadFile(configPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", defaultReviewModelLabel, nil
+		if selected != nil {
+			break
 		}
-		return "", "", fmt.Errorf("读取 Codex 默认模型配置 %s 失败：%w", configPath, err)
 	}
-	digest := sha256.Sum256(reviewConfigWithoutProjectTrust(raw))
-	return "", "Codex CLI 默认配置 [config:" + hex.EncodeToString(digest[:]) + "]", nil
+	if selected == nil {
+		return appcli.DeepSeekCodexConfig{}, "", errors.New("请先在设置中添加带 API Key 的 DeepSeek V4 Flash API 提供商，AI 审核不会自动回退到 Codex 模型")
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(*selected.BaseURL), "/")
+	baseURL = strings.TrimSuffix(baseURL, "/v1")
+	fingerprint := sha256.Sum256([]byte(selected.ID + "\n" + selected.Model + "\n" + baseURL + "\nhigh"))
+	label := deepSeekReviewLabel + " [config:" + hex.EncodeToString(fingerprint[:8]) + "]"
+	return appcli.DeepSeekCodexConfig{
+		Model:           strings.TrimSpace(selected.Model),
+		BaseURL:         baseURL,
+		APIKey:          strings.TrimSpace(selected.APIKey),
+		ReasoningEffort: "high",
+	}, label, nil
 }
 
-func reviewConfigWithoutProjectTrust(raw []byte) []byte {
-	lines := strings.Split(string(raw), "\n")
-	kept := make([]string, 0, len(lines))
-	skipSection := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
-			header := strings.TrimSpace(strings.Trim(trimmed, "[]"))
-			skipSection = header == "projects" || strings.HasPrefix(header, "projects.")
-		}
-		if !skipSection {
-			kept = append(kept, line)
-		}
+func isDeepSeekReviewAPIProvider(provider store.LLMProvider) bool {
+	if provider.ProviderType != "openai_compatible" || strings.TrimSpace(provider.APIKey) == "" || provider.BaseURL == nil {
+		return false
 	}
-	return []byte(strings.TrimSpace(strings.Join(kept, "\n")))
+	model := strings.ToLower(strings.TrimSpace(provider.Model))
+	if model != "deepseek-v4-flash" && model != "deepseek-flash" {
+		return false
+	}
+	baseURL := strings.ToLower(strings.TrimRight(strings.TrimSpace(*provider.BaseURL), "/"))
+	return baseURL == "https://api.deepseek.com" || baseURL == "https://api.deepseek.com/v1"
 }

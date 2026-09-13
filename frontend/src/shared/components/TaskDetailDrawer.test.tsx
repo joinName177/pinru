@@ -356,6 +356,11 @@ beforeEach(() => {
   polishTextMock.mockReset();
 });
 
+it('asks for DeepSeek V4 Flash when prompt generation has no compatible provider', () => {
+  renderTaskDetailDrawer({ activeDrawerTab: 'prompt', llmProviders: [] });
+  expect(screen.getByText('请先在设置中配置 DeepSeek V4 Flash 提供商。')).toBeInTheDocument();
+});
+
 describe('TaskDetailDrawer session copy affordance', () => {
   it('opens the container tab from the detail navigation', () => {
     const onTabChange = vi.fn();

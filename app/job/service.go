@@ -33,6 +33,7 @@ const (
 	gitCloneRetryBackoff           = 2 * time.Second
 	gitCloneIdleTimeout            = 30 * time.Second
 	msgAiReviewCommitRequired      = "请先提交代码，再发起 AI 复审"
+	msgDeepSeekReviewProvider      = "请先在设置中添加带 API Key 的 DeepSeek V4 Flash API 提供商，AI 审核不会自动回退到 Codex 模型"
 )
 
 var errGitCloneIdleTimeout = fmt.Errorf(errs.FmtJobGitCloneIdleTimeout, gitCloneIdleTimeout)
@@ -77,6 +78,51 @@ func New(
 		s.annotationHandler = annotationHandlers[0]
 	}
 	return s
+}
+
+func (s *JobService) deepSeekReviewConfig() (appcli.DeepSeekCodexConfig, error) {
+	if s.store == nil {
+		return appcli.DeepSeekCodexConfig{}, errors.New(msgDeepSeekReviewProvider)
+	}
+	providers, err := s.store.ListLLMProviders()
+	if err != nil {
+		return appcli.DeepSeekCodexConfig{}, err
+	}
+	var selected *store.LLMProvider
+	for _, requireDefault := range []bool{true, false} {
+		for i := range providers {
+			if providers[i].IsDefault == requireDefault && isDeepSeekReviewProvider(providers[i]) {
+				selected = &providers[i]
+				break
+			}
+		}
+		if selected != nil {
+			break
+		}
+	}
+	if selected == nil {
+		return appcli.DeepSeekCodexConfig{}, errors.New(msgDeepSeekReviewProvider)
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(*selected.BaseURL), "/")
+	baseURL = strings.TrimSuffix(baseURL, "/v1")
+	return appcli.DeepSeekCodexConfig{
+		Model:           strings.TrimSpace(selected.Model),
+		BaseURL:         baseURL,
+		APIKey:          strings.TrimSpace(selected.APIKey),
+		ReasoningEffort: "high",
+	}, nil
+}
+
+func isDeepSeekReviewProvider(provider store.LLMProvider) bool {
+	if provider.ProviderType != "openai_compatible" || strings.TrimSpace(provider.APIKey) == "" || provider.BaseURL == nil {
+		return false
+	}
+	model := strings.ToLower(strings.TrimSpace(provider.Model))
+	if model != "deepseek-v4-flash" && model != "deepseek-flash" {
+		return false
+	}
+	baseURL := strings.ToLower(strings.TrimRight(strings.TrimSpace(*provider.BaseURL), "/"))
+	return baseURL == "https://api.deepseek.com" || baseURL == "https://api.deepseek.com/v1"
 }
 
 type SubmitJobRequest struct {
@@ -1202,6 +1248,10 @@ func (s *JobService) executeAiReview(
 	if payload.ReviewRoundID == nil || strings.TrimSpace(*payload.ReviewRoundID) == "" {
 		return jobExecutionResult{}, errors.New(errs.MsgJobAiReviewNoRound)
 	}
+	deepSeekConfig, err := s.deepSeekReviewConfig()
+	if err != nil {
+		return jobExecutionResult{}, err
+	}
 
 	round, err := s.store.GetAiReviewRound(strings.TrimSpace(*payload.ReviewRoundID))
 	if err != nil {
@@ -1285,6 +1335,7 @@ func (s *JobService) executeAiReview(
 			IssueType:         "",
 			IssueTitle:        "",
 			ModelName:         strings.TrimSpace(round.ModelName),
+			DeepSeek:          &deepSeekConfig,
 		}, func(line string) {
 			if isStructuredAiReviewLine(line) {
 				return
@@ -1361,6 +1412,7 @@ func (s *JobService) executeAiReview(
 			ChangeScope:      strings.TrimSpace(lastResult.ChangeScope),
 			KeyLocations:     strings.TrimSpace(lastResult.KeyLocations),
 			ProductSatisfied: passed,
+			DeepSeek:         &deepSeekConfig,
 		}, func(line string) {
 			if isStructuredAiReviewLine(line) {
 				return

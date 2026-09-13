@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -139,6 +142,70 @@ func TestRunSatisfactionReviewRejectsTrailingDocumentAfterJSON(t *testing.T) {
 		WorkDir: workDir, SkillDir: filepath.Join(workDir, "skill"), InputPath: filepath.Join(workDir, "input.json"),
 	}, nil); err == nil {
 		t.Fatalf("RunSatisfactionReview() = %#v, nil; want trailing-content rejection", evaluation)
+	}
+}
+
+func TestDeepSeekCodexConfigUsesIsolatedHomeAndDoesNotExposeKeyInArgs(t *testing.T) {
+	home, cleanup, err := prepareDeepSeekCodexHome(DeepSeekCodexConfig{
+		Model: "deepseek-v4-flash", BaseURL: "https://api.deepseek.com", APIKey: "secret-key", ReasoningEffort: "high",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	config, err := os.ReadFile(filepath.Join(home, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := os.ReadFile(filepath.Join(home, "models.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`model = "deepseek-v4-flash"`, `model_provider = "deepseek"`, `wire_api = "responses"`, `model_reasoning_effort = "high"`, `experimental_bearer_token = "secret-key"`} {
+		if !strings.Contains(string(config), want) {
+			t.Fatalf("config.toml missing %q: %s", want, config)
+		}
+	}
+	if !strings.Contains(string(models), `"slug": "deepseek-v4-flash"`) {
+		t.Fatalf("models.json = %s", models)
+	}
+}
+
+func TestDeepSeekCodexConfigIsAcceptedByInstalledCodex(t *testing.T) {
+	binary, err := exec.LookPath("codex")
+	if err != nil {
+		t.Skip("codex CLI is not installed")
+	}
+	requestSeen := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		select {
+		case requestSeen <- struct{}{}:
+		default:
+		}
+		http.Error(w, `{"error":{"message":"test endpoint"}}`, http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	home, cleanup, err := prepareDeepSeekCodexHome(DeepSeekCodexConfig{Model: "deepseek-v4-flash", BaseURL: server.URL, APIKey: "test-key", ReasoningEffort: "high"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, "exec", "-", "--skip-git-repo-check", "--ephemeral", "--json")
+	cmd.Dir = t.TempDir()
+	cmd.Env = applyEnvOverrides(os.Environ(), map[string]string{"CODEX_HOME": home})
+	cmd.Stdin = strings.NewReader("reply with ok")
+	out, _ := cmd.CombinedOutput()
+	select {
+	case <-requestSeen:
+	case <-ctx.Done():
+		t.Fatalf("Codex did not reach the configured endpoint: %s", out)
+	}
+	for _, bad := range []string{"model catalog", "models.json", "config.toml parse", "unknown field"} {
+		if strings.Contains(strings.ToLower(string(out)), strings.ToLower(bad)) {
+			t.Fatalf("Codex rejected generated configuration: %s", out)
+		}
 	}
 }
 

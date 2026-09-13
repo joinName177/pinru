@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -20,6 +21,93 @@ type SatisfactionReviewRequest struct {
 	SkillDir  string
 	InputPath string
 	Model     string
+	DeepSeek  *DeepSeekCodexConfig
+}
+
+type DeepSeekCodexConfig struct {
+	Model           string
+	BaseURL         string
+	APIKey          string
+	ReasoningEffort string
+}
+
+func prepareDeepSeekCodexHome(cfg DeepSeekCodexConfig) (string, func(), error) {
+	model := strings.TrimSpace(cfg.Model)
+	if model != "deepseek-v4-flash" && model != "deepseek-flash" {
+		return "", nil, fmt.Errorf("审核模型必须是 DeepSeek V4 Flash")
+	}
+	apiKey := strings.TrimSpace(cfg.APIKey)
+	if apiKey == "" {
+		return "", nil, fmt.Errorf("DeepSeek API Key 不能为空")
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
+	baseURL = strings.TrimSuffix(baseURL, "/v1")
+	baseURL = strings.TrimSuffix(baseURL, "/anthropic")
+	if baseURL == "" {
+		baseURL = "https://api.deepseek.com"
+	}
+	effort := strings.TrimSpace(cfg.ReasoningEffort)
+	if effort == "" {
+		effort = "high"
+	}
+	if effort != "low" && effort != "high" && effort != "max" {
+		return "", nil, fmt.Errorf("DeepSeek 推理强度只支持 low、high 或 max")
+	}
+
+	home, err := os.MkdirTemp("", "pinru-deepseek-codex-")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(home) }
+	models := map[string]any{"models": []any{map[string]any{
+		"slug": model, "prefer_websockets": false, "support_verbosity": true, "default_verbosity": "low",
+		"apply_patch_tool_type": "freeform", "web_search_tool_type": "text", "input_modalities": []string{"text"},
+		"supports_image_detail_original": false, "truncation_policy": map[string]any{"mode": "tokens", "limit": 10000},
+		"supports_parallel_tool_calls": true, "tool_mode": nil, "multi_agent_version": "v2", "use_responses_lite": false,
+		"include_skills_usage_instructions": false, "auto_review_model_override": nil, "context_window": 1048576,
+		"max_context_window": 1048576, "effective_context_window_percent": 95, "auto_compact_token_limit": nil,
+		"comp_hash": "3000", "reasoning_summary_format": "experimental", "default_reasoning_summary": "none",
+		"display_name": "DeepSeek V4 Flash", "description": "DeepSeek Flash agent model",
+		"default_reasoning_level": "high", "supported_reasoning_levels": []any{
+			map[string]any{"effort": "low", "description": "Fast responses with lighter reasoning"},
+			map[string]any{"effort": "high", "description": "High reasoning depth for complex problems"},
+			map[string]any{"effort": "max", "description": "Maximum reasoning depth"},
+		},
+		"shell_type": "shell_command", "visibility": "list", "minimal_client_version": "0.144.0",
+		"supported_in_api": true, "availability_nux": nil, "upgrade": nil, "priority": 1,
+		"experimental_supported_tools": []any{}, "supports_search_tool": false, "default_service_tier": nil,
+		"supports_reasoning_summaries": true,
+		"base_instructions":            "You are a local coding agent. Follow the supplied evaluation instructions, inspect the workspace with tools, and return the requested structured result.",
+	}}}
+	modelsRaw, err := json.MarshalIndent(models, "", "  ")
+	if err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	modelsPath := filepath.Join(home, "models.json")
+	if err := os.WriteFile(modelsPath, modelsRaw, 0600); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	config := strings.Join([]string{
+		"model = " + strconv.Quote(model),
+		`model_provider = "deepseek"`,
+		`preferred_auth_method = "apikey"`,
+		`forced_login_method = "api"`,
+		"model_reasoning_effort = " + strconv.Quote(effort),
+		"model_catalog_json = " + strconv.Quote(modelsPath),
+		`[model_providers.deepseek]`,
+		`name = "deepseek"`,
+		"base_url = " + strconv.Quote(baseURL+"/"),
+		`wire_api = "responses"`,
+		"experimental_bearer_token = " + strconv.Quote(apiKey),
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0600); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	return home, cleanup, nil
 }
 
 func buildSatisfactionPrompt(req SatisfactionReviewRequest) string {
@@ -82,6 +170,14 @@ func (s *CliService) RunSatisfactionReview(ctx context.Context, req Satisfaction
 	}
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = req.WorkDir
+	if req.DeepSeek != nil {
+		codexHome, cleanup, err := prepareDeepSeekCodexHome(*req.DeepSeek)
+		if err != nil {
+			return nil, err
+		}
+		defer cleanup()
+		cmd.Env = applyEnvOverrides(os.Environ(), map[string]string{"CODEX_HOME": codexHome})
+	}
 	cmd.Stdin = strings.NewReader(buildSatisfactionPrompt(req))
 	cmd.WaitDelay = 5_000_000_000
 	logFile, err := os.OpenFile(filepath.Join(req.WorkDir, "evaluator.log"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)

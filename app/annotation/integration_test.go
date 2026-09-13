@@ -29,6 +29,10 @@ func annotationFixture(t *testing.T) (*AnnotationService, string, string) {
 	if err := st.CreateProject(store.Project{ID: project, Name: "样本批次", Models: "[]", CloneBasePath: dir}); err != nil {
 		t.Fatal(err)
 	}
+	deepSeekURL := "https://api.deepseek.com"
+	if err := st.CreateLLMProvider(store.LLMProvider{ID: "deepseek-test", Name: "DeepSeek V4 Flash", ProviderType: "openai_compatible", Model: "deepseek-v4-flash", BaseURL: &deepSeekURL, APIKey: "test-key", IsDefault: true}); err != nil {
+		t.Fatal(err)
+	}
 	source := filepath.Join(dir, "source")
 	if err := os.Mkdir(source, 0700); err != nil {
 		t.Fatal(err)

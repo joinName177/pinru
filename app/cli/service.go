@@ -644,31 +644,33 @@ type CodexReviewResult struct {
 }
 
 type CodexReviewRequest struct {
-	LocalPath         string `json:"localPath"`
-	TaskID            string `json:"taskId"`
-	ModelRunID        string `json:"modelRunId"`
-	ReviewRound       int    `json:"reviewRound"`
-	CommitSHA         string `json:"commitSha"`
-	CommitURL         string `json:"commitUrl"`
-	RepoURL           string `json:"repoUrl"`
-	OriginalPrompt    string `json:"originalPrompt"`
-	CurrentPrompt     string `json:"currentPrompt"`
-	ParentReviewNotes string `json:"parentReviewNotes"`
-	IssueType         string `json:"issueType"`
-	IssueTitle        string `json:"issueTitle"`
-	ModelName         string `json:"modelName"`
+	LocalPath         string               `json:"localPath"`
+	TaskID            string               `json:"taskId"`
+	ModelRunID        string               `json:"modelRunId"`
+	ReviewRound       int                  `json:"reviewRound"`
+	CommitSHA         string               `json:"commitSha"`
+	CommitURL         string               `json:"commitUrl"`
+	RepoURL           string               `json:"repoUrl"`
+	OriginalPrompt    string               `json:"originalPrompt"`
+	CurrentPrompt     string               `json:"currentPrompt"`
+	ParentReviewNotes string               `json:"parentReviewNotes"`
+	IssueType         string               `json:"issueType"`
+	IssueTitle        string               `json:"issueTitle"`
+	ModelName         string               `json:"modelName"`
+	DeepSeek          *DeepSeekCodexConfig `json:"-"`
 }
 
 type DissatisfactionSummaryRequest struct {
-	LocalPath        string `json:"localPath"`
-	ModelName        string `json:"modelName"`
-	OriginalPrompt   string `json:"originalPrompt"`
-	CurrentPrompt    string `json:"currentPrompt"`
-	ReviewNotes      string `json:"reviewNotes"`
-	ProjectType      string `json:"projectType"`
-	ChangeScope      string `json:"changeScope"`
-	KeyLocations     string `json:"keyLocations"`
-	ProductSatisfied bool   `json:"productSatisfied"`
+	LocalPath        string               `json:"localPath"`
+	ModelName        string               `json:"modelName"`
+	OriginalPrompt   string               `json:"originalPrompt"`
+	CurrentPrompt    string               `json:"currentPrompt"`
+	ReviewNotes      string               `json:"reviewNotes"`
+	ProjectType      string               `json:"projectType"`
+	ChangeScope      string               `json:"changeScope"`
+	KeyLocations     string               `json:"keyLocations"`
+	ProductSatisfied bool                 `json:"productSatisfied"`
+	DeepSeek         *DeepSeekCodexConfig `json:"-"`
 }
 
 type DissatisfactionSummaryResult struct {
@@ -792,9 +794,18 @@ func (s *CliService) RunCodexReview(ctx context.Context, req CodexReviewRequest,
 
 	cmd := exec.CommandContext(ctx, codexPath, args...)
 	cmd.Dir = localPath
-	cmd.Env = applyEnvOverrides(os.Environ(), map[string]string{
+	envOverrides := map[string]string{
 		"PINRU_CODEX_REVIEW_OUTPUT_PATH": outPath,
-	})
+	}
+	if req.DeepSeek != nil {
+		codexHome, cleanup, err := prepareDeepSeekCodexHome(*req.DeepSeek)
+		if err != nil {
+			return nil, err
+		}
+		defer cleanup()
+		envOverrides["CODEX_HOME"] = codexHome
+	}
+	cmd.Env = applyEnvOverrides(os.Environ(), envOverrides)
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -907,9 +918,18 @@ func (s *CliService) RunCodexDissatisfactionSummary(ctx context.Context, req Dis
 
 	cmd := exec.CommandContext(ctx, codexPath, args...)
 	cmd.Dir = localPath
-	cmd.Env = applyEnvOverrides(os.Environ(), map[string]string{
+	envOverrides := map[string]string{
 		"PINRU_CODEX_DISSATISFACTION_OUTPUT_PATH": outPath,
-	})
+	}
+	if req.DeepSeek != nil {
+		codexHome, cleanup, err := prepareDeepSeekCodexHome(*req.DeepSeek)
+		if err != nil {
+			return nil, err
+		}
+		defer cleanup()
+		envOverrides["CODEX_HOME"] = codexHome
+	}
+	cmd.Env = applyEnvOverrides(os.Environ(), envOverrides)
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {

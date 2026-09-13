@@ -33,7 +33,7 @@ import type { AiReviewPayload, AiReviewResult, BackgroundJob } from '../../api/j
 import type { AiReviewRoundFromDB, ModelRunFromDB, PromptGenerationStatus, TaskFromDB } from '../../api/task';
 import { saveAiReviewRoundDissatisfactionSummary, saveAiReviewRoundNotes } from '../../api/task';
 import type { GeneratePromptRequest, LlmProviderConfig } from '../../api/llm';
-import { polishText as polishTextApi } from '../../api/llm';
+import { isDeepSeekFlashProvider, polishText as polishTextApi } from '../../api/llm';
 import {
   DEFAULT_TASK_TYPES,
   getTaskTypePresentation,
@@ -329,7 +329,7 @@ export default function TaskDetailDrawer({
     return map;
   }, [selectedCodePushRecords]);
   const promptLlmProviders = useMemo(
-    () => safeLlmProviders.filter((provider) => provider.providerType === 'claude_code_acp'),
+    () => safeLlmProviders.filter(isDeepSeekFlashProvider),
     [safeLlmProviders],
   );
   const quickAiReviewEnabledForTaskType = useMemo(
@@ -1228,7 +1228,7 @@ export default function TaskDetailDrawer({
         <StatusBanner tone="danger">上次生成失败：{selectedPromptGenerationError}</StatusBanner>
       )}
       {promptLlmProviders.length === 0 && (
-        <StatusBanner tone="warning">请先在设置中配置 Claude Code (ACP) 提供商。</StatusBanner>
+        <StatusBanner tone="warning">请先在设置中配置 DeepSeek V4 Flash 提供商。</StatusBanner>
       )}
 
       {/* 任务类型 - pill 选择器 */}

@@ -413,6 +413,22 @@ export default function Settings() {
     setShowProviderModal(true);
   };
 
+  const openCreateDeepSeekProviderModal = () => {
+    setProviderForm({
+      ...EMPTY_PROVIDER_FORM,
+      name: 'DeepSeek V4 Flash',
+      providerType: 'openai_compatible',
+      model: 'deepseek-v4-flash',
+      polishModel: 'deepseek-v4-flash',
+      baseUrl: 'https://api.deepseek.com',
+      isDefault: true,
+    });
+    setProviderModalAcpOnly(false);
+    setProviderError('');
+    setPolishModelTestResult(null);
+    setShowProviderModal(true);
+  };
+
   const openCreateAcpProviderModal = () => {
     setProviderForm({
       ...EMPTY_PROVIDER_FORM,
@@ -737,6 +753,7 @@ export default function Settings() {
                 llmProviders={llmProviders}
                 testingProviderId={testingProviderId}
                 providerTestStatus={providerTestStatus}
+                onCreateDeepSeekProvider={openCreateDeepSeekProviderModal}
                 onCreateProvider={openCreateProviderModal}
                 onCreateAcpProvider={openCreateAcpProviderModal}
                 onSetDefaultProvider={handleSetDefaultProvider}

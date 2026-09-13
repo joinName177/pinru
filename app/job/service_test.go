@@ -1548,6 +1548,22 @@ func TestCleanupGitCloneTargetsRemovesCreatedPaths(t *testing.T) {
 
 func createCommittedReviewRecord(t *testing.T, st *store.Store, taskID, modelRunID string, sessionIndex int) {
 	t.Helper()
+	deepSeekURL := "https://api.deepseek.com"
+	if provider, err := st.GetLLMProvider("deepseek-review-test"); err != nil {
+		t.Fatalf("GetLLMProvider() error = %v", err)
+	} else if provider == nil {
+		if err := st.CreateLLMProvider(store.LLMProvider{
+			ID:           "deepseek-review-test",
+			Name:         "DeepSeek V4 Flash",
+			ProviderType: "openai_compatible",
+			Model:        "deepseek-v4-flash",
+			BaseURL:      &deepSeekURL,
+			APIKey:       "test-key",
+			IsDefault:    true,
+		}); err != nil {
+			t.Fatalf("CreateLLMProvider() error = %v", err)
+		}
+	}
 	record := store.CodePushRecord{
 		ID:           fmt.Sprintf("code-review-%s-%d", modelRunID, sessionIndex),
 		TaskID:       taskID,

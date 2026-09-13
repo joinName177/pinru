@@ -98,7 +98,12 @@ type CustomProjectPromptDocumentRequest struct {
 	Content string `json:"content"`
 }
 
-const defaultPromptGenerationModel = "claude-sonnet-4-6"
+const (
+	defaultPromptGenerationModel = "deepseek-v4-flash"
+	deepSeekFlashModel           = "deepseek-v4-flash"
+	deepSeekFlashCanonicalModel  = "deepseek-flash"
+	deepSeekAPIBaseURL           = "https://api.deepseek.com"
+)
 
 func (s *PromptService) GenerateTaskPrompt(req GeneratePromptRequest) (*PromptGenerationResult, error) {
 	return s.GenerateTaskPromptWithContext(context.Background(), req)
@@ -201,7 +206,7 @@ func (s *PromptService) GenerateTaskPromptWithContext(ctx context.Context, req G
 		"profile", projectProfile.summaryForLog(),
 	)
 	cliStart := time.Now()
-	generated, err := s.generatePromptWithRetry(ctx, workDir, skillPrompt, selection.Model, 1)
+	generated, err := s.generatePromptWithRetry(ctx, workDir, skillPrompt, selection.Model, 1, selection.EnvOverrides)
 	if err != nil {
 		slog.Error("CLI prompt generation failed",
 			"project", task.ProjectName,
@@ -217,7 +222,7 @@ func (s *PromptService) GenerateTaskPromptWithContext(ctx context.Context, req G
 	}
 	promptText := generated.PromptText
 	modelDifficulty := generated.PromptDifficulty
-	if duplicate, ok := s.findDuplicatePromptMatch(ctx, workDir, promptText, existingPrompts, selection.Model); ok {
+	if duplicate, ok := s.findDuplicatePromptMatch(ctx, workDir, promptText, existingPrompts, selection.Model, selection.EnvOverrides); ok {
 		slog.Warn("generated prompt duplicated existing prompt, regenerating",
 			"task_id", task.ID,
 			"project", task.ProjectName,
@@ -227,7 +232,7 @@ func (s *PromptService) GenerateTaskPromptWithContext(ctx context.Context, req G
 			"duplicate_confidence", duplicate.Confidence,
 		)
 		regeneratePrompt := buildDuplicateRegenerationPrompt(req, existingPrompts, promptText, duplicate, projectProfile)
-		generated, err = s.generatePromptWithRetry(ctx, workDir, regeneratePrompt, selection.Model, 1)
+		generated, err = s.generatePromptWithRetry(ctx, workDir, regeneratePrompt, selection.Model, 1, selection.EnvOverrides)
 		if err != nil {
 			slog.Error("CLI prompt regeneration failed",
 				"project", task.ProjectName,
@@ -412,7 +417,7 @@ func (s *PromptService) GenerateCustomProjectPromptDocumentsWithOptions(
 		detail.OutputPath = outputPath
 
 		emitProgress(projectName, progressIndex, "generating")
-		content, genErr := s.generateCustomProjectPromptDocument(ctx, sourcePath, item.DisplayName, selection.Model, counts)
+		content, genErr := s.generateCustomProjectPromptDocumentWithProvider(ctx, sourcePath, item.DisplayName, selection, counts)
 		if genErr != nil {
 			detail.Message = genErr.Error()
 			result.Details = append(result.Details, detail)
@@ -485,11 +490,11 @@ type generatedPromptResult struct {
 	PromptDifficulty string
 }
 
-func (s *PromptService) generatePromptWithRetry(ctx context.Context, workDir, prompt, model string, maxRetries int) (generatedPromptResult, error) {
+func (s *PromptService) generatePromptWithRetry(ctx context.Context, workDir, prompt, model string, maxRetries int, envOverrides ...map[string]string) (generatedPromptResult, error) {
 	if s.promptGenerator != nil {
 		return s.promptGenerator(ctx, workDir, prompt, model)
 	}
-	return s.executeCliWithRetry(ctx, workDir, prompt, model, maxRetries)
+	return s.executeCliWithRetry(ctx, workDir, prompt, model, maxRetries, envOverrides...)
 }
 
 func (s *PromptService) runPromptHumanizer(ctx context.Context, workDir, prompt, model string) (string, error) {
@@ -500,6 +505,10 @@ func (s *PromptService) runPromptHumanizer(ctx context.Context, workDir, prompt,
 }
 
 func (s *PromptService) generateCustomProjectPromptDocument(ctx context.Context, workDir, projectName, model string, requested ...internalprompt.DocumentCounts) (string, error) {
+	return s.generateCustomProjectPromptDocumentWithProvider(ctx, workDir, projectName, promptProviderSelection{Model: model}, requested...)
+}
+
+func (s *PromptService) generateCustomProjectPromptDocumentWithProvider(ctx context.Context, workDir, projectName string, selection promptProviderSelection, requested ...internalprompt.DocumentCounts) (string, error) {
 	counts := internalprompt.DefaultDocumentCounts()
 	if len(requested) > 0 {
 		counts = requested[0]
@@ -507,7 +516,7 @@ func (s *PromptService) generateCustomProjectPromptDocument(ctx context.Context,
 	var output string
 	var err error
 	if s.requirementDocGenerator != nil {
-		output, err = s.requirementDocGenerator(ctx, workDir, projectName, model)
+		output, err = s.requirementDocGenerator(ctx, workDir, projectName, selection.Model)
 	} else {
 		projectProfile, profileErr := s.resolveProjectProfile(ctx, workDir)
 		if profileErr != nil {
@@ -517,7 +526,7 @@ func (s *PromptService) generateCustomProjectPromptDocument(ctx context.Context,
 			)
 		}
 		prompt := buildCustomProjectPromptDocumentPrompt(projectName, projectProfile, counts)
-		output, err = s.executeCliRaw(ctx, workDir, prompt, model)
+		output, err = s.executeCliRaw(ctx, workDir, prompt, selection.Model, selection.EnvOverrides)
 	}
 	if err != nil {
 		return "", err
@@ -578,7 +587,7 @@ func (s *PromptService) bestEffortPolishPrompt(ctx context.Context, workDir, pro
 }
 
 // executeCliWithRetry 执行 CLI Agent 生成提示词，失败时自动重试指定次数。
-func (s *PromptService) executeCliWithRetry(ctx context.Context, workDir, prompt, model string, maxRetries int) (generatedPromptResult, error) {
+func (s *PromptService) executeCliWithRetry(ctx context.Context, workDir, prompt, model string, maxRetries int, envOverrides ...map[string]string) (generatedPromptResult, error) {
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
@@ -588,7 +597,7 @@ func (s *PromptService) executeCliWithRetry(ctx context.Context, workDir, prompt
 				"last_error", lastErr,
 			)
 		}
-		result, err := s.executeCliPromptGeneration(ctx, workDir, prompt, model)
+		result, err := s.executeCliPromptGeneration(ctx, workDir, prompt, model, envOverrides...)
 		if err == nil {
 			return result, nil
 		}
@@ -601,8 +610,8 @@ func (s *PromptService) executeCliWithRetry(ctx context.Context, workDir, prompt
 }
 
 // executeCliPromptGeneration 启动一次 CLI Agent 执行并从输出中提取提示词。
-func (s *PromptService) executeCliPromptGeneration(ctx context.Context, workDir, prompt, model string) (generatedPromptResult, error) {
-	output, err := s.executeCliRaw(ctx, workDir, prompt, model)
+func (s *PromptService) executeCliPromptGeneration(ctx context.Context, workDir, prompt, model string, envOverrides ...map[string]string) (generatedPromptResult, error) {
+	output, err := s.executeCliRaw(ctx, workDir, prompt, model, envOverrides...)
 	if err != nil {
 		return generatedPromptResult{}, err
 	}
@@ -618,8 +627,8 @@ func (s *PromptService) executeCliPromptGeneration(ctx context.Context, workDir,
 	}, nil
 }
 
-func (s *PromptService) executeCliHumanizer(ctx context.Context, workDir, prompt, model string) (string, error) {
-	output, err := s.executeCliRaw(ctx, workDir, prompt, model)
+func (s *PromptService) executeCliHumanizer(ctx context.Context, workDir, prompt, model string, envOverrides ...map[string]string) (string, error) {
+	output, err := s.executeCliRaw(ctx, workDir, prompt, model, envOverrides...)
 	if err != nil {
 		return "", err
 	}
@@ -632,15 +641,20 @@ func (s *PromptService) executeCliHumanizer(ctx context.Context, workDir, prompt
 	return humanizedText, nil
 }
 
-func (s *PromptService) executeCliRaw(ctx context.Context, workDir, prompt, model string) (string, error) {
+func (s *PromptService) executeCliRaw(ctx context.Context, workDir, prompt, model string, envOverrides ...map[string]string) (string, error) {
 	additionalDirs := cliAdditionalDirs()
+	env := map[string]string(nil)
+	if len(envOverrides) > 0 {
+		env = envOverrides[0]
+	}
 
 	resp, err := s.cliSvc.StartClaude(appcli.StartClaudeRequest{
 		WorkDir:        workDir,
 		Prompt:         prompt,
-		Model:          model,
+		Model:          claudeCLIModel(model, env),
 		PermissionMode: "bypassPermissions",
 		AdditionalDirs: additionalDirs,
+		EnvOverrides:   env,
 	})
 	if err != nil {
 		return "", fmt.Errorf(errs.FmtClaudeStartFail, err)
@@ -651,6 +665,13 @@ func (s *PromptService) executeCliRaw(ctx context.Context, workDir, prompt, mode
 		return "", err
 	}
 	return output, nil
+}
+
+func claudeCLIModel(model string, envOverrides map[string]string) string {
+	if strings.TrimSpace(envOverrides["ANTHROPIC_MODEL"]) != "" {
+		return ""
+	}
+	return model
 }
 
 // waitForCliCompletion 同步轮询等待 CLI 执行完成，返回完整输出。
@@ -979,7 +1000,7 @@ func findExactDuplicatePromptMatch(promptText string, existingPrompts []siblingP
 	return duplicatePromptMatch{}, false
 }
 
-func (s *PromptService) findDuplicatePromptMatch(ctx context.Context, workDir, promptText string, existingPrompts []siblingPrompt, model string) (duplicatePromptMatch, bool) {
+func (s *PromptService) findDuplicatePromptMatch(ctx context.Context, workDir, promptText string, existingPrompts []siblingPrompt, model string, envOverrides ...map[string]string) (duplicatePromptMatch, bool) {
 	if match, ok := findExactDuplicatePromptMatch(promptText, existingPrompts); ok {
 		return match, true
 	}
@@ -995,7 +1016,7 @@ func (s *PromptService) findDuplicatePromptMatch(ctx context.Context, workDir, p
 		)
 		return duplicatePromptMatch{}, false
 	}
-	decision, err := s.judgeSemanticDuplicatePrompt(ctx, workDir, promptText, candidates, model)
+	decision, err := s.judgeSemanticDuplicatePrompt(ctx, workDir, promptText, candidates, model, envOverrides...)
 	if err != nil {
 		slog.Warn("semantic duplicate judge failed",
 			"candidate_count", len(candidates),
@@ -1113,7 +1134,7 @@ func jaccardTermSimilarity(left, right map[string]struct{}) float64 {
 	return float64(intersection) / float64(union)
 }
 
-func (s *PromptService) judgeSemanticDuplicatePrompt(ctx context.Context, workDir, promptText string, candidates []duplicatePromptMatch, model string) (semanticDuplicateDecision, error) {
+func (s *PromptService) judgeSemanticDuplicatePrompt(ctx context.Context, workDir, promptText string, candidates []duplicatePromptMatch, model string, envOverrides ...map[string]string) (semanticDuplicateDecision, error) {
 	judgePrompt := buildSemanticDuplicateJudgePrompt(promptText, candidates)
 	var output string
 	var err error
@@ -1122,7 +1143,7 @@ func (s *PromptService) judgeSemanticDuplicatePrompt(ctx context.Context, workDi
 	}
 	judgeCtx, cancel := context.WithTimeout(ctx, semanticDuplicateJudgeTimeout)
 	defer cancel()
-	output, err = s.executeCliRaw(judgeCtx, workDir, judgePrompt, model)
+	output, err = s.executeCliRaw(judgeCtx, workDir, judgePrompt, model, envOverrides...)
 	if err != nil {
 		return semanticDuplicateDecision{}, err
 	}
@@ -1294,8 +1315,10 @@ func NormalizePromptDifficultyLabel(value string) string {
 }
 
 type promptProviderSelection struct {
-	Name  string
-	Model string
+	Name         string
+	Model        string
+	ProviderType string
+	EnvOverrides map[string]string
 }
 
 func buildPolishSkillPrompt(text string) string {
@@ -1320,7 +1343,8 @@ func defaultPolishWorkDir() string {
 	return workDir
 }
 
-// resolveProviderForPromptGeneration 从 LLM provider 配置中解析出提示词生成使用的 Claude Code provider。
+// resolveProviderForPromptGeneration resolves a DeepSeek Flash provider. The
+// local Claude Code process remains the tool harness for repository access.
 func resolveProviderForPromptGeneration(st *store.Store, requestedID *string) (promptProviderSelection, error) {
 	providers, err := st.ListLLMProviders()
 	if err != nil {
@@ -1328,30 +1352,39 @@ func resolveProviderForPromptGeneration(st *store.Store, requestedID *string) (p
 	}
 	if len(providers) == 0 {
 		return promptProviderSelection{
-			Name:  "Claude Code CLI",
-			Model: defaultPromptGenerationModel,
+			Name:         "DeepSeek V4 Flash（Claude Code）",
+			Model:        defaultPromptGenerationModel,
+			ProviderType: "claude_code_acp",
 		}, nil
 	}
 
 	if requestedID != nil && strings.TrimSpace(*requestedID) != "" {
 		selected := selectProvider(providers, requestedID)
 		if selected == nil {
-			return promptProviderSelection{}, errors.New(errs.MsgClaudeCodeAcpMissing)
+			return promptProviderSelection{}, errors.New("未找到所选的 DeepSeek V4 Flash 提供商")
 		}
-		if selected.ProviderType != "claude_code_acp" {
-			return promptProviderSelection{}, errors.New(errs.MsgClaudeCodeAcpOnly)
+		if !isDeepSeekPromptProvider(*selected) {
+			return promptProviderSelection{}, errors.New("提示词生成和润色只支持 DeepSeek V4 Flash")
 		}
 		return buildPromptProviderSelection(*selected), nil
 	}
 
-	if selected := selectDefaultClaudeCodeProvider(providers); selected != nil {
-		return buildPromptProviderSelection(*selected), nil
+	for _, requireDefault := range []bool{true, false} {
+		for i := range providers {
+			if providers[i].IsDefault == requireDefault && isDeepSeekAPIProvider(providers[i]) {
+				return buildPromptProviderSelection(providers[i]), nil
+			}
+		}
 	}
-	if selected := selectFirstClaudeCodeProvider(providers); selected != nil {
-		return buildPromptProviderSelection(*selected), nil
+	for _, requireDefault := range []bool{true, false} {
+		for i := range providers {
+			if providers[i].IsDefault == requireDefault && isDeepSeekACPProvider(providers[i]) {
+				return buildPromptProviderSelection(providers[i]), nil
+			}
+		}
 	}
 
-	return promptProviderSelection{}, errors.New(errs.MsgClaudeCodeAcpNotConfigured)
+	return promptProviderSelection{}, errors.New("请先在设置中配置 DeepSeek V4 Flash 提供商")
 }
 
 func buildPromptProviderSelection(provider store.LLMProvider) promptProviderSelection {
@@ -1364,8 +1397,10 @@ func buildPromptProviderSelection(provider store.LLMProvider) promptProviderSele
 		model = defaultPromptGenerationModel
 	}
 	return promptProviderSelection{
-		Name:  name,
-		Model: model,
+		Name:         name,
+		Model:        model,
+		ProviderType: provider.ProviderType,
+		EnvOverrides: deepSeekClaudeEnvironment(provider),
 	}
 }
 
@@ -1373,22 +1408,51 @@ func resolveProviderForPolish(st *store.Store, requestedID *string) (promptProvi
 	return resolveProviderForPromptGeneration(st, requestedID)
 }
 
-func selectDefaultClaudeCodeProvider(providers []store.LLMProvider) *store.LLMProvider {
-	for i := range providers {
-		if providers[i].IsDefault && providers[i].ProviderType == "claude_code_acp" {
-			return &providers[i]
-		}
+func isDeepSeekFlashModel(model string) bool {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case deepSeekFlashModel, deepSeekFlashCanonicalModel:
+		return true
+	default:
+		return false
 	}
-	return nil
 }
 
-func selectFirstClaudeCodeProvider(providers []store.LLMProvider) *store.LLMProvider {
-	for i := range providers {
-		if providers[i].ProviderType == "claude_code_acp" {
-			return &providers[i]
-		}
+func isDeepSeekAPIProvider(provider store.LLMProvider) bool {
+	if provider.ProviderType != "openai_compatible" || !isDeepSeekFlashModel(provider.Model) || strings.TrimSpace(provider.APIKey) == "" {
+		return false
 	}
-	return nil
+	if provider.BaseURL == nil {
+		return false
+	}
+	baseURL := strings.ToLower(strings.TrimRight(strings.TrimSpace(*provider.BaseURL), "/"))
+	return baseURL == deepSeekAPIBaseURL || baseURL == deepSeekAPIBaseURL+"/v1"
+}
+
+func isDeepSeekACPProvider(provider store.LLMProvider) bool {
+	return provider.ProviderType == "claude_code_acp" && isDeepSeekFlashModel(provider.Model)
+}
+
+func isDeepSeekPromptProvider(provider store.LLMProvider) bool {
+	return isDeepSeekAPIProvider(provider) || isDeepSeekACPProvider(provider)
+}
+
+func deepSeekClaudeEnvironment(provider store.LLMProvider) map[string]string {
+	if !isDeepSeekAPIProvider(provider) {
+		return nil
+	}
+	model := strings.TrimSpace(provider.Model)
+	return map[string]string{
+		"ANTHROPIC_BASE_URL":              deepSeekAPIBaseURL + "/anthropic",
+		"ANTHROPIC_AUTH_TOKEN":            strings.TrimSpace(provider.APIKey),
+		"ANTHROPIC_API_KEY":               strings.TrimSpace(provider.APIKey),
+		"ANTHROPIC_MODEL":                 model,
+		"ANTHROPIC_DEFAULT_OPUS_MODEL":    model,
+		"ANTHROPIC_DEFAULT_SONNET_MODEL":  model,
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL":   model,
+		"CLAUDE_CODE_SUBAGENT_MODEL":      model,
+		"CLAUDE_CODE_EFFORT_LEVEL":        "high",
+		"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "786432",
+	}
 }
 
 func normalizePromptGenerationError(err error) string {
@@ -1566,7 +1630,7 @@ func (s *PromptService) PolishText(req PolishTextRequest) (*PolishTextResult, er
 	workDir := defaultPolishWorkDir()
 	skillPrompt := buildPolishSkillPrompt(text)
 	slog.Info("PolishText started", "model", selection.Model, "provider", selection.Name, "textLen", len(text))
-	polished, err := s.executeCliHumanizer(context.Background(), workDir, skillPrompt, selection.Model)
+	polished, err := s.executeCliHumanizer(context.Background(), workDir, skillPrompt, selection.Model, selection.EnvOverrides)
 	if err != nil {
 		return nil, fmt.Errorf(errs.FmtPolishFailed, err)
 	}

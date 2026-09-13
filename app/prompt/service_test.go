@@ -350,19 +350,17 @@ func TestResolveProviderForPolish(t *testing.T) {
 	testStore := testutil.OpenTestStore(t)
 	defer testStore.Close()
 
-	selection, err := resolveProviderForPolish(testStore, nil)
-	if err != nil {
-		t.Fatalf("resolveProviderForPolish(no providers) error = %v", err)
-	}
-	if selection.Model != defaultPromptGenerationModel {
-		t.Fatalf("resolveProviderForPolish(no providers).Model = %q, want %q", selection.Model, defaultPromptGenerationModel)
+	fallback, err := resolveProviderForPolish(testStore, nil)
+	if err != nil || fallback.Model != deepSeekFlashModel {
+		t.Fatalf("resolveProviderForPolish(no providers) = %#v, %v", fallback, err)
 	}
 
 	if err := testStore.CreateLLMProvider(store.LLMProvider{
 		ID:           "provider-openai",
-		Name:         "OpenAI",
+		Name:         "DeepSeek API",
 		ProviderType: "openai_compatible",
-		Model:        "gpt-5.4",
+		Model:        "deepseek-v4-flash",
+		BaseURL:      strPtr("https://api.deepseek.com"),
 		APIKey:       "test-key",
 		IsDefault:    true,
 	}); err != nil {
@@ -370,25 +368,29 @@ func TestResolveProviderForPolish(t *testing.T) {
 	}
 	if err := testStore.CreateLLMProvider(store.LLMProvider{
 		ID:           "provider-claude",
-		Name:         "Claude ACP",
+		Name:         "DeepSeek ACP",
 		ProviderType: "claude_code_acp",
-		Model:        "claude-opus-4-6",
+		Model:        "deepseek-v4-flash",
 		IsDefault:    false,
 	}); err != nil {
 		t.Fatalf("CreateLLMProvider() error = %v", err)
 	}
 
-	selection, err = resolveProviderForPolish(testStore, nil)
+	selection, err := resolveProviderForPolish(testStore, nil)
 	if err != nil {
 		t.Fatalf("resolveProviderForPolish(fallback claude provider) error = %v", err)
 	}
-	if selection.Name != "Claude ACP" {
-		t.Fatalf("resolveProviderForPolish(fallback claude provider).Name = %q, want Claude ACP", selection.Name)
+	if selection.Name != "DeepSeek API" {
+		t.Fatalf("resolveProviderForPolish(default DeepSeek provider).Name = %q, want DeepSeek API", selection.Name)
 	}
 
 	openaiID := "provider-openai"
-	if _, err := resolveProviderForPolish(testStore, &openaiID); err == nil {
-		t.Fatalf("resolveProviderForPolish(openai provider) expected error")
+	selection, err = resolveProviderForPolish(testStore, &openaiID)
+	if err != nil {
+		t.Fatalf("resolveProviderForPolish(DeepSeek API) error = %v", err)
+	}
+	if selection.EnvOverrides["ANTHROPIC_AUTH_TOKEN"] != "test-key" || selection.EnvOverrides["ANTHROPIC_BASE_URL"] != "https://api.deepseek.com/anthropic" {
+		t.Fatalf("DeepSeek Claude environment = %#v", selection.EnvOverrides)
 	}
 
 	claudeID := "provider-claude"
@@ -396,8 +398,8 @@ func TestResolveProviderForPolish(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveProviderForPolish(claude provider) error = %v", err)
 	}
-	if selection.Model != "claude-opus-4-6" {
-		t.Fatalf("resolveProviderForPolish(claude provider).Model = %q, want claude-opus-4-6", selection.Model)
+	if selection.Model != "deepseek-v4-flash" {
+		t.Fatalf("resolveProviderForPolish(claude provider).Model = %q, want deepseek-v4-flash", selection.Model)
 	}
 }
 
@@ -1145,45 +1147,46 @@ func TestResolveProviderForPromptGeneration(t *testing.T) {
 	testStore := testutil.OpenTestStore(t)
 	defer testStore.Close()
 
-	selection, err := resolveProviderForPromptGeneration(testStore, nil)
-	if err != nil {
-		t.Fatalf("resolveProviderForPromptGeneration(no providers) error = %v", err)
+	fallback, err := resolveProviderForPromptGeneration(testStore, nil)
+	if err != nil || fallback.Model != deepSeekFlashModel {
+		t.Fatalf("resolveProviderForPromptGeneration(no providers) = %#v, %v", fallback, err)
 	}
 	if err := testStore.CreateLLMProvider(store.LLMProvider{
 		ID:           "provider-openai",
-		Name:         "OpenAI",
+		Name:         "DeepSeek API",
 		ProviderType: "openai_compatible",
-		Model:        "gpt-5.4",
+		Model:        "deepseek-flash",
+		BaseURL:      strPtr("https://api.deepseek.com/"),
 		APIKey:       "test-key",
 		IsDefault:    true,
 	}); err != nil {
 		t.Fatalf("CreateLLMProvider() error = %v", err)
 	}
-	if selection.Model != defaultPromptGenerationModel {
-		t.Fatalf("resolveProviderForPromptGeneration(no providers).Model = %q, want %q", selection.Model, defaultPromptGenerationModel)
-	}
-
 	if err := testStore.CreateLLMProvider(store.LLMProvider{
 		ID:           "provider-claude",
-		Name:         "Claude ACP",
+		Name:         "DeepSeek ACP",
 		ProviderType: "claude_code_acp",
-		Model:        "claude-opus-4-6",
+		Model:        "deepseek-v4-flash",
 		IsDefault:    false,
 	}); err != nil {
 		t.Fatalf("CreateLLMProvider() error = %v", err)
 	}
 
-	selection, err = resolveProviderForPromptGeneration(testStore, nil)
+	selection, err := resolveProviderForPromptGeneration(testStore, nil)
 	if err != nil {
 		t.Fatalf("resolveProviderForPromptGeneration(fallback claude provider) error = %v", err)
 	}
-	if selection.Model != "claude-opus-4-6" {
-		t.Fatalf("resolveProviderForPromptGeneration(fallback claude provider).Model = %q, want claude-opus-4-6", selection.Model)
+	if selection.Model != "deepseek-flash" || selection.Name != "DeepSeek API" {
+		t.Fatalf("resolveProviderForPromptGeneration(default API) = %#v", selection)
 	}
 
 	openaiID := "provider-openai"
-	if _, err := resolveProviderForPromptGeneration(testStore, &openaiID); err == nil {
-		t.Fatalf("resolveProviderForPromptGeneration(openai provider) expected error")
+	selection, err = resolveProviderForPromptGeneration(testStore, &openaiID)
+	if err != nil {
+		t.Fatalf("resolveProviderForPromptGeneration(DeepSeek API) error = %v", err)
+	}
+	if selection.EnvOverrides["ANTHROPIC_MODEL"] != "deepseek-flash" || selection.EnvOverrides["CLAUDE_CODE_EFFORT_LEVEL"] != "high" {
+		t.Fatalf("DeepSeek environment = %#v", selection.EnvOverrides)
 	}
 
 	claudeID := "provider-claude"
@@ -1191,8 +1194,29 @@ func TestResolveProviderForPromptGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveProviderForPromptGeneration(claude provider) error = %v", err)
 	}
-	if selection.Name != "Claude ACP" {
-		t.Fatalf("resolveProviderForPromptGeneration(claude provider).Name = %q, want Claude ACP", selection.Name)
+	if selection.Name != "DeepSeek ACP" {
+		t.Fatalf("resolveProviderForPromptGeneration(claude provider).Name = %q, want DeepSeek ACP", selection.Name)
+	}
+}
+
+func TestResolveProviderForPromptGenerationRejectsNonDeepSeekModel(t *testing.T) {
+	testStore := testutil.OpenTestStore(t)
+	defer testStore.Close()
+	if err := testStore.CreateLLMProvider(store.LLMProvider{ID: "other", Name: "Other", ProviderType: "openai_compatible", Model: "gpt-5.5", APIKey: "secret", IsDefault: true}); err != nil {
+		t.Fatal(err)
+	}
+	id := "other"
+	if _, err := resolveProviderForPromptGeneration(testStore, &id); err == nil || !strings.Contains(err.Error(), "DeepSeek V4 Flash") {
+		t.Fatalf("error = %v, want model restriction", err)
+	}
+}
+
+func TestClaudeCLIModelUsesEnvironmentForDirectDeepSeekAPI(t *testing.T) {
+	if got := claudeCLIModel("deepseek-v4-flash", map[string]string{"ANTHROPIC_MODEL": "deepseek-v4-flash"}); got != "" {
+		t.Fatalf("claudeCLIModel() = %q, want empty --model argument", got)
+	}
+	if got := claudeCLIModel("deepseek-v4-flash", nil); got != "deepseek-v4-flash" {
+		t.Fatalf("claudeCLIModel(ACP) = %q", got)
 	}
 }
 
