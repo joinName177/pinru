@@ -152,6 +152,72 @@ func TestCaptureAndTableCachesGradesWithoutRequiringAnotherRound(t *testing.T) {
 	}
 }
 
+func TestCaptureAndTablePreservesNonBlockingReadyGapsAsLimitations(t *testing.T) {
+	s, trace, _ := annotationFixture(t)
+	eval := map[string]any{
+		"status": "ready", "scores": []int{5, 5, 5, 5, 4}, "descriptions": []string{"交付完整。", "遵循要求。", "规划完整。", "推理正确。", "执行存在一次多余调用。"},
+		"taskType": "0-1代码生成", "difficulty": "简单", "language": "Python", "environment": "无外部依赖", "harnessVersion": "2.1.0", "os": "MacOS/Linux",
+		"evidence": []string{"代码和构建结果均已核验"}, "missing": []string{"未进行真实浏览器交互验证"},
+		"requirementChecks": []map[string]string{{"requirement": "实现加法功能", "status": "completed", "evidence": "静态检查和构建均通过"}},
+		"issues":            []map[string]string{}, "nextPrompt": "", "nextPromptType": "",
+	}
+	s.cli, _ = fakeReviewCLIWithEvaluation(t, eval, "")
+	payload, _ := json.Marshal(CaptureRequest{TaskID: "题目-1", TracePath: trace})
+	output, err := s.ExecuteJob(context.Background(), "annotation_capture_table", string(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := output.(*domain.Case).Rounds[0].Evaluations[0]
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "ready" || len(result.Missing) != 0 {
+		t.Fatalf("ready result still blocked: %+v", result)
+	}
+	limitations, ok := fields["limitations"].([]any)
+	if !ok || len(limitations) != 1 || limitations[0] != "未进行真实浏览器交互验证" {
+		t.Fatalf("limitations = %#v", fields["limitations"])
+	}
+}
+
+func TestCaptureAndTableUsesContainerExecutionOSInsteadOfEvaluatorCommentary(t *testing.T) {
+	s, trace, _ := annotationFixture(t)
+	if _, err := s.Capture(CaptureRequest{TaskID: "题目-1", TracePath: trace}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.store.GetAnnotationCase("题目-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ContainerID = "container-123"
+	c.ContainerName = "fixture-claude-1"
+	if _, err := s.store.SaveAnnotationCase(*c, c.Revision); err != nil {
+		t.Fatal(err)
+	}
+	eval := map[string]any{
+		"status": "ready", "scores": []int{5, 5, 5, 5, 5}, "descriptions": []string{"交付完整。", "遵循要求。", "规划完整。", "推理正确。", "执行完整。"},
+		"taskType": "0-1代码生成", "difficulty": "简单", "language": "Python", "environment": "无外部依赖", "harnessVersion": "2.1.0",
+		"os":       "待补：被测轨迹未记录操作系统，报错格式偏向 Linux，仅为静态推断",
+		"evidence": []string{"代码和构建结果均已核验"}, "missing": []string{}, "limitations": []string{"未做浏览器实机验证"},
+		"requirementChecks": []map[string]string{{"requirement": "实现加法功能", "status": "completed", "evidence": "静态检查和构建均通过"}},
+		"issues":            []map[string]string{}, "nextPrompt": "", "nextPromptType": "",
+	}
+	s.cli, _ = fakeReviewCLIWithEvaluation(t, eval, "")
+	output, err := s.resumeTable(context.Background(), "题目-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := output.Rounds[0].Evaluations[0]
+	if result.OS != "MacOS/Linux" {
+		t.Fatalf("OS = %q, want container execution category MacOS/Linux", result.OS)
+	}
+}
+
 func TestCaptureAndTableKeepsCaptureOnReviewFailure(t *testing.T) {
 	s, trace, _ := annotationFixture(t)
 	payload, _ := json.Marshal(CaptureRequest{TaskID: "题目-1", TracePath: trace})

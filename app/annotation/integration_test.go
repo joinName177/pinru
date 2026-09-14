@@ -85,9 +85,6 @@ func fakeReviewCLI(t *testing.T) (*appcli.CliService, string) {
 
 func fakeReviewCLIWithDelay(t *testing.T, delay string) (*appcli.CliService, string) {
 	t.Helper()
-	dir := t.TempDir()
-	payload := filepath.Join(dir, "response.json")
-	count := filepath.Join(dir, "count")
 	eval := map[string]any{
 		"status": "ready", "scores": []int{4, 5, 5, 5, 5}, "descriptions": []string{"加法入口能返回结果，但空值缺少明确反馈。", "按原要求提供了加法入口。", "按入口、计算、反馈顺序组织实现。", "从输入类型推导处理分支。", "完成实现并运行了轨迹中记录的用例。"},
 		"taskType": "0-1代码生成", "difficulty": "简单", "language": "Python", "environment": "无外部依赖", "harnessVersion": "2.1.0", "os": "MacOS/Linux",
@@ -95,6 +92,14 @@ func fakeReviewCLIWithDelay(t *testing.T, delay string) (*appcli.CliService, str
 		"requirementChecks": []map[string]string{{"requirement": "实现加法功能", "status": "completed", "evidence": "静态检查 code/main.py：add(a,b) 返回 a+b"}},
 		"issues":            []map[string]string{{"kind": "bug", "description": "空值输入没有反馈", "evidence": "code/main.py 仅返回 a+b"}}, "nextPrompt": "修复空值输入时页面没有反馈的问题，补上明确提示，保留正常加法结果。", "nextPromptType": "Bug修复",
 	}
+	return fakeReviewCLIWithEvaluation(t, eval, delay)
+}
+
+func fakeReviewCLIWithEvaluation(t *testing.T, eval map[string]any, delay string) (*appcli.CliService, string) {
+	t.Helper()
+	dir := t.TempDir()
+	payload := filepath.Join(dir, "response.json")
+	count := filepath.Join(dir, "count")
 	raw, _ := json.Marshal(eval)
 	if err := os.WriteFile(payload, raw, 0600); err != nil {
 		t.Fatal(err)

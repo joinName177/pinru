@@ -204,6 +204,11 @@ func (s *AnnotationService) reviewLocked(ctx context.Context, req ReviewRequest)
 			evaluation.TaskType = "feature迭代"
 		}
 	}
+	if c.ContainerID != "" {
+		// Container-backed sessions execute inside Linux even when the desktop
+		// host is macOS or Windows. The export template groups both POSIX values.
+		evaluation.OS = "MacOS/Linux"
+	}
 	evaluation.CreatedAt = time.Now().Unix()
 	evaluation.EvidenceHash = r.EvidenceHash
 	evaluation.SkillHash = skillHash
@@ -218,6 +223,7 @@ func (s *AnnotationService) reviewLocked(ctx context.Context, req ReviewRequest)
 		}
 	}
 	normalizeNextPrompt(evaluation, validRounds)
+	normalizeEvidenceState(evaluation)
 	if err := domain.ValidateEvaluation(r, *evaluation); err != nil {
 		return nil, fmt.Errorf("五维评分校验失败：%w", err)
 	}
@@ -234,6 +240,25 @@ func (s *AnnotationService) reviewLocked(ctx context.Context, req ReviewRequest)
 		domain.ReportProgress(ctx, 100, "本轮评价已保存")
 	}
 	return saved, err
+}
+
+func normalizeEvidenceState(evaluation *domain.Evaluation) {
+	if evaluation.Status != "ready" || len(evaluation.Missing) == 0 {
+		return
+	}
+	complete := len(evaluation.RequirementChecks) > 0
+	for _, score := range evaluation.Scores {
+		complete = complete && score != nil
+	}
+	for _, check := range evaluation.RequirementChecks {
+		complete = complete && check.Status == "completed"
+	}
+	if !complete {
+		evaluation.Status = "needs_evidence"
+		return
+	}
+	evaluation.Limitations = append(evaluation.Limitations, evaluation.Missing...)
+	evaluation.Missing = nil
 }
 
 // Report only observable events; never infer validation coverage from tool activity.

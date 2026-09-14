@@ -44,6 +44,20 @@ func TestSatisfactionSchemaRequiresExactScoreAndDescriptionCounts(t *testing.T) 
 	}
 }
 
+func TestSatisfactionSchemaRestrictsOperatingSystemToExportValues(t *testing.T) {
+	schema := satisfactionSchema()
+	props := schema["properties"].(map[string]any)
+	osSchema := props["os"].(map[string]any)
+	values, ok := osSchema["enum"].([]string)
+	if !ok {
+		t.Fatalf("os enum = %#v, want []string", osSchema["enum"])
+	}
+	want := []string{"", "MacOS/Linux", "Windows"}
+	if strings.Join(values, "|") != strings.Join(want, "|") {
+		t.Fatalf("os enum = %#v, want %#v", values, want)
+	}
+}
+
 func TestRunSatisfactionReviewRejectsEmptyRequirementChecks(t *testing.T) {
 	workDir := t.TempDir()
 	payload := validReviewJSON(t, 5)
@@ -142,6 +156,34 @@ func TestRunSatisfactionReviewRejectsTrailingDocumentAfterJSON(t *testing.T) {
 		WorkDir: workDir, SkillDir: filepath.Join(workDir, "skill"), InputPath: filepath.Join(workDir, "input.json"),
 	}, nil); err == nil {
 		t.Fatalf("RunSatisfactionReview() = %#v, nil; want trailing-content rejection", evaluation)
+	}
+}
+
+func TestRunSatisfactionReviewAcceptsSingleJSONCodeFence(t *testing.T) {
+	workDir := t.TempDir()
+	payload := "```json\n" + validReviewJSON(t, 5) + "\n```\n"
+	binary := writeFakeCodex(t, fakeCodexWritesReview(t, payload, "", ""))
+	service := NewWithResolver(func(string) (string, error) { return binary, nil })
+	evaluation, err := service.RunSatisfactionReview(context.Background(), SatisfactionReviewRequest{
+		WorkDir: workDir, SkillDir: filepath.Join(workDir, "skill"), InputPath: filepath.Join(workDir, "input.json"),
+	}, nil)
+	if err != nil {
+		t.Fatalf("RunSatisfactionReview() error = %v", err)
+	}
+	if evaluation == nil || evaluation.Status != "ready" || evaluation.Scores[4] == nil || *evaluation.Scores[4] != 5 {
+		t.Fatalf("evaluation = %#v", evaluation)
+	}
+}
+
+func TestRunSatisfactionReviewReportsMalformedJSONBeforeShapeErrors(t *testing.T) {
+	workDir := t.TempDir()
+	binary := writeFakeCodex(t, fakeCodexWritesReview(t, "```json\n{broken}\n```\n", "", ""))
+	service := NewWithResolver(func(string) (string, error) { return binary, nil })
+	_, err := service.RunSatisfactionReview(context.Background(), SatisfactionReviewRequest{
+		WorkDir: workDir, SkillDir: filepath.Join(workDir, "skill"), InputPath: filepath.Join(workDir, "input.json"),
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "评分 JSON 无效") || strings.Contains(err.Error(), "恰好包含五项") {
+		t.Fatalf("RunSatisfactionReview() error = %v, want an accurate JSON parse error", err)
 	}
 }
 

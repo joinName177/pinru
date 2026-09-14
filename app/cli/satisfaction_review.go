@@ -122,10 +122,10 @@ func buildSatisfactionPrompt(req SatisfactionReviewRequest) string {
 评分后按 description-quality 逐格复核：每个 1—4 分描述都要说清本维度哪里不合适、具体行为与位置、证据支持的客观后果。只复述“未先读取、失败后补读”不够；只有证据表明步骤顺序安排遗漏前置条件时，才归为规划不足，不把单次工具失败自动升级为缺乏规划机制。执行不足直接写失败、补救动作或未覆盖的具体验证行为，不用“不算完全干净”等主观感受词。
 缺少浏览器记录不自动扣分。根据实际需求与已有测试判断未覆盖哪项具体交互，只能写现有验证无法确认的行为，不能写成已发生的故障或泛泛的潜在运行时风险。仅因所提供材料缺失而无法判断时用 null 并列缺项。满分描述有正向依据，涉及已恢复的失误时须解释维度归属，不能留下分数与理由冲突。
 在同一次评价中完成事实核对和自然表达复读，缺少上述要素就回看证据重写；不能为保留低分而补造不足。五格不用统一套句、先夸后批或“因此给X分”收尾，必要的文件名和操作保留，密集定位移入 evidence。没有把后补验证归给模型，没有杜撰文件或测试。润色不得改变事实、分数和问题严重性，保留 AI 评价来源，不以伪装人工或通过 AI 检测为目标。
-scores/descriptions 顺序固定为上述五维。证据不足的分数用 null，并在 missing 写出对应维度与缺项，status=needs_evidence。ready 要求五项依据和可核查证据齐全。environment 依据实际项目可复现条件，不因使用 Docker CLI 就自动写可一键起环境；版本和系统依据原会话，不能用评价电脑环境回填。
+scores/descriptions 顺序固定为上述五维。证据不足的分数用 null，并在 missing 写出对应维度与缺项，status=needs_evidence。ready 要求五项依据和可核查证据齐全。environment 依据实际项目可复现条件，不因使用 Docker CLI 就自动写可一键起环境；版本和系统依据原会话，不能用评价电脑环境回填。os 只能填写 MacOS/Linux、Windows 或空字符串，解释与不确定性写入 evidence、limitations 或 missing，不能写进 os。
 功能完成度、五维表现和是否需要代码修复分别判断。功能完成达标也可能有规划、推理或执行扣分，五维非满分不证明功能未完成。修复提示词只能基于代码与轨迹确认的原需求未完成、回归或未解决 Bug，不能为生成提示词而降低分数，也不能因低分强找问题。仅有 process/evidence 时保留真实分数和依据，nextPrompt 与 nextPromptType 留空；五维全满分时两项也必须为空。不需要填写不满意原因。提示词只写有证据的修复事项与预期结果，不扩展需求，不要求提高分数。缺证据时标记 needs_evidence 并列缺项，不把未知当缺陷。达到 10 个有效轮次后不再引导追加轮次，但确认 Bug 的修复建议仍保留供检查。issues.kind 分别用 bug/process/evidence。
 每项负面描述必须在 descriptions 正文保留实际操作节点及工具调用，并引用相关文件名、函数名或命令，不能只放 evidence。验证遗漏须定位到有证据的具体阶段、实际检查命令及结果，说明未覆盖哪项原始需求；没有记录不能编成“构建通过后”或“提交前”。命令失败必须引用完整失败命令（关键参数及目标测试文件/脚本）、关键报错和实际恢复动作，凭据脱敏。仅写 node: bad option 或 npx tsc 不足；回读原工具调用核实，禁止把用户举例的命令当作事实。没有环境和当时可得信息的支持，不称为“可避免的失败”。缺少必要原文时撤回无证据指控或标明待补证据，不为保留低分补造命令、步骤号、文件或函数。润色后再次核对这些引用仍在描述正文中。
-先逐项复核原始提示词的功能要求、约束、验收条件及本轮变更引入的回归，将每项原需求及其结论写入 requirementChecks，再进行五维评分。requirement、status、evidence 均不能为空；status 只用 completed、failed、unverified。evidence 写具体文件、命令输出或静态依据，明确验证是原模型执行、评价助手复验还是静态判断。failed 只用于有事实支持的轮末未完成项或未解决 Bug，并同步列入 issues.kind=bug；unverified 表示现有证据无法核实，不是 Bug，不得强行生成修复提示词，并将关键证据缺口具体写入 missing、status 标为 needs_evidence。若只有未验证项、没有已确认 Bug，交付完整性分数填 null；若同轮另有已确认的 failed/Bug，则可依据该 Bug 将交付完整性评为 1—4，同时保留 unverified、needs_evidence 和 missing。未验证项不强迫其他维度清空或降分。缺关键证据时不得以五维全 5 宣称逐项核验完成。已确认的轮末功能遗漏、新引入的功能问题和未解决 Bug 必须列入 issues.kind=bug，交付完整性按证据及锚点评为 1—4，其他维度独立评分。每个 Bug 都必须由具体修复建议覆盖，nextPrompt 正文必须以“修复”开头，后接问题、触发条件与预期结果，nextPromptType=Bug修复。五维全满分不得同时有未解决 Bug 或修复提示词。遇到矛盾必须回查证据重新评价，不能凑分、删掉真实问题或虚构验证。已恢复的过程错误和未知行为不能冒充 Bug。
+先逐项复核原始提示词的功能要求、约束、验收条件及本轮变更引入的回归，将每项原需求及其结论写入 requirementChecks，再进行五维评分。requirement、status、evidence 均不能为空；status 只用 completed、failed、unverified。evidence 写具体文件、命令输出或静态依据，明确验证是原模型执行、评价助手复验还是静态判断。missing 只记录会阻止需求结论或五维评分成立的关键证据缺口；存在 missing 时 status 必须为 needs_evidence。limitations 记录不阻止现有结论成立的验证边界，例如已经由静态证据和自动化测试确认需求，但未补做真实设备或特定系统版本验证；limitations 可以与 ready 同时存在。failed 只用于有事实支持的轮末未完成项或未解决 Bug，并同步列入 issues.kind=bug；unverified 表示现有证据无法核实，不是 Bug，不得强行生成修复提示词，并将关键证据缺口具体写入 missing、status 标为 needs_evidence。若只有未验证项、没有已确认 Bug，交付完整性分数填 null；若同轮另有已确认的 failed/Bug，则可依据该 Bug 将交付完整性评为 1—4，同时保留 unverified、needs_evidence 和 missing。未验证项不强迫其他维度清空或降分。缺关键证据时不得以五维全 5 宣称逐项核验完成。已确认的轮末功能遗漏、新引入的功能问题和未解决 Bug 必须列入 issues.kind=bug，交付完整性按证据及锚点评为 1—4，其他维度独立评分。每个 Bug 都必须由具体修复建议覆盖，nextPrompt 正文必须以“修复”开头，后接问题、触发条件与预期结果，nextPromptType=Bug修复。五维全满分不得同时有未解决 Bug 或修复提示词。遇到矛盾必须回查证据重新评价，不能凑分、删掉真实问题或虚构验证。已恢复的过程错误和未知行为不能冒充 Bug。
 规划低分不能仅写“中途构建失败，随后修复”：必须引用真实阶段/步骤、工具调用及文件或完整命令，并指出该处计划、依赖顺序或状态追踪的独立不足与后果；如果只能证明编辑执行错误，不能借此给规划扣分，也不能编造步骤编号。命令原文须与同一次工具返回逐项配对，含实际参数及测试脚本，不能用 node: bad option 加 npx tsc 替代完整失败上下文。
 所有失败先确认执行者及原因。评价助手在独立副本未装依赖导致的构建失败，记录到 evidence/验证说明，不属于原模型执行不足，不据此降为 4，也不能混进满分描述让读者误认为原模型构建失败。满分依据写原模型实际操作及原轨迹结果；若需提复验环境限制，明确双方行为和证据归属。模型自己造成且构成执行不足的错误，不能因为后来修好就自动给执行满分；合理诊断、预期失败用例、环境故障不自动扣分。5 分描述出现失败、错误、遗漏或返工时逐条核对执行者、原因和维度归属，不以删掉负面文字代替重评，不按关键词机械扣分。无法解释的矛盾回查重写，缺必要证据时标明缺项。
 推理非满分必须定位到具体判断或验证步骤，引用实际测试命令、测试文件/用例或函数及对应输出，写清模型当时可见的判断与操作、该判断违反的需求或遗漏的条件、产生的客观结果。不能只写“从测试输出中识别出空文本返回结果不合理”。涉及空输入等边界时，保留真实输入条件、实际返回值/行为、有需求依据的预期结果及差异；静态推断须明确标注，不编造测试、返回值或内部思考。正确发现并修复问题本身不能单独支撑推理扣分；需有此前理解、条件推导、根因判断或无效试错的独立证据。没有证据时回读事件，扣分不成立则按锚点重评，必要材料缺失则列缺项，不为保留旧分补造事实。
@@ -140,12 +140,13 @@ func satisfactionSchema() map[string]any {
 		"status":       map[string]any{"type": "string", "enum": []string{"ready", "needs_evidence"}},
 		"scores":       map[string]any{"type": "array", "minItems": 5, "maxItems": 5, "items": map[string]any{"type": []string{"integer", "null"}, "minimum": 1, "maximum": 5}},
 		"descriptions": map[string]any{"type": "array", "minItems": 5, "maxItems": 5, "items": str()},
-		"taskType":     str(), "difficulty": str(), "language": str(), "environment": str(), "harnessVersion": str(), "os": str(),
-		"evidence": list(), "missing": list(), "nextPrompt": str(), "nextPromptType": str(),
+		"taskType":     str(), "difficulty": str(), "language": str(), "environment": str(), "harnessVersion": str(),
+		"os":       map[string]any{"type": "string", "enum": []string{"", "MacOS/Linux", "Windows"}},
+		"evidence": list(), "missing": list(), "limitations": list(), "nextPrompt": str(), "nextPromptType": str(),
 		"requirementChecks": map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"requirement", "status", "evidence"}, "properties": map[string]any{"requirement": map[string]any{"type": "string", "minLength": 1}, "status": map[string]any{"type": "string", "enum": []string{"completed", "failed", "unverified"}}, "evidence": map[string]any{"type": "string", "minLength": 1}}}},
 		"issues":            map[string]any{"type": "array", "items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"description", "evidence", "kind"}, "properties": map[string]any{"description": str(), "evidence": str(), "kind": map[string]any{"type": "string", "enum": []string{"bug", "process", "evidence"}}}}},
 	}
-	required := []string{"status", "scores", "descriptions", "taskType", "difficulty", "language", "environment", "harnessVersion", "os", "evidence", "missing", "requirementChecks", "nextPrompt", "nextPromptType", "issues"}
+	required := []string{"status", "scores", "descriptions", "taskType", "difficulty", "language", "environment", "harnessVersion", "os", "evidence", "missing", "limitations", "requirementChecks", "nextPrompt", "nextPromptType", "issues"}
 	return map[string]any{"type": "object", "additionalProperties": false, "required": required, "properties": props}
 }
 
@@ -198,15 +199,23 @@ func (s *CliService) RunSatisfactionReview(ctx context.Context, req Satisfaction
 	if err != nil {
 		return nil, err
 	}
-	if len(bytes.TrimSpace(raw)) == 0 {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
 		return nil, fmt.Errorf("审核未返回结构化评价")
+	}
+	raw, err = unwrapJSONCodeFence(raw)
+	if err != nil {
+		return nil, fmt.Errorf("评分 JSON 无效：%w", err)
 	}
 	var shape struct {
 		Scores            []json.RawMessage `json:"scores"`
 		Descriptions      []json.RawMessage `json:"descriptions"`
 		RequirementChecks []json.RawMessage `json:"requirementChecks"`
 	}
-	if err := json.Unmarshal(raw, &shape); err != nil || len(shape.Scores) != 5 || len(shape.Descriptions) != 5 {
+	if err := json.Unmarshal(raw, &shape); err != nil {
+		return nil, fmt.Errorf("评分 JSON 无效：%w", err)
+	}
+	if len(shape.Scores) != 5 || len(shape.Descriptions) != 5 {
 		return nil, fmt.Errorf("评分 JSON 必须恰好包含五项分数和五项依据")
 	}
 	if len(shape.RequirementChecks) == 0 {
@@ -222,6 +231,29 @@ func (s *CliService) RunSatisfactionReview(ctx context.Context, req Satisfaction
 		return nil, fmt.Errorf("评分 JSON 包含多余内容")
 	}
 	return &eval, nil
+}
+
+func unwrapJSONCodeFence(raw []byte) ([]byte, error) {
+	if !bytes.HasPrefix(raw, []byte("```")) {
+		return raw, nil
+	}
+	lineEnd := bytes.IndexByte(raw, '\n')
+	if lineEnd < 0 {
+		return nil, fmt.Errorf("JSON 代码围栏缺少正文")
+	}
+	opening := strings.TrimSpace(string(raw[:lineEnd]))
+	if opening != "```" && !strings.EqualFold(opening, "```json") {
+		return nil, fmt.Errorf("不支持的代码围栏 %q", opening)
+	}
+	body := bytes.TrimSpace(raw[lineEnd+1:])
+	if !bytes.HasSuffix(body, []byte("```")) {
+		return nil, fmt.Errorf("JSON 代码围栏未闭合或围栏后存在多余内容")
+	}
+	body = bytes.TrimSpace(body[:len(body)-3])
+	if len(body) == 0 {
+		return nil, fmt.Errorf("JSON 代码围栏内容为空")
+	}
+	return body, nil
 }
 
 // A writer lets os/exec drain both streams and apply WaitDelay on cancellation.

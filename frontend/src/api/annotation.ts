@@ -31,6 +31,7 @@ export interface AnnotationEvaluation {
   os: string;
   evidence: string[];
   missing: string[];
+  limitations?: string[];
   issues: AnnotationIssue[];
   nextPrompt: string;
   nextPromptType: string;
