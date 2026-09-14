@@ -10,6 +10,7 @@ import (
 	"time"
 
 	domain "github.com/blueship581/pinru/internal/annotation"
+	"github.com/blueship581/pinru/internal/store"
 )
 
 func TestBatchCaptureAndTableStartsIndependentReviewsTogether(t *testing.T) {
@@ -55,6 +56,65 @@ func TestBatchCaptureAndTableStartsIndependentReviewsTogether(t *testing.T) {
 	}
 	if elapsed >= 1800*time.Millisecond {
 		t.Fatalf("reviews ran one after another: elapsed %s", elapsed)
+	}
+}
+
+func TestBatchCaptureAndTableSelectsTasksAcrossProjects(t *testing.T) {
+	s, trace, _ := annotationFixture(t)
+	if _, err := s.Capture(CaptureRequest{TaskID: "题目-1", TracePath: trace}); err != nil {
+		t.Fatal(err)
+	}
+
+	secondProject := "batch-two"
+	if err := s.store.CreateProject(store.Project{ID: secondProject, Name: "第二批次", Models: "[]", CloneBasePath: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	original, err := s.store.GetTask("题目-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSource := t.TempDir()
+	if err := os.WriteFile(filepath.Join(secondSource, "main.py"), []byte("def sub(a,b): return a-b\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second := *original
+	second.ID = "题目-2"
+	second.ProjectConfigID = &secondProject
+	second.ProjectName = "第二项目题目"
+	second.LocalPath = &secondSource
+	if err := s.store.CreateTask(second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PrepareCase(PrepareRequest{TaskID: second.ID}); err != nil {
+		t.Fatal(err)
+	}
+	secondTrace := filepath.Join(t.TempDir(), "session.jsonl")
+	writeFixtureTrace(t, secondTrace, secondSource, 1)
+	if _, err := s.Capture(CaptureRequest{TaskID: second.ID, TracePath: secondTrace}); err != nil {
+		t.Fatal(err)
+	}
+
+	unselected := *original
+	unselected.ID = "题目-3"
+	unselected.ProjectName = "未选择题目"
+	if err := s.store.CreateTask(unselected); err != nil {
+		t.Fatal(err)
+	}
+
+	s.cli, _ = fakeReviewCLI(t)
+	payload, _ := json.Marshal(BatchPrepareRequest{TaskIDs: []string{"题目-2", "题目-1", "题目-2"}})
+	output, err := s.ExecuteJob(context.Background(), "annotation_batch_capture_table", string(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := output.(*BatchPrepareResult)
+	if result.Total != 2 || result.Prepared != 2 || result.Failed != 0 {
+		t.Fatalf("selected cross-project batch = %+v", result)
+	}
+	for _, item := range result.Items {
+		if item.TaskID == unselected.ID {
+			t.Fatalf("unselected task was reviewed: %+v", item)
+		}
 	}
 }
 

@@ -4,7 +4,8 @@ import type { AnnotationCase } from '../../api/annotation';
 import { AnnotationWorkspace } from './index';
 
 const api = vi.hoisted(() => ({
-  getConfig: vi.fn(),
+  getAnnotationContainerApiKey: vi.fn(),
+  getProjects: vi.fn(),
   bindContainer: vi.fn(),
   batchCaptureAndPrepareTable: vi.fn(),
   cancelAnnotationJob: vi.fn(),
@@ -31,7 +32,8 @@ vi.mock('@wailsio/runtime', async () => ({
 
 vi.mock('../../api/config', async () => ({
   ...await vi.importActual<typeof import('../../api/config')>('../../api/config'),
-  getConfig: api.getConfig,
+  getAnnotationContainerApiKey: api.getAnnotationContainerApiKey,
+  getProjects: api.getProjects,
 }));
 
 vi.mock('../../api/annotation', async () => {
@@ -104,7 +106,11 @@ describe('AnnotationWorkspace', () => {
   beforeEach(() => {
     Object.values(api).forEach((mock) => mock.mockReset());
     wailsClipboard.setText.mockReset().mockResolvedValue(undefined);
-    api.getConfig.mockResolvedValue('');
+    api.getAnnotationContainerApiKey.mockResolvedValue('');
+    api.getProjects.mockResolvedValue([
+      { id: 'project-1', name: '项目一' },
+      { id: 'project-2', name: '项目二' },
+    ]);
     api.listCases.mockResolvedValue([makeCase()]);
     api.listContainers.mockResolvedValue([]);
     api.listTraces.mockResolvedValue([]);
@@ -241,7 +247,10 @@ describe('AnnotationWorkspace', () => {
     await screen.findByText(/单题导出完成/);
   });
 
-  it('prepares all project cases from one batch action and reports the summary', async () => {
+  it('selects projects first and submits only explicitly checked tasks across projects', async () => {
+    const firstProjectCase = makeCase({ taskId: 'task-1', projectId: 'project-1', taskName: '项目一题目' });
+    const secondProjectCase = makeCase({ taskId: 'task-2', projectId: 'project-2', taskName: '项目二题目' });
+    api.listCases.mockImplementation((projectId: string) => Promise.resolve(projectId === 'project-2' ? [secondProjectCase] : [firstProjectCase]));
     api.batchCaptureAndPrepareTable.mockResolvedValue({ id: 'batch-table-job', status: 'pending' });
     api.getAnnotationJob.mockResolvedValue({
       id: 'batch-table-job',
@@ -251,12 +260,24 @@ describe('AnnotationWorkspace', () => {
     render(<AnnotationWorkspace projectId="project-1" />);
     const button = await screen.findByRole('button', { name: '批量采集并准备制表数据' });
     fireEvent.click(button);
-    await waitFor(() => expect(api.batchCaptureAndPrepareTable).toHaveBeenCalledWith('project-1'));
+    expect(await screen.findByRole('checkbox', { name: '选择项目 项目一' })).not.toBeChecked();
+    expect(screen.queryByRole('checkbox', { name: /审核 项目一题目/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择项目 项目一' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择项目 项目二' }));
+    const firstTask = await screen.findByRole('checkbox', { name: /审核 项目一题目/ });
+    const secondTask = await screen.findByRole('checkbox', { name: /审核 项目二题目/ });
+    expect(firstTask).not.toBeChecked();
+    expect(secondTask).not.toBeChecked();
+    expect(screen.getByRole('button', { name: '开始批量审核（0）' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: '全选 项目一' }));
+    fireEvent.click(secondTask);
+    fireEvent.click(screen.getByRole('button', { name: '开始批量审核（2）' }));
+    await waitFor(() => expect(api.batchCaptureAndPrepareTable).toHaveBeenCalledWith(['task-1', 'task-2']));
     expect(await screen.findByText(/批量制表完成：新准备 2 题，跳过 1 题，失败 0 题/)).toBeInTheDocument();
-    await waitFor(() => expect(api.listCases).toHaveBeenCalledTimes(2));
   });
 
   it('copies the startup command for the fixed task number in the detail panel', async () => {
+    api.getAnnotationContainerApiKey.mockResolvedValue('saved-container-key');
     api.listCases.mockResolvedValue([makeCase({ taskId: 'p1__feat__label-123-9', taskName: 'cyc-03', sourcePath: '/tasks/cyc-03-feature迭代-9' })]);
     render(<AnnotationWorkspace projectId="project-1" taskId="p1__feat__label-123-9" />);
     const copy = await screen.findByRole('button', { name: '复制容器启动命令' });
@@ -264,6 +285,7 @@ describe('AnnotationWorkspace', () => {
     fireEvent.click(copy);
     await waitFor(() => expect(wailsClipboard.setText).toHaveBeenCalledWith(expect.stringContaining('CONTAINER_NAME="cyc03-claude-9"')));
     expect(wailsClipboard.setText).toHaveBeenCalledWith(expect.stringContaining('RUN_DIR="$BASE_DIR/run-9"'));
+    expect(wailsClipboard.setText).toHaveBeenCalledWith(expect.stringContaining("apikey='saved-container-key'"));
     expect(await screen.findByText('容器启动命令已复制，请在本地终端执行')).toBeInTheDocument();
   });
 

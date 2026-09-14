@@ -55,7 +55,7 @@
 
 ## 一致性检查
 
-返回 JSON 前在同一次评价中执行 [五维依据完整性检查](description-quality.md)，修正缺少维度判断、行为后果或事实归属的描述。只返回原 schema 字段，不把检查清单、审核备注或固定要素标签写入 descriptions，也不生成 Excel。
+返回 JSON 前在同一次评价中执行 [五维依据完整性检查](description-quality.md)，修正缺少维度判断、行为后果或事实归属的描述。descriptions 每项必须是一段自然连贯的中文，不使用 Markdown、反引号、箭头、Emoji、勾选图标、固定要素标签或评分套话；文件名、路径、函数名、命令、参数、报错和关键数据必须保留为普通文本。只返回原 schema 字段，不把检查清单或审核备注写入 descriptions，也不生成 Excel。
 
 功能完成度与五维分数分别判断：功能完成但过程有不足时可以非全满分；仅有 process/evidence、没有代码事实支持的未完成项或未解决缺陷时，nextPrompt 和 nextPromptType 必须为空。不得为了提示词降分，也不得从低分反推 Bug；过程扣分保留真实依据。
 

@@ -103,6 +103,7 @@ const (
 	deepSeekFlashModel           = "deepseek-v4-flash"
 	deepSeekFlashCanonicalModel  = "deepseek-flash"
 	deepSeekAPIBaseURL           = "https://api.deepseek.com"
+	promptDuplicateRetryLimit    = 2
 )
 
 func (s *PromptService) GenerateTaskPrompt(req GeneratePromptRequest) (*PromptGenerationResult, error) {
@@ -165,18 +166,14 @@ func (s *PromptService) GenerateTaskPromptWithContext(ctx context.Context, req G
 		return nil, err
 	}
 
-	// 查询同题源下已有提示词的兄弟任务（B-35-1 的提示词要在 B-35-2 生成时传入，
-	// 用于去重约束）。GitLab 和压缩包来源都通过 GitLabProjectID 聚合，无需区分。
-	var siblingPrompts []siblingPrompt
-	if task.ProjectConfigID != nil && strings.TrimSpace(*task.ProjectConfigID) != "" {
-		siblings, err := s.store.ListSiblingTasksWithPrompt(*task.ProjectConfigID, task.GitLabProjectID, task.ID)
-		if err != nil {
-			slog.Warn("list sibling prompts failed", "task_id", task.ID, "error", err)
-		} else {
-			siblingPrompts = collectSiblingPrompts(siblings)
-		}
+	// Every saved task prompt participates in de-duplication, including tasks
+	// from other projects and earlier batches. Same-project prompts stay first
+	// in the bounded generation context; the post-generation check uses all.
+	allTasks, err := s.store.ListTasks(nil)
+	if err != nil {
+		return nil, fmt.Errorf("读取题库历史提示词失败：%w", err)
 	}
-	existingPrompts := collectPromptDedupSources(task, siblingPrompts)
+	existingPrompts := collectPromptDedupSources(task, collectOtherTaskPrompts(task, allTasks))
 
 	startedAt := time.Now().Unix()
 	if err := s.store.StartTaskPromptGeneration(task.ID, startedAt); err != nil {
@@ -222,7 +219,18 @@ func (s *PromptService) GenerateTaskPromptWithContext(ctx context.Context, req G
 	}
 	promptText := generated.PromptText
 	modelDifficulty := generated.PromptDifficulty
-	if duplicate, ok := s.findDuplicatePromptMatch(ctx, workDir, promptText, existingPrompts, selection.Model, selection.EnvOverrides); ok {
+	for duplicateAttempt := 0; ; duplicateAttempt++ {
+		duplicate, duplicated, duplicateErr := s.findDuplicatePromptMatch(ctx, workDir, promptText, existingPrompts, selection.Model, selection.EnvOverrides)
+		if duplicateErr != nil {
+			errMsg := normalizePromptGenerationError(duplicateErr)
+			if failErr := s.store.FailTaskPromptGeneration(task.ID, errMsg, startedAt); failErr != nil {
+				return nil, fmt.Errorf(errs.FmtPromptStatusBack, errMsg, failErr)
+			}
+			return nil, errors.New(errMsg)
+		}
+		if !duplicated {
+			break
+		}
 		slog.Warn("generated prompt duplicated existing prompt, regenerating",
 			"task_id", task.ID,
 			"project", task.ProjectName,
@@ -231,7 +239,14 @@ func (s *PromptService) GenerateTaskPromptWithContext(ctx context.Context, req G
 			"duplicate_reason", duplicate.Reason,
 			"duplicate_confidence", duplicate.Confidence,
 		)
-		regeneratePrompt := buildDuplicateRegenerationPrompt(req, existingPrompts, promptText, duplicate, projectProfile)
+		if duplicateAttempt >= promptDuplicateRetryLimit {
+			errMsg := fmt.Sprintf("生成的提示词与题卡 %s 雷同，已重试 %d 次仍未通过判重，结果未保存", duplicate.TaskID, promptDuplicateRetryLimit)
+			if failErr := s.store.FailTaskPromptGeneration(task.ID, errMsg, startedAt); failErr != nil {
+				return nil, fmt.Errorf(errs.FmtPromptStatusBack, errMsg, failErr)
+			}
+			return nil, errors.New(errMsg)
+		}
+		regeneratePrompt := buildDuplicateRegenerationPrompt(req, generationPrompts, promptText, duplicate, projectProfile)
 		generated, err = s.generatePromptWithRetry(ctx, workDir, regeneratePrompt, selection.Model, 1, selection.EnvOverrides)
 		if err != nil {
 			slog.Error("CLI prompt regeneration failed",
@@ -257,14 +272,18 @@ func (s *PromptService) GenerateTaskPromptWithContext(ctx context.Context, req G
 
 	rawGeneratedPrompt := strings.TrimSpace(promptText)
 	promptText = s.bestEffortPolishPrompt(ctx, workDir, promptText, selection)
-	if duplicate, ok := findExactDuplicatePromptMatch(promptText, existingPrompts); ok && !isDuplicatePrompt(rawGeneratedPrompt, existingPrompts) {
-		slog.Warn("polished prompt duplicated existing prompt, keeping raw generated prompt",
-			"task_id", task.ID,
-			"project", task.ProjectName,
-			"model", selection.Model,
-			"duplicate_task_id", duplicate.TaskID,
-		)
-		promptText = rawGeneratedPrompt
+	if promptText != rawGeneratedPrompt {
+		duplicate, duplicated, duplicateErr := s.findDuplicatePromptMatch(ctx, workDir, promptText, existingPrompts, selection.Model, selection.EnvOverrides)
+		if duplicateErr != nil || duplicated {
+			slog.Warn("polished prompt did not pass global duplicate check, keeping verified raw prompt",
+				"task_id", task.ID,
+				"project", task.ProjectName,
+				"model", selection.Model,
+				"duplicate_task_id", duplicate.TaskID,
+				"error", duplicateErr,
+			)
+			promptText = rawGeneratedPrompt
+		}
 	}
 	promptDifficulty := modelDifficulty
 	if promptDifficulty == "" {
@@ -765,8 +784,8 @@ func buildSkillPrompt(req GeneratePromptRequest, siblingPrompts []siblingPrompt,
 
 	if len(siblingPrompts) > 0 {
 		sb.WriteString("\n---\n")
-		sb.WriteString("同题源已有提示词（来自同一代码仓库的其他试题）：\n")
-		sb.WriteString(`要求：新生成的提示词必须在"考察点、切入角度、改动范围、描述措辞"上都与下列已有提示词明显不同，不得出现题目雷同或换皮重复；如果下列提示词已覆盖了该仓库最典型的考察方向，请改从次要的切入点切入。`)
+		sb.WriteString("题库已有提示词（优先列出同一代码仓库，其余来自其他题卡）：\n")
+		sb.WriteString(`要求：新生成的提示词必须在"考察点、切入角度、改动范围、描述措辞"上都与下列已有提示词明显不同，不得出现跨项目、跨批次的题目雷同或换皮重复；如果已有提示词覆盖了当前最直接的考察方向，请改从其他真实切入点出题。`)
 		sb.WriteString("\n\n")
 		for i, sp := range siblingPrompts {
 			fmt.Fprintf(&sb, "【已有提示词 %d】taskId=%s taskType=%s\n", i+1, sp.TaskID, sp.TaskType)
@@ -934,23 +953,29 @@ func collectPromptDedupSources(task *store.Task, siblings []siblingPrompt) []sib
 	return result
 }
 
-func collectSiblingPrompts(tasks []store.Task) []siblingPrompt {
-	result := make([]siblingPrompt, 0, len(tasks))
+func collectOtherTaskPrompts(task *store.Task, tasks []store.Task) []siblingPrompt {
+	sameProject := make([]siblingPrompt, 0, len(tasks))
+	otherProjects := make([]siblingPrompt, 0, len(tasks))
 	for _, t := range tasks {
-		if t.PromptText == nil {
+		if (task != nil && t.ID == task.ID) || t.PromptText == nil {
 			continue
 		}
 		text := strings.TrimSpace(*t.PromptText)
 		if text == "" {
 			continue
 		}
-		result = append(result, siblingPrompt{
+		item := siblingPrompt{
 			TaskID:     t.ID,
 			TaskType:   t.TaskType,
 			PromptText: text,
-		})
+		}
+		if task != nil && t.GitLabProjectID == task.GitLabProjectID {
+			sameProject = append(sameProject, item)
+		} else {
+			otherProjects = append(otherProjects, item)
+		}
 	}
-	return result
+	return append(sameProject, otherProjects...)
 }
 
 func promptGenerationContext(existingPrompts []siblingPrompt) []siblingPrompt {
@@ -976,11 +1001,6 @@ func normalizePromptForDuplicateCheck(prompt string) string {
 	return strings.Join(strings.Fields(strings.TrimSpace(prompt)), " ")
 }
 
-func isDuplicatePrompt(promptText string, existingPrompts []siblingPrompt) bool {
-	_, ok := findExactDuplicatePromptMatch(promptText, existingPrompts)
-	return ok
-}
-
 func findExactDuplicatePromptMatch(promptText string, existingPrompts []siblingPrompt) (duplicatePromptMatch, bool) {
 	normalized := normalizePromptForDuplicateCheck(promptText)
 	if normalized == "" {
@@ -1000,13 +1020,13 @@ func findExactDuplicatePromptMatch(promptText string, existingPrompts []siblingP
 	return duplicatePromptMatch{}, false
 }
 
-func (s *PromptService) findDuplicatePromptMatch(ctx context.Context, workDir, promptText string, existingPrompts []siblingPrompt, model string, envOverrides ...map[string]string) (duplicatePromptMatch, bool) {
+func (s *PromptService) findDuplicatePromptMatch(ctx context.Context, workDir, promptText string, existingPrompts []siblingPrompt, model string, envOverrides ...map[string]string) (duplicatePromptMatch, bool, error) {
 	if match, ok := findExactDuplicatePromptMatch(promptText, existingPrompts); ok {
-		return match, true
+		return match, true, nil
 	}
 	candidates := semanticDuplicateCandidates(promptText, existingPrompts, semanticDuplicateExcerptCandidateLimit)
 	if len(candidates) == 0 {
-		return duplicatePromptMatch{}, false
+		return duplicatePromptMatch{}, false, nil
 	}
 	if candidates[0].Confidence < semanticDuplicateLocalJudgeThreshold {
 		slog.Info("semantic duplicate judge skipped for low local similarity",
@@ -1014,18 +1034,14 @@ func (s *PromptService) findDuplicatePromptMatch(ctx context.Context, workDir, p
 			"top_score", candidates[0].Confidence,
 			"threshold", semanticDuplicateLocalJudgeThreshold,
 		)
-		return duplicatePromptMatch{}, false
+		return duplicatePromptMatch{}, false, nil
 	}
 	decision, err := s.judgeSemanticDuplicatePrompt(ctx, workDir, promptText, candidates, model, envOverrides...)
 	if err != nil {
-		slog.Warn("semantic duplicate judge failed",
-			"candidate_count", len(candidates),
-			"error", err,
-		)
-		return duplicatePromptMatch{}, false
+		return duplicatePromptMatch{}, false, fmt.Errorf("提示词语义判重失败：%w", err)
 	}
 	if !decision.IsDuplicate || decision.Confidence < semanticDuplicateConfidenceThreshold {
-		return duplicatePromptMatch{}, false
+		return duplicatePromptMatch{}, false, nil
 	}
 	match := candidates[0]
 	if strings.TrimSpace(decision.TaskID) != "" {
@@ -1041,7 +1057,7 @@ func (s *PromptService) findDuplicatePromptMatch(ctx context.Context, workDir, p
 		match.Reason = "模型判定语义重复"
 	}
 	match.Confidence = decision.Confidence
-	return match, true
+	return match, true, nil
 }
 
 func semanticDuplicateCandidates(promptText string, existingPrompts []siblingPrompt, limit int) []duplicatePromptMatch {
@@ -1226,6 +1242,11 @@ func buildDuplicateRegenerationPrompt(req GeneratePromptRequest, existingPrompts
 	if strings.TrimSpace(match.Reason) != "" {
 		sb.WriteString("重复原因：")
 		sb.WriteString(strings.TrimSpace(match.Reason))
+		sb.WriteString("\n")
+	}
+	if strings.TrimSpace(match.PromptText) != "" {
+		sb.WriteString("雷同的历史提示词：\n")
+		sb.WriteString(strings.TrimSpace(match.PromptText))
 		sb.WriteString("\n")
 	}
 	sb.WriteString("上一轮重复结果：\n")

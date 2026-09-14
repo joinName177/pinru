@@ -52,7 +52,7 @@ func (s *AnnotationService) reviewLocked(ctx context.Context, req ReviewRequest)
 	if s.cli == nil {
 		return nil, errors.New("未配置审核执行器")
 	}
-	reviewProvider, modelLabel, err := s.reviewProvider()
+	reviewExecution, err := s.reviewExecution()
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +176,7 @@ func (s *AnnotationService) reviewLocked(ctx context.Context, req ReviewRequest)
 		return nil, err
 	}
 	domain.ReportProgress(ctx, 25, "证据副本已准备，等待审核模型响应")
-	evaluation, err := s.cli.RunSatisfactionReview(ctx, appcli.SatisfactionReviewRequest{WorkDir: work, SkillDir: filepath.Join(work, "skill"), InputPath: inputPath, Model: strings.TrimSpace(reviewProvider.Model), DeepSeek: &reviewProvider}, reviewActivity(ctx))
+	evaluation, err := s.cli.RunSatisfactionReview(ctx, appcli.SatisfactionReviewRequest{WorkDir: work, SkillDir: filepath.Join(work, "skill"), InputPath: inputPath, Model: reviewExecution.Model, DeepSeek: reviewExecution.DeepSeek}, reviewActivity(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +212,7 @@ func (s *AnnotationService) reviewLocked(ctx context.Context, req ReviewRequest)
 	evaluation.CreatedAt = time.Now().Unix()
 	evaluation.EvidenceHash = r.EvidenceHash
 	evaluation.SkillHash = skillHash
-	evaluation.Model = modelLabel
+	evaluation.Model = reviewExecution.Label
 	if evaluation.HarnessVersion != "" && r.Version != "" && evaluation.HarnessVersion != r.Version {
 		return nil, errors.New("评价中的 Harness 版本与原轨迹不一致")
 	}

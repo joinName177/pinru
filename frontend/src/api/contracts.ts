@@ -124,6 +124,12 @@ export type WailsServiceContract = {
   ConfigService: {
     GetConfig: ServiceMethod<[key: string], string>;
     SetConfig: ServiceMethod<[key: string, value: string], void>;
+    GetAnnotationSettings: ServiceMethod<[], import('./config').AnnotationSettings>;
+    SaveAnnotationSettings: ServiceMethod<[
+      reviewEngine: import('./config').AnnotationReviewEngine,
+      containerApiKey: string,
+    ], void>;
+    GetAnnotationContainerAPIKey: ServiceMethod<[], string>;
     TestGitLabConnection: ServiceMethod<[url: string, token: string, skipTlsVerify: boolean], boolean>;
     TestGitHubConnection: ServiceMethod<[username: string, token: string], boolean>;
     TestGitHubAccountConnection: ServiceMethod<

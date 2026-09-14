@@ -46,9 +46,13 @@ func TestDeepSeekReviewProviderChangeKeepsCacheUntilReviewIsForced(t *testing.T)
 
 func TestReviewProviderUsesDefaultDeepSeekAPI(t *testing.T) {
 	s, _, _ := annotationFixture(t)
-	provider, label, err := s.reviewProvider()
+	selection, err := s.reviewExecution()
 	if err != nil {
 		t.Fatal(err)
+	}
+	provider, label := selection.DeepSeek, selection.Label
+	if provider == nil {
+		t.Fatal("review execution did not select DeepSeek")
 	}
 	if provider.Model != "deepseek-v4-flash" || provider.APIKey != "test-key" || provider.BaseURL != "https://api.deepseek.com" || provider.ReasoningEffort != "high" {
 		t.Fatalf("review provider = %+v", provider)
@@ -64,9 +68,13 @@ func TestReviewProviderPrefersDefaultDeepSeekAPI(t *testing.T) {
 	if err := s.store.CreateLLMProvider(store.LLMProvider{ID: "deepseek-other", Name: "Other Flash", ProviderType: "openai_compatible", Model: "deepseek-flash", BaseURL: &url, APIKey: "other-key"}); err != nil {
 		t.Fatal(err)
 	}
-	provider, _, err := s.reviewProvider()
+	selection, err := s.reviewExecution()
 	if err != nil {
 		t.Fatal(err)
+	}
+	provider := selection.DeepSeek
+	if provider == nil {
+		t.Fatal("review execution did not select DeepSeek")
 	}
 	if provider.APIKey != "test-key" {
 		t.Fatalf("selected API key identifies the wrong provider")
@@ -78,9 +86,27 @@ func TestReviewProviderRejectsMissingDeepSeekAPIConfiguration(t *testing.T) {
 	if err := s.store.DeleteLLMProvider("deepseek-test"); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := s.reviewProvider()
+	_, err := s.reviewExecution()
 	if err == nil || !strings.Contains(err.Error(), "DeepSeek V4 Flash API") {
 		t.Fatalf("reviewProvider error = %v", err)
+	}
+}
+
+func TestReviewExecutionUsesLocalCodexWhenGloballySelected(t *testing.T) {
+	s, _, _ := annotationFixture(t)
+	if err := s.store.SetConfig("annotation_review_engine", "codex"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.SetConfig("annotation_review_model", "gpt-5.5"); err != nil {
+		t.Fatal(err)
+	}
+
+	selection, err := s.reviewExecution()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selection.DeepSeek != nil || selection.Model != "gpt-5.5" || !strings.Contains(selection.Label, "Codex CLI") {
+		t.Fatalf("review execution = %+v, want local Codex CLI", selection)
 	}
 }
 

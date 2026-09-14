@@ -14,7 +14,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const batchItemTimeout = 30 * time.Minute
+const (
+	batchItemTimeout             = 30 * time.Minute
+	batchPrepareConcurrencyLimit = 3
+)
 
 func latestReadyEvaluation(round domain.Round) *domain.Evaluation {
 	if len(round.Evaluations) == 0 {
@@ -223,11 +226,39 @@ func (s *AnnotationService) prepareBatchCase(ctx context.Context, c domain.Case,
 	return item
 }
 
-func (s *AnnotationService) batchCaptureAndPrepareTable(ctx context.Context, req BatchPrepareRequest) (*BatchPrepareResult, error) {
-	if strings.TrimSpace(req.ProjectID) == "" {
-		return nil, errors.New("请选择项目")
+func (s *AnnotationService) batchPrepareCases(req BatchPrepareRequest) ([]domain.Case, error) {
+	if len(req.TaskIDs) > 0 {
+		seen := make(map[string]struct{}, len(req.TaskIDs))
+		cases := make([]domain.Case, 0, len(req.TaskIDs))
+		for _, rawID := range req.TaskIDs {
+			taskID := strings.TrimSpace(rawID)
+			if taskID == "" {
+				continue
+			}
+			if _, exists := seen[taskID]; exists {
+				continue
+			}
+			seen[taskID] = struct{}{}
+			current, err := s.loadCase(taskID)
+			if err != nil {
+				return nil, fmt.Errorf("加载题目 %s 失败：%w", taskID, err)
+			}
+			cases = append(cases, *current)
+		}
+		if len(cases) == 0 {
+			return nil, errors.New("请选择至少一道题目")
+		}
+		return cases, nil
 	}
-	cases, err := s.ListCases(req.ProjectID)
+
+	if strings.TrimSpace(req.ProjectID) == "" {
+		return nil, errors.New("请选择至少一道题目")
+	}
+	return s.ListCases(req.ProjectID)
+}
+
+func (s *AnnotationService) batchCaptureAndPrepareTable(ctx context.Context, req BatchPrepareRequest) (*BatchPrepareResult, error) {
+	cases, err := s.batchPrepareCases(req)
 	if err != nil {
 		return nil, err
 	}
@@ -255,11 +286,19 @@ func (s *AnnotationService) batchCaptureAndPrepareTable(ctx context.Context, req
 	}
 
 	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, batchPrepareConcurrencyLimit)
 	for index, current := range cases {
 		index, current := index, current
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			select {
+			case semaphore <- struct{}{}:
+				defer func() { <-semaphore }()
+			case <-ctx.Done():
+				result.Items[index] = BatchPrepareItem{TaskID: current.TaskID, TaskName: current.TaskName, Status: "failed", Message: ctx.Err().Error()}
+				return
+			}
 			result.Items[index] = s.prepareBatchCase(ctx, current, func(progress int, message string) {
 				report(index, current, progress, message)
 			})

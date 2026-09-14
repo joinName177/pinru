@@ -45,7 +45,8 @@ type CaptureRequest struct {
 	TracePath string `json:"tracePath"`
 }
 type BatchPrepareRequest struct {
-	ProjectID string `json:"projectId"`
+	ProjectID string   `json:"projectId"`
+	TaskIDs   []string `json:"taskIds,omitempty"`
 }
 type BatchPrepareItem struct {
 	TaskID   string `json:"taskId"`

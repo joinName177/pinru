@@ -52,6 +52,7 @@ import {
 } from './components/SettingsPanels';
 
 import { AnnotationExportSettings } from './components/AnnotationExportSettings';
+import { AnnotationRuntimeSettings } from './components/AnnotationRuntimeSettings';
 
 const TABS = [
   { id: 'gitlab', label: 'GitLab', icon: Gitlab },
@@ -765,6 +766,7 @@ export default function Settings() {
 
             {activeTab === 'general' && (
               <>
+                <AnnotationRuntimeSettings />
                 <AnnotationExportSettings />
               <GeneralSettingsPanel
                 theme={theme}

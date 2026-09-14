@@ -121,7 +121,8 @@ func buildSatisfactionPrompt(req SatisfactionReviewRequest) string {
 交付完整性、指令遵循、任务规划、推理能力、执行能力各自按 1—5 锚点判断，分别写自然、具体的中文依据。规划不要求特定 TODO 工具或验收矩阵；没有固定形式不单独扣分。低分不等于数据无效，后轮成功不回改前轮分数。按任务实际需要检查入口、状态、持久化、返回结果和反馈，不能仅凭构建成功宣称业务通过。
 评分后按 description-quality 逐格复核：每个 1—4 分描述都要说清本维度哪里不合适、具体行为与位置、证据支持的客观后果。只复述“未先读取、失败后补读”不够；只有证据表明步骤顺序安排遗漏前置条件时，才归为规划不足，不把单次工具失败自动升级为缺乏规划机制。执行不足直接写失败、补救动作或未覆盖的具体验证行为，不用“不算完全干净”等主观感受词。
 缺少浏览器记录不自动扣分。根据实际需求与已有测试判断未覆盖哪项具体交互，只能写现有验证无法确认的行为，不能写成已发生的故障或泛泛的潜在运行时风险。仅因所提供材料缺失而无法判断时用 null 并列缺项。满分描述有正向依据，涉及已恢复的失误时须解释维度归属，不能留下分数与理由冲突。
-在同一次评价中完成事实核对和自然表达复读，缺少上述要素就回看证据重写；不能为保留低分而补造不足。五格不用统一套句、先夸后批或“因此给X分”收尾，必要的文件名和操作保留，密集定位移入 evidence。没有把后补验证归给模型，没有杜撰文件或测试。润色不得改变事实、分数和问题严重性，保留 AI 评价来源，不以伪装人工或通过 AI 检测为目标。
+在同一次评价中完成事实核对和自然表达复读，缺少上述要素就回看证据重写；不能为保留低分而补造不足。每格写成一段连贯中文，直接说明本轮做了什么、哪里存在不足以及它带来的实际结果，不写分析提纲、日志清单或审计报告。五格不能统一套句、先夸后批，也不能用“综上所述”“总体而言”“因此给X分”等结尾。禁止反引号、Markdown 标题或列表、箭头链、Emoji、勾选图标，以及“触发节点：”“实际行为：”“证据：”“业务影响：”等固定标签；需要表达前后关系时改用正常中文连接句子。
+文件名、路径、函数名、命令、参数、报错和关键数据都是评价事实，不得为了润色而删除、模糊或改名，也不能因为含英文或技术符号就判定为机器化表达。去掉的只是文件名等内容外层不必要的反引号和装饰符号，例如直接写 validation.go、ValidateEvaluation 和 go test ./internal/annotation。正文保留理解评分和定位问题所需的全部关键信息，只有与结论无关的冗长日志才放入 evidence。没有把后补验证归给模型，没有杜撰文件或测试。润色不得改变事实、分数、问题严重性和执行者归属，保留 AI 评价来源，不以伪装人工或通过 AI 检测为目标。
 scores/descriptions 顺序固定为上述五维。证据不足的分数用 null，并在 missing 写出对应维度与缺项，status=needs_evidence。ready 要求五项依据和可核查证据齐全。environment 依据实际项目可复现条件，不因使用 Docker CLI 就自动写可一键起环境；版本和系统依据原会话，不能用评价电脑环境回填。os 只能填写 MacOS/Linux、Windows 或空字符串，解释与不确定性写入 evidence、limitations 或 missing，不能写进 os。
 功能完成度、五维表现和是否需要代码修复分别判断。功能完成达标也可能有规划、推理或执行扣分，五维非满分不证明功能未完成。修复提示词只能基于代码与轨迹确认的原需求未完成、回归或未解决 Bug，不能为生成提示词而降低分数，也不能因低分强找问题。仅有 process/evidence 时保留真实分数和依据，nextPrompt 与 nextPromptType 留空；五维全满分时两项也必须为空。不需要填写不满意原因。提示词只写有证据的修复事项与预期结果，不扩展需求，不要求提高分数。缺证据时标记 needs_evidence 并列缺项，不把未知当缺陷。达到 10 个有效轮次后不再引导追加轮次，但确认 Bug 的修复建议仍保留供检查。issues.kind 分别用 bug/process/evidence。
 每项负面描述必须在 descriptions 正文保留实际操作节点及工具调用，并引用相关文件名、函数名或命令，不能只放 evidence。验证遗漏须定位到有证据的具体阶段、实际检查命令及结果，说明未覆盖哪项原始需求；没有记录不能编成“构建通过后”或“提交前”。命令失败必须引用完整失败命令（关键参数及目标测试文件/脚本）、关键报错和实际恢复动作，凭据脱敏。仅写 node: bad option 或 npx tsc 不足；回读原工具调用核实，禁止把用户举例的命令当作事实。没有环境和当时可得信息的支持，不称为“可避免的失败”。缺少必要原文时撤回无证据指控或标明待补证据，不为保留低分补造命令、步骤号、文件或函数。润色后再次核对这些引用仍在描述正文中。
@@ -139,7 +140,7 @@ func satisfactionSchema() map[string]any {
 	props := map[string]any{
 		"status":       map[string]any{"type": "string", "enum": []string{"ready", "needs_evidence"}},
 		"scores":       map[string]any{"type": "array", "minItems": 5, "maxItems": 5, "items": map[string]any{"type": []string{"integer", "null"}, "minimum": 1, "maximum": 5}},
-		"descriptions": map[string]any{"type": "array", "minItems": 5, "maxItems": 5, "items": str()},
+		"descriptions": map[string]any{"type": "array", "minItems": 5, "maxItems": 5, "items": map[string]any{"type": "string", "description": "一段自然连贯的中文评价；保留文件名、路径、函数名、命令和关键数据，不使用 Markdown、箭头、Emoji、固定标签或评分套话"}},
 		"taskType":     str(), "difficulty": str(), "language": str(), "environment": str(), "harnessVersion": str(),
 		"os":       map[string]any{"type": "string", "enum": []string{"", "MacOS/Linux", "Windows"}},
 		"evidence": list(), "missing": list(), "limitations": list(), "nextPrompt": str(), "nextPromptType": str(),

@@ -488,7 +488,8 @@ func TestBuildSkillPrompt(t *testing.T) {
 		{TaskID: "label-00035-2", TaskType: "Feature迭代", PromptText: "已有题目 2 的正文"},
 	}, nil)
 	for _, want := range []string{
-		"同题源已有提示词",
+		"题库已有提示词",
+		"跨项目、跨批次",
 		"【已有提示词 1】taskId=label-00035 taskType=Bug修复",
 		"已有题目 1 的正文",
 		"【已有提示词 2】taskId=label-00035-2 taskType=Feature迭代",
@@ -713,6 +714,9 @@ func TestGenerateTaskPromptWithContextRegeneratesDuplicatePrompt(t *testing.T) {
 			}
 			return nextPrompt, nil
 		},
+		duplicateJudge: func(ctx context.Context, workDir, prompt, model string) (semanticDuplicateDecision, error) {
+			return semanticDuplicateDecision{IsDuplicate: false, Confidence: 0.08}, nil
+		},
 	}
 
 	result, err := svc.GenerateTaskPromptWithContext(context.Background(), GeneratePromptRequest{
@@ -727,6 +731,202 @@ func TestGenerateTaskPromptWithContextRegeneratesDuplicatePrompt(t *testing.T) {
 	}
 	if result.PromptText != nextPrompt {
 		t.Fatalf("GenerateTaskPromptWithContext().PromptText = %q, want %q", result.PromptText, nextPrompt)
+	}
+}
+
+func TestGenerateTaskPromptWithContextRegeneratesDuplicateFromAnotherProject(t *testing.T) {
+	testStore := testutil.OpenTestStore(t)
+	defer testStore.Close()
+
+	workDir := t.TempDir()
+	currentProjectID := "project-global-dedup-current"
+	historyProjectID := "project-global-dedup-history"
+	existingPrompt := "订单支付成功后仍显示待支付，需要让支付结果及时同步到订单详情和列表。"
+	nextPrompt := "退款申请提交后补充进度查询，让用户能看到审核状态和退款到账结果。"
+	task := store.Task{
+		ID: "global-dedup-current", GitLabProjectID: 4101, ProjectName: "Current Project", TaskType: "Feature迭代",
+		LocalPath: &workDir, ProjectConfigID: &currentProjectID,
+	}
+	history := store.Task{
+		ID: "global-dedup-history", GitLabProjectID: 5202, ProjectName: "History Project", TaskType: "Bug修复",
+		PromptText: &existingPrompt, ProjectConfigID: &historyProjectID,
+	}
+	if err := testStore.CreateTask(history); err != nil {
+		t.Fatalf("CreateTask(history) error = %v", err)
+	}
+	if err := testStore.UpdateTaskPrompt(history.ID, existingPrompt); err != nil {
+		t.Fatalf("UpdateTaskPrompt(history) error = %v", err)
+	}
+	if err := testStore.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask(task) error = %v", err)
+	}
+
+	callCount := 0
+	svc := &PromptService{
+		store:  testStore,
+		cliSvc: appcli.NewWithResolver(func(string) (string, error) { return "/tmp/fake-claude", nil }),
+		promptGenerator: func(ctx context.Context, workDir, prompt, model string) (generatedPromptResult, error) {
+			callCount++
+			if callCount == 1 {
+				return generatedPromptResult{PromptText: existingPrompt, PromptDifficulty: "一般"}, nil
+			}
+			return generatedPromptResult{PromptText: nextPrompt, PromptDifficulty: "一般"}, nil
+		},
+		promptHumanizer: func(ctx context.Context, workDir, prompt, model string) (string, error) {
+			return nextPrompt, nil
+		},
+	}
+
+	result, err := svc.GenerateTaskPromptWithContext(context.Background(), GeneratePromptRequest{TaskID: task.ID, TaskType: "Feature迭代"})
+	if err != nil {
+		t.Fatalf("GenerateTaskPromptWithContext() error = %v", err)
+	}
+	if callCount != 2 {
+		t.Fatalf("promptGenerator call count = %d, want 2", callCount)
+	}
+	if result.PromptText != nextPrompt {
+		t.Fatalf("PromptText = %q, want %q", result.PromptText, nextPrompt)
+	}
+}
+
+func TestGenerateTaskPromptWithContextDoesNotSaveAfterDuplicateRetriesExhausted(t *testing.T) {
+	testStore := testutil.OpenTestStore(t)
+	defer testStore.Close()
+
+	workDir := t.TempDir()
+	projectID := "project-duplicate-exhausted"
+	existingPrompt := "支付结果返回后订单仍显示待支付，需要同步刷新订单状态。"
+	task := store.Task{ID: "duplicate-exhausted-current", GitLabProjectID: 6101, ProjectName: "Current", TaskType: "Bug修复", LocalPath: &workDir, ProjectConfigID: &projectID}
+	history := store.Task{ID: "duplicate-exhausted-history", GitLabProjectID: 6101, ProjectName: "History", TaskType: "Bug修复", PromptText: &existingPrompt, ProjectConfigID: &projectID}
+	if err := testStore.CreateTask(history); err != nil {
+		t.Fatal(err)
+	}
+	if err := testStore.UpdateTaskPrompt(history.ID, existingPrompt); err != nil {
+		t.Fatal(err)
+	}
+	if err := testStore.CreateTask(task); err != nil {
+		t.Fatal(err)
+	}
+
+	callCount := 0
+	svc := &PromptService{
+		store:  testStore,
+		cliSvc: appcli.NewWithResolver(func(string) (string, error) { return "/tmp/fake-claude", nil }),
+		promptGenerator: func(ctx context.Context, workDir, prompt, model string) (generatedPromptResult, error) {
+			callCount++
+			return generatedPromptResult{PromptText: existingPrompt, PromptDifficulty: "一般"}, nil
+		},
+	}
+
+	result, err := svc.GenerateTaskPromptWithContext(context.Background(), GeneratePromptRequest{TaskID: task.ID, TaskType: "Bug修复"})
+	if err == nil || !strings.Contains(err.Error(), history.ID) {
+		t.Fatalf("GenerateTaskPromptWithContext() = %#v, %v; want duplicate exhaustion error naming %s", result, err, history.ID)
+	}
+	if callCount != 3 {
+		t.Fatalf("promptGenerator call count = %d, want 3", callCount)
+	}
+	stored, getErr := testStore.GetTask(task.ID)
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	if stored.PromptText != nil && strings.TrimSpace(*stored.PromptText) != "" {
+		t.Fatalf("duplicate prompt was saved: %q", *stored.PromptText)
+	}
+	if stored.PromptGenerationStatus != "error" {
+		t.Fatalf("PromptGenerationStatus = %q, want error", stored.PromptGenerationStatus)
+	}
+}
+
+func TestGenerateTaskPromptWithContextFailsClosedWhenSemanticJudgeFails(t *testing.T) {
+	testStore := testutil.OpenTestStore(t)
+	defer testStore.Close()
+
+	workDir := t.TempDir()
+	projectID := "project-judge-failure"
+	existingPrompt := "评论区需要支持针对评论继续回复，回复内容按层级展示在原评论下面。"
+	generatedPrompt := "评论列表要增加逐条回复能力，并把回复按照父子层级放在对应评论下方。"
+	task := store.Task{ID: "judge-failure-current", GitLabProjectID: 7101, ProjectName: "Current", TaskType: "Feature迭代", LocalPath: &workDir, ProjectConfigID: &projectID}
+	history := store.Task{ID: "judge-failure-history", GitLabProjectID: 7101, ProjectName: "History", TaskType: "Feature迭代", PromptText: &existingPrompt, ProjectConfigID: &projectID}
+	if err := testStore.CreateTask(history); err != nil {
+		t.Fatal(err)
+	}
+	if err := testStore.UpdateTaskPrompt(history.ID, existingPrompt); err != nil {
+		t.Fatal(err)
+	}
+	if err := testStore.CreateTask(task); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := &PromptService{
+		store:  testStore,
+		cliSvc: appcli.NewWithResolver(func(string) (string, error) { return "/tmp/fake-claude", nil }),
+		promptGenerator: func(ctx context.Context, workDir, prompt, model string) (generatedPromptResult, error) {
+			return generatedPromptResult{PromptText: generatedPrompt, PromptDifficulty: "一般"}, nil
+		},
+		duplicateJudge: func(ctx context.Context, workDir, prompt, model string) (semanticDuplicateDecision, error) {
+			return semanticDuplicateDecision{}, errors.New("judge unavailable")
+		},
+	}
+
+	result, err := svc.GenerateTaskPromptWithContext(context.Background(), GeneratePromptRequest{TaskID: task.ID, TaskType: "Feature迭代"})
+	if err == nil || !strings.Contains(err.Error(), "judge unavailable") {
+		t.Fatalf("GenerateTaskPromptWithContext() = %#v, %v; want judge failure", result, err)
+	}
+	stored, getErr := testStore.GetTask(task.ID)
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	if stored.PromptText != nil && strings.TrimSpace(*stored.PromptText) != "" {
+		t.Fatalf("prompt was saved without semantic judgment: %q", *stored.PromptText)
+	}
+}
+
+func TestGenerateTaskPromptWithContextKeepsVerifiedRawPromptWhenPolishBecomesSemanticDuplicate(t *testing.T) {
+	testStore := testutil.OpenTestStore(t)
+	defer testStore.Close()
+
+	workDir := t.TempDir()
+	projectID := "project-polish-duplicate"
+	existingPrompt := "评论区需要支持针对评论继续回复，回复内容按层级展示在原评论下面。"
+	rawPrompt := "车辆详情页增加保养记录，让车主能查看最近维修时间和下次保养提醒。"
+	polishedDuplicate := "评论列表补充逐条回复功能，并将回复按父子层级展示在对应评论下方。"
+	task := store.Task{ID: "polish-duplicate-current", GitLabProjectID: 8101, ProjectName: "Current", TaskType: "Feature迭代", LocalPath: &workDir, ProjectConfigID: &projectID}
+	history := store.Task{ID: "polish-duplicate-history", GitLabProjectID: 8101, ProjectName: "History", TaskType: "Feature迭代", PromptText: &existingPrompt, ProjectConfigID: &projectID}
+	if err := testStore.CreateTask(history); err != nil {
+		t.Fatal(err)
+	}
+	if err := testStore.UpdateTaskPrompt(history.ID, existingPrompt); err != nil {
+		t.Fatal(err)
+	}
+	if err := testStore.CreateTask(task); err != nil {
+		t.Fatal(err)
+	}
+
+	judgeCount := 0
+	svc := &PromptService{
+		store:  testStore,
+		cliSvc: appcli.NewWithResolver(func(string) (string, error) { return "/tmp/fake-claude", nil }),
+		promptGenerator: func(ctx context.Context, workDir, prompt, model string) (generatedPromptResult, error) {
+			return generatedPromptResult{PromptText: rawPrompt, PromptDifficulty: "一般"}, nil
+		},
+		promptHumanizer: func(ctx context.Context, workDir, prompt, model string) (string, error) {
+			return polishedDuplicate, nil
+		},
+		duplicateJudge: func(ctx context.Context, workDir, prompt, model string) (semanticDuplicateDecision, error) {
+			judgeCount++
+			return semanticDuplicateDecision{IsDuplicate: true, Confidence: 0.94, TaskID: history.ID, Reason: "同一评论回复能力"}, nil
+		},
+	}
+
+	result, err := svc.GenerateTaskPromptWithContext(context.Background(), GeneratePromptRequest{TaskID: task.ID, TaskType: "Feature迭代"})
+	if err != nil {
+		t.Fatalf("GenerateTaskPromptWithContext() error = %v", err)
+	}
+	if result.PromptText != rawPrompt {
+		t.Fatalf("PromptText = %q, want verified raw prompt %q", result.PromptText, rawPrompt)
+	}
+	if judgeCount != 1 {
+		t.Fatalf("duplicateJudge call count = %d, want 1 for polished prompt", judgeCount)
 	}
 }
 
@@ -1032,7 +1232,10 @@ func TestFindDuplicatePromptMatchUsesSingleBoundedJudgePrompt(t *testing.T) {
 		}, nil
 	}
 
-	match, ok := svc.findDuplicatePromptMatch(context.Background(), "", "评论区需要支持针对评论继续回复并展开回复列表。", existingPrompts, "test-model")
+	match, ok, err := svc.findDuplicatePromptMatch(context.Background(), "", "评论区需要支持针对评论继续回复并展开回复列表。", existingPrompts, "test-model")
+	if err != nil {
+		t.Fatalf("findDuplicatePromptMatch() error = %v", err)
+	}
 	if !ok {
 		t.Fatalf("findDuplicatePromptMatch() ok = false, want true")
 	}
@@ -1063,7 +1266,9 @@ func TestFindDuplicatePromptMatchSkipsJudgeForLowLocalSimilarity(t *testing.T) {
 		return semanticDuplicateDecision{}, nil
 	}
 
-	if match, ok := svc.findDuplicatePromptMatch(context.Background(), "", "商家端订单列表增加按配送方式筛选，并保留原有分页。", existingPrompts, "test-model"); ok {
+	if match, ok, err := svc.findDuplicatePromptMatch(context.Background(), "", "商家端订单列表增加按配送方式筛选，并保留原有分页。", existingPrompts, "test-model"); err != nil {
+		t.Fatalf("findDuplicatePromptMatch() error = %v", err)
+	} else if ok {
 		t.Fatalf("findDuplicatePromptMatch() = %+v, true; want no match", match)
 	}
 }

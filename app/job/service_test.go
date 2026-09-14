@@ -1546,6 +1546,22 @@ func TestCleanupGitCloneTargetsRemovesCreatedPaths(t *testing.T) {
 	}
 }
 
+func TestReviewExecutionConfigUsesLocalCodexWhenGloballySelected(t *testing.T) {
+	testStore := testutil.OpenTestStore(t)
+	if err := testStore.SetConfig("annotation_review_engine", "codex"); err != nil {
+		t.Fatal(err)
+	}
+	service := &JobService{store: testStore}
+
+	selection, err := service.reviewExecutionConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selection.DeepSeek != nil || selection.Label != "Codex CLI" {
+		t.Fatalf("review execution = %+v, want local Codex CLI", selection)
+	}
+}
+
 func createCommittedReviewRecord(t *testing.T, st *store.Store, taskID, modelRunID string, sessionIndex int) {
 	t.Helper()
 	deepSeekURL := "https://api.deepseek.com"
