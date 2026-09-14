@@ -6,6 +6,7 @@ type Case struct {
 	ProjectID        string       `json:"projectId"`
 	TaskName         string       `json:"taskName"`
 	TaskType         string       `json:"taskType,omitempty"`
+	PromptDifficulty string       `json:"promptDifficulty,omitempty"`
 	SourcePath       string       `json:"sourcePath"`
 	InitialSHA       string       `json:"initialSha"`
 	SnapshotURL      string       `json:"snapshotUrl"`
@@ -51,30 +52,39 @@ type Capture struct {
 
 type Evaluation struct {
 	// Current is computed when reading cases, never supplied by the reviewer.
-	Current           *bool              `json:"current,omitempty"`
-	ID                string             `json:"id"`
-	CreatedAt         int64              `json:"createdAt"`
-	SkillHash         string             `json:"skillHash"`
-	Model             string             `json:"model"`
-	EvidenceHash      string             `json:"evidenceHash"`
-	SourceHash        string             `json:"sourceHash"`
-	ReviewPath        string             `json:"reviewPath"`
-	ReviewHash        string             `json:"reviewHash"`
-	Status            string             `json:"status"`
-	Scores            [5]*int            `json:"scores"`
-	Descriptions      [5]string          `json:"descriptions"`
-	TaskType          string             `json:"taskType"`
-	Difficulty        string             `json:"difficulty"`
-	Language          string             `json:"language"`
-	Environment       string             `json:"environment"`
-	HarnessVersion    string             `json:"harnessVersion"`
-	OS                string             `json:"os"`
-	Evidence          []string           `json:"evidence"`
-	Missing           []string           `json:"missing"`
-	RequirementChecks []RequirementCheck `json:"requirementChecks,omitempty"`
-	Issues            []Issue            `json:"issues"`
-	NextPrompt        string             `json:"nextPrompt"`
-	NextPromptType    string             `json:"nextPromptType"`
+	Current           *bool               `json:"current,omitempty"`
+	ID                string              `json:"id"`
+	CreatedAt         int64               `json:"createdAt"`
+	SkillHash         string              `json:"skillHash"`
+	Model             string              `json:"model"`
+	EvidenceHash      string              `json:"evidenceHash"`
+	SourceHash        string              `json:"sourceHash"`
+	ReviewPath        string              `json:"reviewPath"`
+	ReviewHash        string              `json:"reviewHash"`
+	Status            string              `json:"status"`
+	Scores            [5]*int             `json:"scores"`
+	Descriptions      [5]string           `json:"descriptions"`
+	DescriptionChecks [5]DescriptionCheck `json:"descriptionChecks,omitempty"`
+	QualityVersion    int                 `json:"qualityVersion,omitempty"`
+	TaskType          string              `json:"taskType"`
+	Difficulty        string              `json:"difficulty"`
+	Language          string              `json:"language"`
+	Environment       string              `json:"environment"`
+	HarnessVersion    string              `json:"harnessVersion"`
+	OS                string              `json:"os"`
+	Evidence          []string            `json:"evidence"`
+	Missing           []string            `json:"missing"`
+	RequirementChecks []RequirementCheck  `json:"requirementChecks,omitempty"`
+	Issues            []Issue             `json:"issues"`
+	NextPrompt        string              `json:"nextPrompt"`
+	NextPromptType    string              `json:"nextPromptType"`
+}
+
+type DescriptionCheck struct {
+	Judgment    string `json:"judgment,omitempty"`
+	Location    string `json:"location,omitempty"`
+	Behavior    string `json:"behavior,omitempty"`
+	Consequence string `json:"consequence,omitempty"`
 }
 
 type RequirementCheck struct {

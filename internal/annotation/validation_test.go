@@ -56,11 +56,35 @@ func TestValidateEvaluationRequiresBugForFailedRequirement(t *testing.T) {
 	four := 4
 	evaluation.Scores[0] = &four
 	evaluation.Descriptions[0] = "保存功能未完成。"
+	evaluation.DescriptionChecks[0] = DescriptionCheck{Judgment: "保存功能未完成", Location: "service.go:10", Behavior: "没有写入数据", Consequence: "重新打开后无法读取"}
+	evaluation.Descriptions[0] = "在 service.go:10 的保存步骤，保存功能未完成：没有写入数据，导致重新打开后无法读取。"
 	evaluation.Issues = []Issue{{Description: "未保存数据", Evidence: "service.go:10", Kind: "bug"}}
 	evaluation.NextPrompt = "修复保存数据未落盘的问题，触发保存后应能重新读取"
 	evaluation.NextPromptType = "Bug修复"
 	if err := ValidateEvaluation(round, evaluation); err != nil {
 		t.Fatalf("failed requirement with bug rejected: %v", err)
+	}
+}
+
+func TestValidateEvaluationRequiresConcreteDescriptionChecksBelowFive(t *testing.T) {
+	round := Round{PromptID: "p-1", EvidenceHash: "evidence-hash"}
+	four := 4
+	evaluation := validEvaluation("evidence-hash")
+	evaluation.Scores[2] = &four
+	evaluation.QualityVersion = 2
+	evaluation.Descriptions[2] = "规划阶段存在遗漏。"
+	if err := ValidateEvaluation(round, evaluation); err == nil || !strings.Contains(err.Error(), "description check 3") {
+		t.Fatalf("ValidateEvaluation() error = %v, want structured description evidence error", err)
+	}
+	evaluation.DescriptionChecks[2] = DescriptionCheck{
+		Judgment:    "规划阶段遗漏了前置检查",
+		Location:    "第1轮执行 npm run build 前",
+		Behavior:    "未先确认 package.json 中的构建脚本",
+		Consequence: "首次构建使用了不存在的脚本并退出 1",
+	}
+	evaluation.Descriptions[2] = "第1轮执行 npm run build 前，规划阶段遗漏了前置检查，未先确认 package.json 中的构建脚本，首次构建使用了不存在的脚本并退出 1。"
+	if err := ValidateEvaluation(round, evaluation); err != nil {
+		t.Fatalf("concrete non-perfect description rejected: %v", err)
 	}
 }
 

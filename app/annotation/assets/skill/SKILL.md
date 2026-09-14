@@ -11,7 +11,7 @@ description: Use when 用户已自行准备项目与提示词并在 Claude Code 
 
 ## 运行模式
 
-“执行完了，帮我制表”等普通请求继续使用下方完整后处理流程，输出 Excel 和配套材料。只有调用方明确指定 **integration review-only** 并提供已冻结证据包时，才使用应用集成模式：先读 [应用集成契约](references/integration-contract.md) 和 [下一轮建议](references/next-turn-guidance.md)，只评价契约指定的一轮，返回一个结构化 JSON 对象，不制表、不改文件、不执行或追加被测 Prompt。
+“执行完了，帮我制表”等普通请求继续使用下方完整后处理流程，输出 Excel 和配套材料。只有调用方明确指定 **integration review-only** 并提供已冻结证据包时，才使用应用集成模式：直接读取 [PinRu 集成审核规则](references/integration-review-profile.md)，只评价契约指定的一轮，返回一个结构化 JSON 对象，不制表、不改文件、不执行或追加被测 Prompt。该文件已经汇总集成契约、评分校准、描述质量和下一轮建议，集成模式不要重复加载普通制表流程的其他参考。
 
 集成模式保持原始 Prompt、SessionID、PromptID、证据哈希和证据归属不变。证据不足的维度填 `null` 并列出具体缺项，不以 0、3、5 或文字推测代填。描述仍遵守本 skill 的自然语言和分维度要求；JSON 外不加 Markdown 或解释。下一轮建议只是建议，只有后来真实出现在轨迹中才构成新轮次。
 

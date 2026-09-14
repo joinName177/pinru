@@ -17,7 +17,7 @@ import (
 
 func TestSatisfactionPromptKeepsFiveDimensionRulesAndEvidenceBoundaries(t *testing.T) {
 	p := buildSatisfactionPrompt(SatisfactionReviewRequest{InputPath: "/review/input.json", SkillDir: "/review/skill"})
-	for _, want := range []string{"SKILL.md", "input.json", "原始 Prompt", "五维", "自然", "不得", "副本"} {
+	for _, want := range []string{"integration-review-profile.md", "input.json", "evidence-index.json", "round-trace.jsonl", "五维", "副本"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("missing %q", want)
 		}
@@ -36,6 +36,15 @@ func TestSatisfactionSchemaRequiresExactScoreAndDescriptionCounts(t *testing.T) 
 		p := props[name].(map[string]any)
 		if p["minItems"] != 5 || p["maxItems"] != 5 {
 			t.Fatalf("%s not exactly five", name)
+		}
+	}
+	checks := props["descriptionChecks"].(map[string]any)
+	if checks["minItems"] != 5 || checks["maxItems"] != 5 {
+		t.Fatalf("descriptionChecks not exactly five")
+	}
+	for _, name := range []string{"taskType", "difficulty", "environment", "os"} {
+		if _, ok := props[name].(map[string]any)["enum"]; !ok {
+			t.Fatalf("%s must use a strict enum", name)
 		}
 	}
 	requirementChecks := props["requirementChecks"].(map[string]any)
@@ -219,7 +228,8 @@ func validReviewJSON(t *testing.T, count int) string {
 	}
 	payload := map[string]any{
 		"status": "ready", "scores": scores, "descriptions": descriptions,
-		"taskType": "feature迭代", "difficulty": "中等", "language": "Go",
+		"descriptionChecks": []any{map[string]any{}, map[string]any{}, map[string]any{}, map[string]any{}, map[string]any{}},
+		"taskType":          "feature迭代", "difficulty": "中等", "language": "Go",
 		"environment": "无外部依赖", "harnessVersion": "2.1.0", "os": "MacOS/Linux",
 		"evidence": []string{"trace.jsonl:1-3"}, "missing": []string{}, "issues": []any{},
 		"requirementChecks": []any{map[string]any{"requirement": "完成用户要求", "status": "completed", "evidence": "code/service.go:10; go test ./... PASS"}},

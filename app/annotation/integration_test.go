@@ -89,7 +89,11 @@ func fakeReviewCLIWithDelay(t *testing.T, delay string) (*appcli.CliService, str
 	payload := filepath.Join(dir, "response.json")
 	count := filepath.Join(dir, "count")
 	eval := map[string]any{
-		"status": "ready", "scores": []int{4, 5, 5, 5, 5}, "descriptions": []string{"加法入口能返回结果，但空值缺少明确反馈。", "按原要求提供了加法入口。", "按入口、计算、反馈顺序组织实现。", "从输入类型推导处理分支。", "完成实现并运行了轨迹中记录的用例。"},
+		"status": "ready", "scores": []int{4, 5, 5, 5, 5}, "descriptions": []string{"加法入口能返回结果；在 code/main.py 的 add 函数中，空值反馈不完整，函数只计算 a+b，导致空值输入时没有明确提示。", "按原要求提供了加法入口。", "按入口、计算、反馈顺序组织实现。", "从输入类型推导处理分支。", "完成实现并运行了轨迹中记录的用例。"},
+		"descriptionChecks": []any{
+			map[string]string{"judgment": "空值反馈不完整", "location": "code/main.py 的 add 函数", "behavior": "函数只计算 a+b", "consequence": "空值输入时没有明确提示"},
+			map[string]string{}, map[string]string{}, map[string]string{}, map[string]string{},
+		},
 		"taskType": "0-1代码生成", "difficulty": "简单", "language": "Python", "environment": "无外部依赖", "harnessVersion": "2.1.0", "os": "MacOS/Linux",
 		"evidence": []string{"原轨迹第 2 行回复；静态检查 code/main.py；审核日志 evaluator.log"}, "missing": []string{},
 		"requirementChecks": []map[string]string{{"requirement": "实现加法功能", "status": "completed", "evidence": "静态检查 code/main.py：add(a,b) 返回 a+b"}},

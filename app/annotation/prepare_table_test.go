@@ -58,6 +58,25 @@ func TestBatchCaptureAndTableStartsIndependentReviewsTogether(t *testing.T) {
 	}
 }
 
+func TestBatchReviewConcurrencyUsesConfiguredBound(t *testing.T) {
+	s, _, _ := annotationFixture(t)
+	if got := s.batchReviewConcurrency(20); got != 4 {
+		t.Fatalf("default concurrency = %d, want 4", got)
+	}
+	if err := s.store.SetConfig("annotation_review_concurrency", "6"); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.batchReviewConcurrency(20); got != 6 {
+		t.Fatalf("configured concurrency = %d, want 6", got)
+	}
+	if err := s.store.SetConfig("annotation_review_concurrency", "99"); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.batchReviewConcurrency(3); got != 3 {
+		t.Fatalf("clamped concurrency = %d, want 3", got)
+	}
+}
+
 func TestBatchCaptureAndTablePreparesThenSkipsValidSavedData(t *testing.T) {
 	s, trace, _ := annotationFixture(t)
 	if _, err := s.Capture(CaptureRequest{TaskID: "题目-1", TracePath: trace}); err != nil {

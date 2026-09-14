@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +16,26 @@ import (
 )
 
 const batchItemTimeout = 30 * time.Minute
+const defaultBatchReviewConcurrency = 4
+
+func (s *AnnotationService) batchReviewConcurrency(total int) int {
+	limit := defaultBatchReviewConcurrency
+	if raw, err := s.store.GetConfig("annotation_review_concurrency"); err == nil {
+		if parsed, parseErr := strconv.Atoi(strings.TrimSpace(raw)); parseErr == nil {
+			limit = parsed
+		}
+	}
+	if limit < 2 {
+		limit = 2
+	}
+	if limit > 6 {
+		limit = 6
+	}
+	if total > 0 && limit > total {
+		limit = total
+	}
+	return limit
+}
 
 func latestReadyEvaluation(round domain.Round) *domain.Evaluation {
 	if len(round.Evaluations) == 0 {
@@ -255,16 +276,30 @@ func (s *AnnotationService) batchCaptureAndPrepareTable(ctx context.Context, req
 	}
 
 	var wg sync.WaitGroup
-	for index, current := range cases {
-		index, current := index, current
+	indices := make(chan int)
+	workers := s.batchReviewConcurrency(len(cases))
+	for worker := 0; worker < workers; worker++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			result.Items[index] = s.prepareBatchCase(ctx, current, func(progress int, message string) {
-				report(index, current, progress, message)
-			})
+			for index := range indices {
+				current := cases[index]
+				result.Items[index] = s.prepareBatchCase(ctx, current, func(progress int, message string) {
+					report(index, current, progress, message)
+				})
+			}
 		}()
 	}
+	for index := range cases {
+		select {
+		case <-ctx.Done():
+			close(indices)
+			wg.Wait()
+			return result, ctx.Err()
+		case indices <- index:
+		}
+	}
+	close(indices)
 	wg.Wait()
 	for _, item := range result.Items {
 		switch item.Status {

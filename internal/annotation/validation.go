@@ -117,6 +117,16 @@ func ValidateEvaluation(round Round, evaluation Evaluation) error {
 					return fmt.Errorf("evaluation score and description %d contradict: non-perfect score claims no shortcoming", index+1)
 				}
 			}
+			if evaluation.QualityVersion >= 2 {
+				check := evaluation.DescriptionChecks[index]
+				parts := []string{check.Judgment, check.Location, check.Behavior, check.Consequence}
+				for _, part := range parts {
+					part = strings.TrimSpace(part)
+					if part == "" || !strings.Contains(description, part) {
+						return fmt.Errorf("evaluation description check %d must include judgment, location, behavior, and consequence verbatim", index+1)
+					}
+				}
+			}
 		}
 	}
 

@@ -120,6 +120,7 @@ func (s *AnnotationService) loadCase(id string) (*domain.Case, error) {
 	}
 	if c != nil {
 		c.TaskType = task.TaskType
+		c.PromptDifficulty = task.PromptDifficulty
 		return c, nil
 	}
 	project := ""
@@ -139,7 +140,7 @@ func (s *AnnotationService) loadCase(id string) (*domain.Case, error) {
 	if source == "" && task.LocalPath != nil {
 		source = *task.LocalPath
 	}
-	return &domain.Case{TaskID: id, ProjectID: project, TaskName: task.ProjectName, TaskType: task.TaskType, SourcePath: source, RepoRelativePath: filepath.Base(source), Rounds: []domain.Round{}, Captures: []domain.Capture{}}, nil
+	return &domain.Case{TaskID: id, ProjectID: project, TaskName: task.ProjectName, TaskType: task.TaskType, PromptDifficulty: task.PromptDifficulty, SourcePath: source, RepoRelativePath: filepath.Base(source), Rounds: []domain.Round{}, Captures: []domain.Capture{}}, nil
 }
 
 // ListCases includes every project task, including tasks not yet prepared.
@@ -160,6 +161,7 @@ func (s *AnnotationService) ListCases(projectID string) ([]domain.Case, error) {
 	if err != nil {
 		return nil, err
 	}
+	_, modelLabel, modelErr := s.reviewProvider()
 	for _, task := range tasks {
 		c, err := s.loadCase(task.ID)
 		if err != nil {
@@ -188,6 +190,9 @@ func (s *AnnotationService) ListCases(projectID string) ([]domain.Case, error) {
 				// review-cache decisions; freshness here describes the frozen
 				// evidence and scoring-rule version shown on the task card.
 				current := e.SkillHash == skillHash && e.EvidenceHash == r.EvidenceHash && sourceHash != "" && e.SourceHash == sourceHash
+				if modelErr == nil {
+					current = current && e.Model == modelLabel
+				}
 				e.Current = &current
 			}
 		}

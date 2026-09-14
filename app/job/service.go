@@ -1397,48 +1397,6 @@ func (s *JobService) executeAiReview(
 	nextPrompt := ensureBugFixRepairPromptPrefix(lastResult.NextPrompt, nextPromptTaskType)
 
 	dissatisfactionSummary := ""
-	if shouldGenerateDissatisfactionSummary(passed, lastResult.ReviewNotes) {
-		s.emitProgress(jobID, req.JobType, req.TaskID, "running", 82,
-			strPtr(fmt.Sprintf("[%s] 正在整理不满意原因…", label)),
-			nil,
-		)
-		summary, err := s.cliSvc.RunCodexDissatisfactionSummary(ctx, appcli.DissatisfactionSummaryRequest{
-			LocalPath:        payload.LocalPath,
-			ModelName:        strings.TrimSpace(round.ModelName),
-			OriginalPrompt:   strings.TrimSpace(round.OriginalPrompt),
-			CurrentPrompt:    strings.TrimSpace(round.PromptText),
-			ReviewNotes:      strings.TrimSpace(lastResult.ReviewNotes),
-			ProjectType:      strings.TrimSpace(lastResult.ProjectType),
-			ChangeScope:      strings.TrimSpace(lastResult.ChangeScope),
-			KeyLocations:     strings.TrimSpace(lastResult.KeyLocations),
-			ProductSatisfied: passed,
-			DeepSeek:         &deepSeekConfig,
-		}, func(line string) {
-			if isStructuredAiReviewLine(line) {
-				return
-			}
-			s.emitProgress(jobID, req.JobType, req.TaskID, "running", 84,
-				strPtr(fmt.Sprintf("[%s] %s", label, line)),
-				nil,
-			)
-		})
-		if err != nil {
-			if ctx.Err() != nil {
-				return jobExecutionResult{}, ctx.Err()
-			}
-			slog.Warn("failed to summarize ai review dissatisfaction",
-				"job_id", jobID,
-				"review_round_id", round.ID,
-				"error", err,
-			)
-			s.emitProgress(jobID, req.JobType, req.TaskID, "running", 86,
-				strPtr(fmt.Sprintf("[%s] 不满意原因整理失败，保留原始复审点评", label)),
-				nil,
-			)
-		} else if summary != nil {
-			dissatisfactionSummary = strings.TrimSpace(summary.Summary)
-		}
-	}
 
 	if err := s.store.FinalizeAiReviewRound(
 		round.ID,
@@ -1836,18 +1794,6 @@ func resolveNextPromptTaskType(nextPrompt, explicitTaskType string) string {
 		return normalized
 	}
 	return inferReviewTaskTypeFromPrompt(nextPrompt)
-}
-
-func shouldGenerateDissatisfactionSummary(passed bool, reviewNotes string) bool {
-	if !passed {
-		return true
-	}
-	return containsProcessDissatisfaction(reviewNotes)
-}
-
-func containsProcessDissatisfaction(value string) bool {
-	text := strings.TrimSpace(value)
-	return strings.Contains(text, "过程不满意")
 }
 
 func ensureBugFixRepairPromptPrefix(nextPrompt, nextPromptTaskType string) string {

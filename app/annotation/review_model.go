@@ -34,8 +34,8 @@ func (s *AnnotationService) reviewProvider() (appcli.DeepSeekCodexConfig, string
 	}
 	baseURL := strings.TrimRight(strings.TrimSpace(*selected.BaseURL), "/")
 	baseURL = strings.TrimSuffix(baseURL, "/v1")
-	fingerprint := sha256.Sum256([]byte(selected.ID + "\n" + selected.Model + "\n" + baseURL + "\nhigh"))
-	label := deepSeekReviewLabel + " [config:" + hex.EncodeToString(fingerprint[:8]) + "]"
+	fingerprint := sha256.Sum256([]byte(strings.TrimSpace(selected.Model) + "\n" + reviewPipelineVersion + "\nhigh"))
+	label := deepSeekReviewLabel + " [engine:" + hex.EncodeToString(fingerprint[:8]) + "]"
 	return appcli.DeepSeekCodexConfig{
 		Model:           strings.TrimSpace(selected.Model),
 		BaseURL:         baseURL,

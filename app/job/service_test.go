@@ -104,18 +104,6 @@ func TestHelperProcess(t *testing.T) {
 	}
 }
 
-func TestShouldGenerateDissatisfactionSummaryAllowsProcessOnlyPass(t *testing.T) {
-	if !shouldGenerateDissatisfactionSummary(false, "产物不满意：入口打不开") {
-		t.Fatalf("shouldGenerateDissatisfactionSummary(false, ...) = false, want true")
-	}
-	if !shouldGenerateDissatisfactionSummary(true, "过程不满意：只检查了静态列表，没有验证实时刷新。产物已满足要求。") {
-		t.Fatalf("shouldGenerateDissatisfactionSummary(true, process dissatisfaction) = false, want true")
-	}
-	if shouldGenerateDissatisfactionSummary(true, "已核验核心入口、状态回显和用户反馈，本轮通过。") {
-		t.Fatalf("shouldGenerateDissatisfactionSummary(true, pass notes) = true, want false")
-	}
-}
-
 func TestCustomPromptDocumentProgressViewShowsProjectIndex(t *testing.T) {
 	cases := []struct {
 		name         string
