@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { Check, Copy } from 'lucide-react';
+import { writeClipboardText } from '../lib/clipboard';
 
 interface CopyIconButtonProps {
   value: string;
@@ -31,7 +32,7 @@ export function CopyIconButton({
     }
 
     try {
-      await navigator.clipboard.writeText(nextValue);
+      await writeClipboardText(nextValue);
       setCopied(true);
       if (resetTimerRef.current !== null) {
         window.clearTimeout(resetTimerRef.current);

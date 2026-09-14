@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, ChevronDown, Copy, Check } from 'lucide-react';
 import { useAppStore } from '../../store';
+import { writeClipboardText } from '../../shared/lib/clipboard';
 import {
   listTasks,
   listModelRuns,
@@ -198,7 +199,7 @@ export default function Report() {
 
   const handleCopyMarkdown = useCallback(async () => {
     const markdown = buildReportMarkdown(rows);
-    await navigator.clipboard.writeText(markdown);
+    await writeClipboardText(markdown);
     setMarkdownCopied(true);
     if (markdownCopyTimerRef.current) {
       clearTimeout(markdownCopyTimerRef.current);

@@ -53,6 +53,7 @@ import {
 } from '../lib/sessionCandidateUtils';
 import { formatModelRunDisplayLabel } from '../lib/sourceFolders';
 import { CopyIconButton } from './CopyIconButton';
+import { writeClipboardText } from '../lib/clipboard';
 import MarkdownPreview from './MarkdownPreview';
 import { AnnotationWorkspace } from '../../features/annotation';
 
@@ -1104,7 +1105,7 @@ export default function TaskDetailDrawer({
                         <ActionIconButton
                           label={copiedConversation === activeSession.localId ? '已复制' : '复制用户对话'}
                           onClick={() => {
-                            void navigator.clipboard.writeText(activeSession.userConversation ?? '').then(() => {
+                            void writeClipboardText(activeSession.userConversation ?? '').then(() => {
                               setCopiedConversation(activeSession.localId);
                               setTimeout(() => setCopiedConversation(null), 2000);
                             });
@@ -1159,7 +1160,7 @@ export default function TaskDetailDrawer({
                         <ActionIconButton
                           label={copiedDetailSessionId === activeSession.localId ? '已复制' : '复制 Session ID'}
                           onClick={() => {
-                            void navigator.clipboard.writeText(activeSession.sessionId ?? '').then(() => {
+                            void writeClipboardText(activeSession.sessionId ?? '').then(() => {
                               setCopiedDetailSessionId(activeSession.localId);
                               setTimeout(() => setCopiedDetailSessionId(null), 2000);
                             });

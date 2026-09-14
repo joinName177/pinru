@@ -65,6 +65,7 @@ import {
   normalizePromptGenerationStatus,
 } from '../components/BoardPresentation';
 import { useAppStore, type Task, type TaskStatus } from '../../../store';
+import { writeClipboardText } from '../../../shared/lib/clipboard';
 
 const PROMPT_GENERATION_TIMEOUT_MS = 1_200_000;
 
@@ -902,7 +903,7 @@ export function useBoardTaskDetail({
     if (!promptDraft.trim()) {
       return;
     }
-    await navigator.clipboard.writeText(promptDraft);
+    await writeClipboardText(promptDraft);
     setPromptCopied(true);
     window.setTimeout(() => setPromptCopied(false), 1500);
   };
@@ -1441,7 +1442,7 @@ export function useBoardTaskDetail({
     if (!sessionId.trim()) {
       return;
     }
-    await navigator.clipboard.writeText(sessionId.trim());
+    await writeClipboardText(sessionId.trim());
     setCopiedSessionId(localId);
     window.setTimeout(() => {
       setCopiedSessionId((current) => (current === localId ? null : current));

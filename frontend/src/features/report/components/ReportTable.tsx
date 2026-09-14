@@ -3,6 +3,7 @@ import { Copy, Check, ChevronDown } from 'lucide-react';
 import type { ReportRow } from '../types';
 import { PROJECT_TYPE_OPTIONS, CHANGE_SCOPE_OPTIONS } from '../types';
 import { DEFAULT_TASK_TYPES } from '../../../shared/lib/taskTypes';
+import { writeClipboardText } from '../../../shared/lib/clipboard';
 
 interface ReportTableProps {
   rows: ReportRow[];
@@ -35,7 +36,7 @@ function CopyButton({ text }: { text: string }) {
   const timerRef = useRef<ReturnType<typeof setTimeout>>();
 
   const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(text);
+    void writeClipboardText(text);
     setCopied(true);
     clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => setCopied(false), 1500);
