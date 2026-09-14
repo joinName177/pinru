@@ -825,22 +825,14 @@ func appendProjectProfilePrompt(sb *strings.Builder, projectProfile *promptProje
 func buildCustomProjectPromptDocumentPrompt(projectName string, projectProfile *promptProjectProfile, requested ...internalprompt.DocumentCounts) string {
 	counts := internalprompt.DefaultDocumentCounts()
 	if len(requested) > 0 {
-		counts = requested[0]
+		counts = requested[0].NormalizeDifficultyAllocation()
 	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "项目名称：%s\n", strings.TrimSpace(projectName))
 	sb.WriteString("角色要求：请以有实际研发排期经验的产品经理视角生成提示词，同时理解基本工程实现约束。输出要像真实业务交付任务，但复杂度控制在小中型研发需求，不要写成概念 PRD、营销文案、课堂作业或重型架构改造清单。\n")
 	sb.WriteString("请基于当前项目一次性生成提示词需求文档，不要逐条调用单题出题逻辑。\n")
 	fmt.Fprintf(&sb, "数量要求：只生成 %d 条，其中 0-1代码生成 %d 条，Feature迭代 %d 条，Bug修复 %d 条；代码理解、工程化、代码测试、代码重构各固定 1 条。数量为 0 的分类不生成题目。严格按数量生成，不擅自增减。\n", counts.CodeGen+counts.Feature+counts.BugFix+4, counts.CodeGen, counts.Feature, counts.BugFix)
-	sb.WriteString("难度要求：每条必须带【简单】、【一般】、【困难】或【地狱】标签，并按真实实现工作量标注。单文件或局部调整通常为简单；需要少量跨文件协作和完整验证通常为一般；只有真实存在的跨模块状态、数据或异常链路及多项业务约束才属于困难；地狱仅用于高耦合、高不确定且验证成本极高的真实任务。不要为了多轮评测刻意提高难度，标签必须服从任务事实。\n")
-	switch strings.TrimSpace(counts.Difficulty) {
-	case "general":
-		sb.WriteString("本批次难度偏好：优先生成实际工作量属于【一般】的任务；若项目事实只支持其他难度，仍按真实工作量标注，不要人为增减范围。\n")
-	case "challenging":
-		sb.WriteString("本批次难度偏好：优先寻找实际工作量属于【困难】的真实需求，困难任务应来自真实状态流转、数据一致性、异常恢复或多项业务约束；不能编造 Bug、虚构链路或无依据堆叠复杂度。代码理解、工程化、代码测试和代码重构仍按事实定级，不强制标为困难。\n")
-	default:
-		sb.WriteString("本批次难度偏好：自动按项目事实选择任务并标注实际难度，不要求固定比例。\n")
-	}
+	fmt.Fprintf(&sb, "难度数量：整批严格生成【一般】%d 条、【困难】%d 条，只允许使用【一般】和【困难】两种标签，不能输出简单或地狱。题型数量与难度数量是两套独立约束，由你结合每条任务的真实实现工作量，把难度名额合理分配到各题型，但两项合计必须与总题数完全一致。一般任务应有少量跨文件协作和完整验证；困难任务必须有代码事实支撑的跨模块状态、数据、异常链路或多项业务约束，不能编造 Bug、虚构链路或无依据堆叠复杂度。\n", counts.General, counts.Difficult)
 	sb.WriteString("去重要求：所有提示词之间不得重复或换皮，也要避免对项目已经具备的功能重复出题。先结合项目画像和必要的源码检查确认能力边界，不得只替换对象名、页面名、状态名后复用同一类需求。每条必须在业务目标、用户路径、状态链路、数据对象、交付边界中至少有两个维度明显不同。输出前自检整批内容，如发现重复须替换为不同角度。\n")
 	sb.WriteString("Bug修复须基于当前代码中真实存在的缺陷，写清触发条件、异常表现和修复后的结果，不能为凑数量编造问题。工程化关注构建依赖或交付流程；代码测试关注实际功能和回归验证；代码重构保持业务行为不变。\n")
 	sb.WriteString("内容要求：提示词必须像真实项目排期里的研发任务，包含背景、触发场景和用户可感知行为即可，交付边界点到为止；不要强行拔高复杂度，不要默认堆砌复杂权限、事务一致性、异步恢复、多角色协作、复杂统计口径或跨系统联动。允许灵活、自然地表达业务需求，重点关注项目实际功能的补充和完善。不要出现代码片段、文件路径、类名、方法名、接口名、变量名、命令或具体实现步骤；只有代码理解题允许明确要求生成 README 文档。\n")

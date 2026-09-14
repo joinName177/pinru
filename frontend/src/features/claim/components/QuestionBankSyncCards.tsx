@@ -423,17 +423,30 @@ export function CustomProjectPickerModal({
   const prefixLabel = formatCustomProjectPrefixes(scanResult?.prefixes);
   const [selectedNames, setSelectedNames] = useState<string[]>([]);
   const [quantities, setQuantities] = useState({ codeGen: '8', feature: '8', bugFix: '0' });
-  const [difficulty, setDifficulty] = useState<NonNullable<CustomPromptCounts['difficulty']>>('auto');
+  const [difficultyQuantities, setDifficultyQuantities] = useState({ general: '10', difficult: '10' });
   const counts: CustomPromptCounts = {
     codeGen: Number(quantities.codeGen),
     feature: Number(quantities.feature),
     bugFix: Number(quantities.bugFix),
-    difficulty,
+    general: Number(difficultyQuantities.general),
+    difficult: Number(difficultyQuantities.difficult),
   };
   const totalCount = counts.codeGen + counts.feature + counts.bugFix + 4;
-  const validCounts = [quantities.codeGen, quantities.feature, quantities.bugFix].every((value: string) => /^\d+$/.test(value))
-    && [counts.codeGen, counts.feature, counts.bugFix].every((n) => Number.isSafeInteger(n) && n >= 0)
-    && Number.isSafeInteger(totalCount);
+  const difficultyTotal = counts.general + counts.difficult;
+  const allQuantityValues = [
+    quantities.codeGen,
+    quantities.feature,
+    quantities.bugFix,
+    difficultyQuantities.general,
+    difficultyQuantities.difficult,
+  ];
+  const parsedCounts = [counts.codeGen, counts.feature, counts.bugFix, counts.general, counts.difficult];
+  const validCountInputs = allQuantityValues.every((value) => /^\d+$/.test(value))
+    && parsedCounts.every((n) => Number.isSafeInteger(n) && n >= 0)
+    && Number.isSafeInteger(totalCount)
+    && Number.isSafeInteger(difficultyTotal);
+  const difficultyAllocationMatches = validCountInputs && difficultyTotal === totalCount;
+  const validCounts = validCountInputs && difficultyAllocationMatches;
   const selectedNameSet = useMemo(() => new Set(selectedNames), [selectedNames]);
 
   useEffect(() => {
@@ -488,18 +501,6 @@ export function CustomProjectPickerModal({
           )}
           <fieldset className="mb-4 rounded-xl border border-stone-200 p-3 dark:border-stone-700" disabled={importing || promptDocGenerating}>
             <legend className="px-1 text-sm font-semibold dark:text-stone-100">每个项目生成数量</legend>
-            <label className="mb-3 block text-xs text-stone-600 dark:text-stone-300">
-              批次难度
-              <select
-                value={difficulty}
-                onChange={(event) => setDifficulty(event.target.value as NonNullable<CustomPromptCounts['difficulty']>)}
-                className="mt-1 w-full rounded-lg border border-stone-300 bg-transparent p-2 dark:border-stone-700"
-              >
-                <option value="auto">自动（按实际难度）</option>
-                <option value="general">一般</option>
-                <option value="challenging">困难优先</option>
-              </select>
-            </label>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {([['codeGen', '0-1代码生成'], ['feature', 'Feature迭代'], ['bugFix', 'Bug修复']] as const).map(([key, label]) => (
                 <label key={key} className="text-xs text-stone-600 dark:text-stone-300">
@@ -518,9 +519,28 @@ export function CustomProjectPickerModal({
                 </label>
               ))}
             </div>
+            <div className="mt-4 border-t border-stone-200 pt-3 dark:border-stone-700">
+              <p className="mb-2 text-xs font-medium text-stone-700 dark:text-stone-200">难度数量分配</p>
+              <div className="grid grid-cols-2 gap-3">
+                {([['general', '一般'], ['difficult', '困难']] as const).map(([key, label]) => (
+                  <label key={key} className="text-xs text-stone-600 dark:text-stone-300">
+                    {label}
+                    <input
+                      type="number" min="0" step="1" value={difficultyQuantities[key]}
+                      onChange={(event) => setDifficultyQuantities((current) => ({ ...current, [key]: event.target.value }))}
+                      className="mt-1 w-full rounded-lg border border-stone-300 bg-transparent p-2 dark:border-stone-700"
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
             <p className="mt-2 text-xs text-stone-500">
               前三类可输入非负整数，填 0 表示不生成；其他四类固定各 1 题。
-              {validCounts ? `每个项目共 ${totalCount} 题。` : '请输入有效的非负整数。'}
+              {!validCountInputs
+                ? '请输入有效的非负整数。'
+                : difficultyAllocationMatches
+                  ? `每个项目共 ${totalCount} 题，其中一般 ${counts.general} 题、困难 ${counts.difficult} 题。`
+                  : `难度数量合计 ${difficultyTotal} 题，与题型总数 ${totalCount} 题不一致。`}
             </p>
           </fieldset>
           {candidates.length === 0 ? (

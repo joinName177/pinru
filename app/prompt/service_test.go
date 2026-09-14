@@ -59,11 +59,11 @@ func TestGenerateCustomProjectPromptDocumentsWritesMarkdownToCustomRoot(t *testi
 		"",
 		"**代码理解**",
 		"",
-		"1. 【一般】梳理发布流程从填写到提交完成的关键状态流和失败分支，并沉淀为 README 文档。",
+		"1. 【困难】梳理发布流程从填写到提交完成的关键状态流和失败分支，并沉淀为 README 文档。",
 		"**工程化**",
-		"1. 【一般】统一构建环境和依赖安装流程。",
+		"1. 【困难】统一构建环境和依赖安装流程。",
 		"**代码测试**",
-		"1. 【一般】补充发布失败后的回归验证。",
+		"1. 【困难】补充发布失败后的回归验证。",
 		"**代码重构**",
 		"1. 【一般】整理发布状态处理逻辑并保持现有行为。",
 	}, "\n")
@@ -84,7 +84,7 @@ func TestGenerateCustomProjectPromptDocumentsWritesMarkdownToCustomRoot(t *testi
 	result, err := svc.GenerateCustomProjectPromptDocuments(GenerateCustomProjectPromptDocumentsRequest{
 		ProjectID:    "project-custom-doc",
 		ProjectNames: []string{"zw-001"},
-		Counts:       &internalprompt.DocumentCounts{CodeGen: 1, Feature: 1},
+		Counts:       &internalprompt.DocumentCounts{CodeGen: 1, Feature: 1, General: 3, Difficult: 3},
 	})
 	if err != nil {
 		t.Fatalf("GenerateCustomProjectPromptDocuments() error = %v", err)
@@ -119,8 +119,8 @@ func TestBuildCustomProjectPromptDocumentPromptUsesActualDifficultyByDefault(t *
 
 	requiredSnippets := []string{
 		"只生成 20 条，其中 0-1代码生成 8 条，Feature迭代 8 条，Bug修复 0 条",
-		"按真实实现工作量标注",
-		"不要为了多轮评测刻意提高难度",
+		"整批严格生成【一般】10 条、【困难】10 条",
+		"只允许使用【一般】和【困难】两种标签",
 		"避免对项目已经具备的功能重复出题",
 		"交付边界点到为止",
 		"要求把梳理结果沉淀为 README 文档",
@@ -158,20 +158,12 @@ func TestBuildCustomProjectPromptDocumentPromptUsesActualDifficultyByDefault(t *
 	}
 }
 
-func TestBuildCustomProjectPromptDocumentPromptAppliesBatchDifficultyPreference(t *testing.T) {
-	general := buildCustomProjectPromptDocumentPrompt("zw-001", nil, internalprompt.DocumentCounts{Difficulty: "general"})
-	if !strings.Contains(general, "优先生成实际工作量属于【一般】") {
-		t.Fatalf("general prompt missing preference:\n%s", general)
-	}
-
-	challenging := buildCustomProjectPromptDocumentPrompt("zw-001", nil, internalprompt.DocumentCounts{Difficulty: "challenging"})
-	for _, want := range []string{"优先寻找实际工作量属于【困难】", "真实状态流转", "数据一致性", "异常恢复", "不能编造 Bug"} {
-		if !strings.Contains(challenging, want) {
-			t.Fatalf("challenging prompt missing %q:\n%s", want, challenging)
+func TestBuildCustomProjectPromptDocumentPromptAppliesExactDifficultyAllocation(t *testing.T) {
+	prompt := buildCustomProjectPromptDocumentPrompt("zw-001", nil, internalprompt.DocumentCounts{Feature: 3, BugFix: 2, General: 4, Difficult: 5})
+	for _, want := range []string{"难度数量：整批严格生成【一般】4 条、【困难】5 条", "只允许使用【一般】和【困难】", "题型数量与难度数量是两套独立约束"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("difficulty allocation prompt missing %q:\n%s", want, prompt)
 		}
-	}
-	if strings.Contains(challenging, "代码理解要求：只输出 1 条且难度固定为【困难】") {
-		t.Fatalf("challenging preference must not force code understanding difficulty:\n%s", challenging)
 	}
 }
 
@@ -230,12 +222,12 @@ func TestGenerateCustomProjectPromptDocumentsRejectsInvalidCliOutput(t *testing.
 }
 
 func TestCustomDocumentUsesRequestedCountsAndAllowsNoCodeGeneration(t *testing.T) {
-	counts := internalprompt.DocumentCounts{Feature: 2, BugFix: 1}
+	counts := internalprompt.DocumentCounts{Feature: 2, BugFix: 1, General: 4, Difficult: 3}
 	prompt := buildCustomProjectPromptDocumentPrompt("cyc-05", nil, counts)
 	if !strings.Contains(prompt, "只生成 7 条，其中 0-1代码生成 0 条，Feature迭代 2 条，Bug修复 1 条") {
 		t.Fatal("generation prompt did not use configured counts")
 	}
-	content := "**Feature迭代**\n1. 【一般】需求一\n2. 【一般】需求二\n**Bug修复**\n1. 【一般】修复已有问题\n**代码理解**\n1. 【一般】梳理并生成 README\n**工程化**\n1. 【一般】规范依赖安装\n**代码测试**\n1. 【一般】回归测试\n**代码重构**\n1. 【一般】整理代码"
+	content := "**Feature迭代**\n1. 【一般】需求一\n2. 【一般】需求二\n**Bug修复**\n1. 【一般】修复已有问题\n**代码理解**\n1. 【一般】梳理并生成 README\n**工程化**\n1. 【困难】规范依赖安装\n**代码测试**\n1. 【困难】回归测试\n**代码重构**\n1. 【困难】整理代码"
 	svc := &PromptService{requirementDocGenerator: func(context.Context, string, string, string) (string, error) { return "生成说明\n" + content, nil }}
 	got, err := svc.generateCustomProjectPromptDocument(context.Background(), t.TempDir(), "cyc-05", "", counts)
 	if err != nil || got != content {

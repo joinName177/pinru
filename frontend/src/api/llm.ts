@@ -62,13 +62,12 @@ export interface GenerateCustomProjectPromptDocumentsRequest {
   providerId?: string | null;
 }
 
-export type CustomPromptDifficulty = 'auto' | 'general' | 'challenging';
-
 export interface CustomPromptCounts {
   codeGen: number;
   feature: number;
   bugFix: number;
-  difficulty?: CustomPromptDifficulty;
+  general: number;
+  difficult: number;
 }
 
 export interface CustomProjectPromptDocumentDetail {
