@@ -20,6 +20,15 @@ const api = vi.hoisted(() => ({
   saveCaseSettings: vi.fn(),
 }));
 
+const wailsClipboard = vi.hoisted(() => ({
+  setText: vi.fn(),
+}));
+
+vi.mock('@wailsio/runtime', async () => ({
+  ...await vi.importActual<typeof import('@wailsio/runtime')>('@wailsio/runtime'),
+  Clipboard: { SetText: wailsClipboard.setText },
+}));
+
 vi.mock('../../api/config', async () => ({
   ...await vi.importActual<typeof import('../../api/config')>('../../api/config'),
   getConfig: api.getConfig,
@@ -94,6 +103,7 @@ function makeCase(overrides: Partial<AnnotationCase> = {}): AnnotationCase {
 describe('AnnotationWorkspace', () => {
   beforeEach(() => {
     Object.values(api).forEach((mock) => mock.mockReset());
+    wailsClipboard.setText.mockReset().mockResolvedValue(undefined);
     api.getConfig.mockResolvedValue('');
     api.listCases.mockResolvedValue([makeCase()]);
     api.listContainers.mockResolvedValue([]);
@@ -247,22 +257,14 @@ describe('AnnotationWorkspace', () => {
   });
 
   it('copies the startup command for the fixed task number in the detail panel', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    const clipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
-    try {
-      api.listCases.mockResolvedValue([makeCase({ taskId: 'p1__feat__label-123-9', taskName: 'cyc-03', sourcePath: '/tasks/cyc-03-feature迭代-9' })]);
-      render(<AnnotationWorkspace projectId="project-1" taskId="p1__feat__label-123-9" />);
-      const copy = await screen.findByRole('button', { name: '复制容器启动命令' });
-      await waitFor(() => expect(copy).toBeEnabled());
-      fireEvent.click(copy);
-      await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining('CONTAINER_NAME="cyc03-claude-9"')));
-      expect(writeText).toHaveBeenCalledWith(expect.stringContaining('RUN_DIR="$BASE_DIR/run-9"'));
-      expect(await screen.findByText('容器启动命令已复制，请在本地终端执行')).toBeInTheDocument();
-    } finally {
-      if (clipboard) Object.defineProperty(navigator, 'clipboard', clipboard);
-      else Reflect.deleteProperty(navigator, 'clipboard');
-    }
+    api.listCases.mockResolvedValue([makeCase({ taskId: 'p1__feat__label-123-9', taskName: 'cyc-03', sourcePath: '/tasks/cyc-03-feature迭代-9' })]);
+    render(<AnnotationWorkspace projectId="project-1" taskId="p1__feat__label-123-9" />);
+    const copy = await screen.findByRole('button', { name: '复制容器启动命令' });
+    await waitFor(() => expect(copy).toBeEnabled());
+    fireEvent.click(copy);
+    await waitFor(() => expect(wailsClipboard.setText).toHaveBeenCalledWith(expect.stringContaining('CONTAINER_NAME="cyc03-claude-9"')));
+    expect(wailsClipboard.setText).toHaveBeenCalledWith(expect.stringContaining('RUN_DIR="$BASE_DIR/run-9"'));
+    expect(await screen.findByText('容器启动命令已复制，请在本地终端执行')).toBeInTheDocument();
   });
 
   it('shows approval and hides a stale repair prompt when all five scores are perfect', async () => {

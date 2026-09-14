@@ -38,6 +38,7 @@ import {
 } from '../../api/annotation';
 import type { BackgroundJob } from '../../api/job';
 import { useAppStore } from '../../store';
+import { writeClipboardText } from '../../shared/lib/clipboard';
 import { waitForAnnotationJob } from './job';
 import { buildContainerCommand } from './containerCommand';
 import { getConfig } from '../../api/config';
@@ -640,7 +641,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                       <button className={SECONDARY_BUTTON} disabled={!startup?.value} onClick={() => {
                         if (!startup?.value) return;
                         void getConfig('annotation_container_api_key')
-                          .then((apiKey) => navigator.clipboard.writeText(buildContainerCommand(selectedCase, apiKey).command))
+                          .then((apiKey) => writeClipboardText(buildContainerCommand(selectedCase, apiKey).command))
                           .then(() => setNotice('容器启动命令已复制，请在本地终端执行'))
                           .catch((error) => setActionError(errorMessage(error)));
                       }}><Clipboard className="h-4 w-4" />复制容器启动命令</button>
@@ -792,7 +793,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                                     className={SECONDARY_BUTTON}
                                     onClick={() => {
                                       const text = latestEvaluation(round)?.nextPrompt || '';
-                                      void navigator.clipboard.writeText(text).then(() => setNotice('下一轮建议已复制')).catch((error) => setActionError(errorMessage(error)));
+                                      void writeClipboardText(text).then(() => setNotice('下一轮建议已复制')).catch((error) => setActionError(errorMessage(error)));
                                     }}
                                   ><Clipboard className="h-4 w-4" />复制</button>
                                 </div>

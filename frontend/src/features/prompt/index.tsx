@@ -34,6 +34,7 @@ import {
   getTaskTypeDisplayLabel,
 } from '../../api/config';
 import { useAppStore } from '../../store';
+import { writeClipboardText } from '../../shared/lib/clipboard';
 import { EmptyChat, MessageBubble } from './components/PromptPrimitives';
 import type { LiveMessage } from './types';
 import {
@@ -748,7 +749,7 @@ export default function Prompt() {
     const content = input.trim();
     if (!content) return;
     try {
-      await navigator.clipboard.writeText(content);
+      await writeClipboardText(content);
       setInputCopied(true);
       if (inputCopyTimerRef.current) {
         window.clearTimeout(inputCopyTimerRef.current);

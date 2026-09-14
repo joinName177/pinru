@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { saveMessageAsPrompt, type ChatSession } from '../../../api/chat';
 import { getAssistantDisplayContent } from '../utils/promptUtils';
+import { writeClipboardText } from '../../../shared/lib/clipboard';
 import type { LiveMessage } from '../types';
 
 type SessionItemProps = {
@@ -137,7 +138,7 @@ export const MessageBubble: FC<MessageBubbleProps> = ({
   const [saved, setSaved] = useState(false);
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(displayContent);
+    await writeClipboardText(displayContent);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
