@@ -6,6 +6,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -17,6 +18,8 @@ var (
 	perfectClaimPatterns = []string{"无任何问题", "没有任何问题", "无任何不足", "没有任何不足", "全部完美", "完全无误", "满分表现"}
 	descriptionLabels    = []string{"触发节点：", "触发节点:", "实际行为：", "实际行为:", "业务影响：", "业务影响:", "证据：", "证据:"}
 	stockConclusions     = []string{"综上所述", "总体而言", "总的来说"}
+	aiWritingPrefixes    = []string{"作为一个ai", "作为ai", "以下是", "基于以上分析", "我将从以下几个方面"}
+	unfinishedEndings    = []string{"同时还需要", "并且", "以及", "而且", "但是", "例如", "比如", "包括", "从而"}
 )
 
 var allowedTaskTypes = map[string]struct{}{
@@ -141,6 +144,9 @@ func ValidateEvaluation(round Round, evaluation Evaluation) error {
 			}
 		}
 	}
+	if err := validateDescriptionDiversity(evaluation.Descriptions); err != nil {
+		return err
+	}
 
 	if len(evaluation.Evidence) == 0 && !needsEvidence {
 		return fmt.Errorf("evaluation evidence is required")
@@ -231,6 +237,17 @@ func validateDescriptionStyle(description string) error {
 			return fmt.Errorf("不要使用“%s”等评价套话，直接陈述事实和影响", phrase)
 		}
 	}
+	compactLower := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(description), " ", ""), "\t", ""))
+	for _, prefix := range aiWritingPrefixes {
+		if strings.HasPrefix(compactLower, prefix) {
+			return fmt.Errorf("不要使用“%s”等AI套话，直接写本轮事实", prefix)
+		}
+	}
+	for _, ending := range unfinishedEndings {
+		if strings.HasSuffix(strings.TrimSpace(description), ending) {
+			return fmt.Errorf("语句不完整，不能以“%s”等连接语结束", ending)
+		}
+	}
 	if scoreConclusion.MatchString(description) {
 		return fmt.Errorf("不要使用“因此给X分”等评价套话，分数已经单独记录")
 	}
@@ -243,8 +260,74 @@ func validateDescriptionStyle(description string) error {
 	return nil
 }
 
+func validateDescriptionDiversity(descriptions [5]string) error {
+	for left := 0; left < len(descriptions); left++ {
+		leftText := strings.TrimSpace(descriptions[left])
+		if leftText == "" {
+			continue
+		}
+		leftNormalized := normalizeWritingForComparison(leftText)
+		for right := left + 1; right < len(descriptions); right++ {
+			rightText := strings.TrimSpace(descriptions[right])
+			if rightText == "" {
+				continue
+			}
+			rightNormalized := normalizeWritingForComparison(rightText)
+			if leftNormalized == rightNormalized {
+				return fmt.Errorf("evaluation descriptions %d and %d 内容重复，五个维度必须分别说明", left+1, right+1)
+			}
+			if len([]rune(leftNormalized)) >= 24 && len([]rune(rightNormalized)) >= 24 && writingBigramDice(leftNormalized, rightNormalized) >= 0.86 {
+				return fmt.Errorf("evaluation descriptions %d and %d 重复比例过高，不能只替换少量词语", left+1, right+1)
+			}
+		}
+	}
+	return nil
+}
+
+func normalizeWritingForComparison(value string) string {
+	var normalized strings.Builder
+	for _, r := range strings.ToLower(value) {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			normalized.WriteRune(r)
+		}
+	}
+	return normalized.String()
+}
+
+func writingBigramDice(left, right string) float64 {
+	leftSet := writingBigrams(left)
+	rightSet := writingBigrams(right)
+	if len(leftSet) == 0 || len(rightSet) == 0 {
+		return 0
+	}
+	intersection := 0
+	for gram := range leftSet {
+		if _, ok := rightSet[gram]; ok {
+			intersection++
+		}
+	}
+	return float64(2*intersection) / float64(len(leftSet)+len(rightSet))
+}
+
+func writingBigrams(value string) map[string]struct{} {
+	runes := []rune(value)
+	grams := make(map[string]struct{}, len(runes))
+	for index := 0; index+1 < len(runes); index++ {
+		grams[string(runes[index:index+2])] = struct{}{}
+	}
+	return grams
+}
+
 // ValidateRepairConsistency also checks saved evaluations before export.
 func ValidateRepairConsistency(e Evaluation) error {
+	repairPrompt := strings.TrimSpace(e.NextPrompt)
+	if repairPrompt != "" {
+		body := strings.TrimSpace(strings.TrimPrefix(repairPrompt, "修复"))
+		body = strings.TrimLeft(body, " ：:，,。.")
+		if err := validateDescriptionStyle(body); err != nil {
+			return fmt.Errorf("修复提示词文案不符合要求：%w", err)
+		}
+	}
 	perfect := true
 	for _, score := range e.Scores {
 		if score == nil || *score != 5 {

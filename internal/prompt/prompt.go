@@ -208,7 +208,10 @@ func BuildSystemPrompt() string {
 		"",
 		"5. 口语化、自然",
 		"   - 读起来要像真实开发者或产品经理发出的任务描述",
-		"   - 去除 AI 写作惯用的刻板措辞",
+		"   - 去除 AI 写作惯用的刻板措辞，不得出现模板化表达、AI式前言或机械总结",
+		"   - 语句必须通顺完整，不堆砌同义短语，不用少量同义词替换制造语义换皮",
+		"   - 不使用箭头、Emoji、反引号或装饰性符号串联需求",
+		"   - 若输入明确要求保留必要的文件名、命令或其他关键事实，不得为了调整文风而删除或改名",
 		"",
 		"6. 输出前自检",
 		fmt.Sprintf("   - 如果正文部分超过 %d 个字，先自行压缩语言，再输出最终版本", MaxPromptBodyRunes),
@@ -431,6 +434,72 @@ func PromptBodyRuneCount(promptText string) int {
 
 func PromptBodyExceedsLimit(promptText string) bool {
 	return PromptBodyRuneCount(promptText) > MaxPromptBodyRunes
+}
+
+func ValidatePromptWritingQuality(promptText string) error {
+	trimmed := strings.TrimSpace(promptText)
+	if trimmed == "" {
+		return fmt.Errorf("提示词不能为空")
+	}
+	if strings.ContainsAny(trimmed, "\r\n") {
+		return fmt.Errorf("提示词必须是连贯的单段文字")
+	}
+	compactLower := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(trimmed, " ", ""), "\t", ""))
+	for _, prefix := range []string{"以下是", "作为一个ai", "作为ai", "基于以上分析", "我将从以下几个方面"} {
+		if strings.HasPrefix(compactLower, prefix) {
+			return fmt.Errorf("不要使用“%s”等模板化表达，直接陈述需求", prefix)
+		}
+	}
+	if strings.Contains(trimmed, "`") || strings.Contains(trimmed, "→") || strings.Contains(trimmed, "⇒") ||
+		strings.Contains(trimmed, "➜") || strings.Contains(trimmed, "➡") || strings.Contains(trimmed, "->") || strings.Contains(trimmed, "=>") {
+		return fmt.Errorf("不要使用箭头、反引号等装饰符号")
+	}
+	for _, r := range trimmed {
+		if r == 0x2022 || (r >= 0x2190 && r <= 0x21FF) || (r >= 0x2460 && r <= 0x27BF) ||
+			(r >= 0x1F000 && r <= 0x1FAFF) || r == 0xFE0F {
+			return fmt.Errorf("不要使用箭头、Emoji、勾选图标等装饰符号")
+		}
+	}
+	for _, ending := range []string{"同时还需要", "并且", "以及", "而且", "但是", "例如", "比如", "包括", "从而"} {
+		if strings.HasSuffix(trimmed, ending) {
+			return fmt.Errorf("语句不完整，不能以“%s”等连接语结束", ending)
+		}
+	}
+	return nil
+}
+
+func promptWritingSimilarity(left, right string) float64 {
+	leftSet := promptWritingBigrams(left)
+	rightSet := promptWritingBigrams(right)
+	if len(leftSet) == 0 || len(rightSet) == 0 {
+		return 0
+	}
+	intersection := 0
+	for gram := range leftSet {
+		if _, ok := rightSet[gram]; ok {
+			intersection++
+		}
+	}
+	return float64(2*intersection) / float64(len(leftSet)+len(rightSet))
+}
+
+func normalizePromptWriting(value string) string {
+	var normalized strings.Builder
+	for _, r := range strings.ToLower(value) {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			normalized.WriteRune(r)
+		}
+	}
+	return normalized.String()
+}
+
+func promptWritingBigrams(value string) map[string]struct{} {
+	runes := []rune(value)
+	grams := make(map[string]struct{}, len(runes))
+	for index := 0; index+1 < len(runes); index++ {
+		grams[string(runes[index:index+2])] = struct{}{}
+	}
+	return grams
 }
 
 func BuildShortenSystemPrompt(limit int) string {

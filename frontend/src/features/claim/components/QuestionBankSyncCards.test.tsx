@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { CustomProjectPickerModal } from './QuestionBankSyncCards';
+import { CustomProjectPickerModal, SyncToolbar } from './QuestionBankSyncCards';
 
 function setup() {
   const onImport = vi.fn();
@@ -10,19 +10,29 @@ function setup() {
 }
 
 describe('custom document quantities', () => {
-  it('submits editable quantities while keeping four other types locked', () => {
+  it('defaults to the approved 25-task allocation without engineering', () => {
+    setup();
+    expect(screen.getByRole('spinbutton', { name: '0-1代码生成' })).toHaveValue(10);
+    expect(screen.getByRole('spinbutton', { name: 'Feature迭代' })).toHaveValue(10);
+    expect(screen.getByRole('spinbutton', { name: 'Bug修复' })).toHaveValue(2);
+    expect(screen.getByRole('spinbutton', { name: '一般' })).toHaveValue(13);
+    expect(screen.getByRole('spinbutton', { name: '困难' })).toHaveValue(12);
+    expect(screen.queryByRole('spinbutton', { name: '工程化' })).not.toBeInTheDocument();
+  });
+
+  it('submits editable quantities while keeping three other types locked', () => {
     const onImport = setup();
     fireEvent.change(screen.getByRole('spinbutton', { name: '0-1代码生成' }), { target: { value: '0' } });
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Feature迭代' }), { target: { value: '3' } });
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Bug修复' }), { target: { value: '2' } });
     fireEvent.change(screen.getByRole('spinbutton', { name: '一般' }), { target: { value: '4' } });
-    fireEvent.change(screen.getByRole('spinbutton', { name: '困难' }), { target: { value: '5' } });
-    for (const name of ['代码理解', '工程化', '代码测试', '代码重构']) {
+    fireEvent.change(screen.getByRole('spinbutton', { name: '困难' }), { target: { value: '4' } });
+    for (const name of ['代码理解', '代码测试', '代码重构']) {
       expect(screen.getByRole('spinbutton', { name })).toBeDisabled();
       expect(screen.getByRole('spinbutton', { name })).toHaveValue(1);
     }
     fireEvent.click(screen.getByRole('button', { name: '导入并生成文档' }));
-    expect(onImport).toHaveBeenCalledWith(['cyc-05'], { codeGen: 0, feature: 3, bugFix: 2, general: 4, difficult: 5 });
+    expect(onImport).toHaveBeenCalledWith(['cyc-05'], { codeGen: 0, feature: 3, bugFix: 2, general: 4, difficult: 4 });
   });
 
   it('blocks empty, fractional and negative quantities', () => {
@@ -36,8 +46,60 @@ describe('custom document quantities', () => {
 
   it('requires difficulty quantities to equal the generated task total', () => {
     setup();
-    fireEvent.change(screen.getByRole('spinbutton', { name: '困难' }), { target: { value: '9' } });
-    expect(screen.getByText(/难度数量合计 19 题，与题型总数 20 题不一致/)).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('spinbutton', { name: '困难' }), { target: { value: '11' } });
+    expect(screen.getByText(/难度数量合计 24 题，与题型总数 25 题不一致/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '导入并生成文档' })).toBeDisabled();
+  });
+});
+
+describe('custom project import errors', () => {
+  it('shows the failed project and its concrete error message', () => {
+    render(
+      <SyncToolbar
+        importingLocalSources={false}
+        localImportError=""
+        localImportResult={null}
+        onScan={vi.fn()}
+        customProjectImporting={false}
+        customProjectScanLoading={false}
+        customProjectImportError=""
+        customProjectImportResult={{
+          projectId: 'batch',
+          projectName: 'Batch',
+          importedCount: 0,
+          skippedCount: 0,
+          errorCount: 1,
+          removedCount: 0,
+          details: [{
+            name: 'xh-01',
+            kind: 'custom_directory',
+            path: '/projects/xh-01',
+            status: 'error',
+            message: '读取 node_modules/demo 失败：is a directory',
+          }],
+        }}
+        customProjectPromptDocGenerating={false}
+        customProjectPromptDocError=""
+        customProjectPromptDocResult={null}
+        customPromptTaskCreating={false}
+        customPromptTaskError=""
+        customPromptTaskResult={null}
+        onScanCustomProjects={vi.fn()}
+        onCreateTasksFromGeneratedPromptDocs={vi.fn()}
+        onCreateTasksFromPickedPromptDocs={vi.fn()}
+        onImportArchives={vi.fn()}
+        syncing={false}
+        syncError=""
+        syncResult={null}
+        configuredGitLabQuestionIds={[]}
+        onSync={vi.fn()}
+        normalizing={false}
+        normalizeError=""
+        normalizeResult={null}
+        onNormalize={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('xh-01：读取 node_modules/demo 失败：is a directory')).toBeInTheDocument();
   });
 });

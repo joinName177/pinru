@@ -250,6 +250,8 @@ func TestValidateEvaluationRejectsMachineFormattedDescriptions(t *testing.T) {
 		{"decorative emoji", "✅ validation.go 已修改，测试已经通过。", "装饰符号"},
 		{"decorative bullet", "● validation.go 已修改，测试已经通过。", "装饰符号"},
 		{"stock conclusion", "validation.go 已修改并完成测试，综上所述，因此给5分。", "套话"},
+		{"ai preface", "作为一个AI，我将从以下几个方面说明 validation.go 的修改结果。", "AI套话"},
+		{"unfinished sentence", "validation.go 已完成修改，同时还需要", "语句不完整"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -260,6 +262,46 @@ func TestValidateEvaluationRejectsMachineFormattedDescriptions(t *testing.T) {
 				t.Fatalf("ValidateEvaluation() error = %v, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestValidateEvaluationRejectsHighlyRepeatedDescriptions(t *testing.T) {
+	round := Round{PromptID: "p-1", EvidenceHash: "round-hash"}
+	evaluation := validEvaluation("round-hash")
+	evaluation.Descriptions[0] = "模型在最终验证阶段执行 go test ./internal/annotation，命令返回成功，但没有检查导出文件中的五项文字是否完整。"
+	evaluation.Descriptions[1] = "模型在最终验证阶段执行 go test ./internal/annotation，命令返回成功，但没有检查导出文件中的五项文字是否通顺。"
+
+	err := ValidateEvaluation(round, evaluation)
+	if err == nil || !strings.Contains(err.Error(), "重复比例") {
+		t.Fatalf("ValidateEvaluation() error = %v, want high repetition rejection", err)
+	}
+}
+
+func TestValidateEvaluationRejectsIdenticalDescriptions(t *testing.T) {
+	round := Round{PromptID: "p-1", EvidenceHash: "round-hash"}
+	evaluation := validEvaluation("round-hash")
+	evaluation.Descriptions[0] = "修改 validation.go 后执行 go test ./internal/annotation，相关校验全部通过。"
+	evaluation.Descriptions[1] = evaluation.Descriptions[0]
+
+	err := ValidateEvaluation(round, evaluation)
+	if err == nil || !strings.Contains(err.Error(), "内容重复") {
+		t.Fatalf("ValidateEvaluation() error = %v, want identical description rejection", err)
+	}
+}
+
+func TestValidateEvaluationRejectsMachineWrittenRepairPrompt(t *testing.T) {
+	round := Round{PromptID: "p-1", EvidenceHash: "round-hash"}
+	evaluation := validEvaluation("round-hash")
+	four := 4
+	evaluation.Scores[0] = &four
+	evaluation.Descriptions[0] = "订单保存后没有写入最新状态，重新打开详情时仍显示旧数据。"
+	evaluation.Issues = []Issue{{Kind: "bug", Description: "订单状态没有保存", Evidence: "service.go 的 SaveOrder"}}
+	evaluation.NextPrompt = "修复以下是为你整理的问题：请修改 service.go 中的 SaveOrder。"
+	evaluation.NextPromptType = "Bug修复"
+
+	err := ValidateEvaluation(round, evaluation)
+	if err == nil || !strings.Contains(err.Error(), "修复提示词文案") {
+		t.Fatalf("ValidateEvaluation() error = %v, want repair-prompt writing rejection", err)
 	}
 }
 

@@ -680,6 +680,9 @@ func copyDirRecursiveWithOptions(ctx context.Context, src, dst string, publishMo
 			if name == ".git" {
 				return filepath.SkipDir
 			}
+			if name == "node_modules" && !options.IncludeNodeModules {
+				return filepath.SkipDir
+			}
 			if publishMode && excludedDirs[name] {
 				return filepath.SkipDir
 			}
@@ -696,6 +699,13 @@ func copyDirRecursiveWithOptions(ctx context.Context, src, dst string, publishMo
 		dstPath := filepath.Join(dst, rel)
 		if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
 			return err
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			return os.Symlink(target, dstPath)
 		}
 		return copyFileStreaming(path, dstPath)
 	})

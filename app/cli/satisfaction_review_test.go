@@ -17,7 +17,7 @@ import (
 
 func TestSatisfactionPromptKeepsFiveDimensionRulesAndEvidenceBoundaries(t *testing.T) {
 	p := buildSatisfactionPrompt(SatisfactionReviewRequest{InputPath: "/review/input.json", SkillDir: "/review/skill"})
-	for _, want := range []string{"integration-review-profile.md", "input.json", "evidence-index.json", "round-trace.jsonl", "五维", "副本"} {
+	for _, want := range []string{"integration-review-profile.md", "input.json", "evidence-index.json", "round-trace.jsonl", "五维", "副本", "语义高度相似", "未写完的句子", "必要技术引用", "修复提示词也"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("missing %q", want)
 		}

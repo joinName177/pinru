@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// The remaining four task types are fixed at one per generated document.
+// The remaining three task types are fixed at one per generated document.
 type DocumentCounts struct {
 	CodeGen   int `json:"codeGen"`
 	Feature   int `json:"feature"`
@@ -16,11 +16,11 @@ type DocumentCounts struct {
 }
 
 func DefaultDocumentCounts() DocumentCounts {
-	return DocumentCounts{CodeGen: 8, Feature: 8, General: 10, Difficult: 10}
+	return DocumentCounts{CodeGen: 10, Feature: 10, BugFix: 2, General: 13, Difficult: 12}
 }
 
 func (c DocumentCounts) Total() int {
-	return c.CodeGen + c.Feature + c.BugFix + 4
+	return c.CodeGen + c.Feature + c.BugFix + 3
 }
 
 // NormalizeDifficultyAllocation keeps requests from older clients usable. New
@@ -42,7 +42,7 @@ func (c DocumentCounts) Validate() error {
 	c = c.NormalizeDifficultyAllocation()
 	// Keep arithmetic and browser integer representation consistent.
 	const maxCount = 9007199254740987
-	if uint64(c.CodeGen) > maxCount || uint64(c.Feature) > maxCount || uint64(c.BugFix) > maxCount || uint64(c.General) > maxCount || uint64(c.Difficult) > maxCount || uint64(c.CodeGen)+uint64(c.Feature)+uint64(c.BugFix)+4 > maxCount {
+	if uint64(c.CodeGen) > maxCount || uint64(c.Feature) > maxCount || uint64(c.BugFix) > maxCount || uint64(c.General) > maxCount || uint64(c.Difficult) > maxCount || uint64(c.CodeGen)+uint64(c.Feature)+uint64(c.BugFix)+3 > maxCount {
 		return fmt.Errorf("题型总数过大")
 	}
 	if uint64(c.General)+uint64(c.Difficult) != uint64(c.Total()) {
@@ -52,7 +52,7 @@ func (c DocumentCounts) Validate() error {
 }
 
 func (c DocumentCounts) ByType() map[string]int {
-	return map[string]int{"0-1代码生成": c.CodeGen, "Feature迭代": c.Feature, "Bug修复": c.BugFix, "代码理解": 1, "工程化": 1, "代码测试": 1, "代码重构": 1}
+	return map[string]int{"0-1代码生成": c.CodeGen, "Feature迭代": c.Feature, "Bug修复": c.BugFix, "代码理解": 1, "工程化": 0, "代码测试": 1, "代码重构": 1}
 }
 
 func (c DocumentCounts) ValidateDocument(content string) error {
@@ -60,16 +60,22 @@ func (c DocumentCounts) ValidateDocument(content string) error {
 	counts := map[string]int{}
 	difficultyCounts := map[string]int{}
 	heading := regexp.MustCompile(`^\s{0,3}(?:#{1,6}\s*)?(?:\*\*)?\s*(0-1代码生成|Feature迭代|代码理解|Bug修复|代码重构|工程化|代码测试)\s*(?:\*\*)?\s*$`)
-	item := regexp.MustCompile(`^\s*(?:[-*]\s+|\d+[.、)]\s+)【(简单|一般|困难|地狱)】\s*\S`)
+	item := regexp.MustCompile(`^\s*(?:[-*]\s+|\d+[.、)]\s+)【(简单|一般|困难|地狱)】\s*(\S.*)$`)
 	current := ""
+	prompts := make([]string, 0, c.Total())
 	for _, line := range strings.Split(content, "\n") {
 		if match := heading.FindStringSubmatch(line); len(match) > 1 {
 			current = match[1]
 			continue
 		}
-		if match := item.FindStringSubmatch(line); current != "" && len(match) > 1 {
+		if match := item.FindStringSubmatch(line); current != "" && len(match) > 2 {
 			counts[current]++
 			difficultyCounts[match[1]]++
+			promptText := strings.TrimSpace(match[2])
+			if err := ValidatePromptWritingQuality(promptText); err != nil {
+				return fmt.Errorf("生成文档的第 %d 条提示词文案不符合要求：%w", len(prompts)+1, err)
+			}
+			prompts = append(prompts, promptText)
 		}
 	}
 	for _, kind := range []string{"0-1代码生成", "Feature迭代", "Bug修复", "代码理解", "工程化", "代码测试", "代码重构"} {
@@ -82,6 +88,18 @@ func (c DocumentCounts) ValidateDocument(content string) error {
 	}
 	if difficultyCounts["一般"] != c.General || difficultyCounts["困难"] != c.Difficult {
 		return fmt.Errorf("生成文档的难度数量不符：要求一般 %d 条、困难 %d 条，实际一般 %d 条、困难 %d 条，请重新生成", c.General, c.Difficult, difficultyCounts["一般"], difficultyCounts["困难"])
+	}
+	for left := 0; left < len(prompts); left++ {
+		leftNormalized := normalizePromptWriting(prompts[left])
+		for right := left + 1; right < len(prompts); right++ {
+			rightNormalized := normalizePromptWriting(prompts[right])
+			if leftNormalized == rightNormalized {
+				return fmt.Errorf("生成文档的第 %d 条和第 %d 条提示词内容重复", left+1, right+1)
+			}
+			if len([]rune(leftNormalized)) >= 24 && len([]rune(rightNormalized)) >= 24 && promptWritingSimilarity(leftNormalized, rightNormalized) >= 0.86 {
+				return fmt.Errorf("生成文档的第 %d 条和第 %d 条提示词重复比例过高，不能只替换少量词语", left+1, right+1)
+			}
+		}
 	}
 	return nil
 }

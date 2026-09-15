@@ -271,6 +271,13 @@ export function SyncToolbar({
         <>
           <span className="mx-1 text-stone-300 dark:text-stone-700">·</span>
           <span className="text-red-500">错误 {customProjectImportResult.errorCount}</span>
+          {customProjectImportResult.details
+            .filter((detail) => detail.status === 'error')
+            .map((detail) => (
+              <span key={`${detail.name}:${detail.path}`} className="ml-1 text-red-500">
+                {detail.name}：{detail.message}
+              </span>
+            ))}
         </>
       )}
     </span>
@@ -422,8 +429,8 @@ export function CustomProjectPickerModal({
   const candidates = scanResult?.candidates ?? [];
   const prefixLabel = formatCustomProjectPrefixes(scanResult?.prefixes);
   const [selectedNames, setSelectedNames] = useState<string[]>([]);
-  const [quantities, setQuantities] = useState({ codeGen: '8', feature: '8', bugFix: '0' });
-  const [difficultyQuantities, setDifficultyQuantities] = useState({ general: '10', difficult: '10' });
+  const [quantities, setQuantities] = useState({ codeGen: '10', feature: '10', bugFix: '2' });
+  const [difficultyQuantities, setDifficultyQuantities] = useState({ general: '13', difficult: '12' });
   const counts: CustomPromptCounts = {
     codeGen: Number(quantities.codeGen),
     feature: Number(quantities.feature),
@@ -431,7 +438,7 @@ export function CustomProjectPickerModal({
     general: Number(difficultyQuantities.general),
     difficult: Number(difficultyQuantities.difficult),
   };
-  const totalCount = counts.codeGen + counts.feature + counts.bugFix + 4;
+  const totalCount = counts.codeGen + counts.feature + counts.bugFix + 3;
   const difficultyTotal = counts.general + counts.difficult;
   const allQuantityValues = [
     quantities.codeGen,
@@ -512,7 +519,7 @@ export function CustomProjectPickerModal({
                   />
                 </label>
               ))}
-              {['代码理解', '工程化', '代码测试', '代码重构'].map((label) => (
+              {['代码理解', '代码测试', '代码重构'].map((label) => (
                 <label key={label} className="text-xs text-stone-500">
                   {label}
                   <input type="number" value={1} disabled className="mt-1 w-full rounded-lg border border-stone-200 bg-stone-100 p-2 dark:border-stone-700 dark:bg-stone-800" />
@@ -535,7 +542,7 @@ export function CustomProjectPickerModal({
               </div>
             </div>
             <p className="mt-2 text-xs text-stone-500">
-              前三类可输入非负整数，填 0 表示不生成；其他四类固定各 1 题。
+              前三类可输入非负整数，填 0 表示不生成；其他三类固定各 1 题。
               {!validCountInputs
                 ? '请输入有效的非负整数。'
                 : difficultyAllocationMatches

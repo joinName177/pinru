@@ -47,6 +47,42 @@ func TestBuildSystemPromptUsesExpandedLengthGuidance(t *testing.T) {
 	}
 }
 
+func TestBuildSystemPromptCarriesNaturalWritingRedLines(t *testing.T) {
+	prompt := BuildSystemPrompt()
+	for _, want := range []string{"模板化表达", "语义换皮", "语句必须通顺完整", "必要的文件名"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("BuildSystemPrompt() missing natural-writing rule %q: %q", want, prompt)
+		}
+	}
+}
+
+func TestValidatePromptWritingQualityRejectsMachineWriting(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want string
+	}{
+		{"ai preface", "以下是为你生成的需求：会员到店后无法确认预约状态，需要补齐签到记录。", "模板化"},
+		{"decorative chain", "用户提交预约 → 管理员确认 → 系统更新状态。", "装饰符号"},
+		{"unfinished sentence", "会员到店后无法确认预约状态，同时还需要", "语句不完整"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidatePromptWritingQuality(test.text)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ValidatePromptWritingQuality() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestValidatePromptWritingQualityAcceptsNaturalTechnicalReferences(t *testing.T) {
+	text := "导入项目后，页面没有及时刷新已生成的任务。请保留 project.json 的现有字段，并确保重新打开页面时能看到最新结果。"
+	if err := ValidatePromptWritingQuality(text); err != nil {
+		t.Fatalf("ValidatePromptWritingQuality() rejected natural prompt with filename: %v", err)
+	}
+}
+
 func TestBuildUserPromptUsesZeroToOneTaskTypeAndNewLimit(t *testing.T) {
 	got := BuildUserPrompt(
 		TaskInfo{ProjectName: "PINRU"},

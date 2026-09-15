@@ -269,6 +269,70 @@ func TestCopyProjectDirectoryLeavesPlainSourceWithoutGitRepo(t *testing.T) {
 	}
 }
 
+func TestCopyProjectDirectorySkipsNodeModulesByDefault(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "source")
+	dst := filepath.Join(root, "copy")
+	packageDir := filepath.Join(src, "node_modules", ".pnpm", "demo@1.0.0", "node_modules", "demo")
+	if err := os.MkdirAll(packageDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(packageDir) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "README.md"), []byte("demo"), 0o644); err != nil {
+		t.Fatalf("WriteFile(README.md) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(packageDir, "index.js"), []byte("module.exports = {}"), 0o644); err != nil {
+		t.Fatalf("WriteFile(index.js) error = %v", err)
+	}
+	if err := os.Symlink(packageDir, filepath.Join(src, "node_modules", "demo")); err != nil {
+		t.Skipf("Symlink() unavailable: %v", err)
+	}
+
+	if err := CopyProjectDirectory(context.Background(), src, dst); err != nil {
+		t.Fatalf("CopyProjectDirectory() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "README.md")); err != nil {
+		t.Fatalf("expected source file to be copied, stat err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "node_modules")); !os.IsNotExist(err) {
+		t.Fatalf("node_modules should be skipped by default, stat err = %v", err)
+	}
+}
+
+func TestCopyProjectDirectoryPreservesSymbolicLinks(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "source")
+	dst := filepath.Join(root, "copy")
+	targetDir := filepath.Join(src, "packages", "shared")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(targetDir) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(targetDir, "README.md"), []byte("shared"), 0o644); err != nil {
+		t.Fatalf("WriteFile(README.md) error = %v", err)
+	}
+	if err := os.Symlink("shared", filepath.Join(src, "packages", "current")); err != nil {
+		t.Skipf("Symlink() unavailable: %v", err)
+	}
+
+	if err := CopyProjectDirectory(context.Background(), src, dst); err != nil {
+		t.Fatalf("CopyProjectDirectory() error = %v", err)
+	}
+	linkPath := filepath.Join(dst, "packages", "current")
+	info, err := os.Lstat(linkPath)
+	if err != nil {
+		t.Fatalf("Lstat(copied link) error = %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("copied path mode = %v, want symlink", info.Mode())
+	}
+	target, err := os.Readlink(linkPath)
+	if err != nil {
+		t.Fatalf("Readlink(copied link) error = %v", err)
+	}
+	if target != "shared" {
+		t.Fatalf("copied link target = %q, want %q", target, "shared")
+	}
+}
+
 func TestEnsureProjectGitignoreCreatesNodeDefaults(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"dev":"vite"}}`), 0o644); err != nil {
