@@ -189,6 +189,14 @@ function EvaluationCard({ evaluation, index }: { evaluation: AnnotationEvaluatio
           ) : <p className="mt-2 text-xs text-red-700/70 dark:text-red-300/70">无</p>}
         </div>
       </div>
+      {evaluation.limitations?.length ? (
+        <div className="mt-3 rounded-xl bg-blue-50 p-3 dark:bg-blue-950/20">
+          <p className="text-xs font-semibold text-blue-700 dark:text-blue-300">验证边界（不阻塞制表）</p>
+          <ul className="mt-2 space-y-1 text-xs text-blue-800 dark:text-blue-200">
+            {evaluation.limitations.map((item) => <li key={item}>{item}</li>)}
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
 }

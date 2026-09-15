@@ -74,6 +74,7 @@ type Evaluation struct {
 	OS                string              `json:"os"`
 	Evidence          []string            `json:"evidence"`
 	Missing           []string            `json:"missing"`
+	Limitations       []string            `json:"limitations,omitempty"`
 	RequirementChecks []RequirementCheck  `json:"requirementChecks,omitempty"`
 	Issues            []Issue             `json:"issues"`
 	NextPrompt        string              `json:"nextPrompt"`

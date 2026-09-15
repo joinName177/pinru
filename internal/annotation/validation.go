@@ -68,6 +68,11 @@ func ValidateEvaluation(round Round, evaluation Evaluation) error {
 			return fmt.Errorf("evaluation missing evidence %d must be specific", index+1)
 		}
 	}
+	for index, limitation := range evaluation.Limitations {
+		if strings.TrimSpace(limitation) == "" {
+			return fmt.Errorf("evaluation limitation %d must be specific", index+1)
+		}
+	}
 	if needsEvidence && len(evaluation.Missing) == 0 {
 		return fmt.Errorf("needs_evidence evaluation requires specific missing evidence")
 	}
