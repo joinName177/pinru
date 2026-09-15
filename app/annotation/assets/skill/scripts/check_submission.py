@@ -166,8 +166,8 @@ def inspect(path, manifest=None, selected=None, allow_draft=False):
                     value, kind, formula = cells.get(column, (None, "", False))
                     if value is None and allow_draft:
                         continue
-                    if kind != "n" or formula or not re.fullmatch(r"[1-5]", str(value)):
-                        flag(errors, location + ":" + column, "Score must be a numeric integer 1–5")
+                    if kind != "n" or formula or not re.fullmatch(r"[3-5]", str(value)):
+                        flag(errors, location + ":" + column, "Score must be a numeric integer 3–5")
                     else:
                         score_values.append(int(value))
                 if len(score_values) == 5 and sum(score_values) > 21:

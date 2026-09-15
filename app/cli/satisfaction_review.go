@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -114,10 +115,18 @@ func buildSatisfactionPrompt(req SatisfactionReviewRequest) string {
 	return fmt.Sprintf(`执行 coding-agent-satisfaction 的 integration review-only 模式。只返回 schema 要求的 JSON，不制表、不提交、不修改原始证据。
 先读 %s/references/integration-review-profile.md，再读 %s。优先读取材料中的 evidenceIndexPath（evidence-index.json）和 roundTracePath（round-trace.jsonl）；只有索引不足时才打开相关源码、完整轨迹或运行补充验证。
 只评价指定轮次，原始 Prompt 是验收范围。逐项输出 requirementChecks，再独立判断五维分数。已有轨迹明确记录相关验证通过且代码证据一致时，不重复安装依赖或重跑同一测试。
-五项必须先按证据和各自锚点独立定分，再计算总分。平台只收录总分不超过21的评价；总分超过21仍保存真实分数并保持证据完整，由应用标记为不收录。不得为了跨过21分门槛、凑提交数量、满足配额或迎合任何人而压低分数、虚构扣分或改写事实；收录资格不改变 status，证据完整时仍为 ready。
+五项有分数时只能填写3、4或5，合计不得超过21。先按证据完成初评；若合计超过21，必须在输出前重新检查轨迹中的需求理解、约束核对、步骤安排、判断修正、工具调用、失败恢复和验证覆盖，从真实可定位的过程不足中校准分数及依据。不得返回超过21的结果，不得把任何维度降到3以下，也不得机械减分、虚构问题或改写证据。
 非满分 descriptions 必须包含真实位置、实际行为、本维度负面判断和客观后果。descriptionChecks 恰有五项；满分项填空对象，非满分项填写 judgment、location、behavior、consequence，四段文字逐字出现在对应 description 正文。
 五格都用完整、通顺的自然中文，禁止“以下是”“作为 AI”等前言、机械总结、模板标签、用箭头串联自然语言、Emoji、反引号和未写完的句子。逐项比较后重写内容重复、文字重复比例过高或语义高度相似而只替换维度名和少量同义词的描述。文件名、路径、函数名、命令、参数和报错属于必要技术引用，必须原样保留为普通文本，不能为了调整文风而删除或改名。命令、代码和原始报错中的 ASCII 箭头（如 ->、=>）是必要技术信息，必须原样保留。
 功能完成可以有过程扣分。只有确认的需求遗漏、回归或未解决 Bug 才生成以“修复”开头的提示词；低分、过程问题和证据不足本身不生成修复提示词。修复提示词也必须是完整通顺的自然中文，不使用AI式前言、模板标签、装饰符号或机械总结，并保留定位问题所需的文件名、函数名和命令。只在 verification 副本中补充验证，禁止修改 source 项目。枚举字段只输出 schema 允许值，不追加解释。`, req.SkillDir, req.InputPath)
+}
+
+func buildSatisfactionCorrectionPrompt(req SatisfactionReviewRequest, previous []byte, reason string) string {
+	return fmt.Sprintf(`上一版审核结果不符合评分硬规则：%s。请重新读取 %s/references/integration-review-profile.md、%s、evidence-index.json 和 round-trace.jsonl，并重新返回完整 schema JSON。
+有分数的五个维度只能为3、4或5，五项齐全时总分不得超过21。请从轨迹和代码中复核真实、可定位的过程不足，校准相应分数、descriptions 与 descriptionChecks；每个非5分项仍须包含判断、位置、行为和客观后果。禁止机械减分、虚构问题或把评价助手自身环境问题归给被测模型。分数调整不等于代码存在Bug，只有确认的未完成需求、回归或轮末缺陷才生成以“修复”开头的 nextPrompt。只返回修正后的完整 JSON。
+
+上一版结果仅供定位需复核的字段：
+%s`, reason, req.SkillDir, req.InputPath, string(previous))
 }
 
 func buildLegacySatisfactionPrompt(req SatisfactionReviewRequest) string {
@@ -128,16 +137,16 @@ func buildLegacySatisfactionPrompt(req SatisfactionReviewRequest) string {
 材料清单顶层 taskType 是用户题卡的既定任务类型；有该字段时直接沿用，不根据本轮实现内容、难度或修复动作重新分类。Feature迭代在评分 JSON 中兼容写为 feature迭代，Excel 由应用按题卡原值导出。该类型规则优先于技能的一般自动分类规则，不影响对真实缺陷的判断或 nextPromptType。
 只能在本次评价目录的副本中验证，不得运行被测提示词，不得修复被测模型产物，不得连接原被测容器，不得推送或提交。原始证据只读，临时测试与修补放在独立验证副本中，并记录命令、退出状态、代码状态及结果。模型自报、原轨迹测试、评价助手复验、静态判断和未验证必须分开。
 若 round.captureId 为空，code 目录至多代表整个会话采集时状态，绝不能直接作为历史轮末产物。可基于 initial 与轨迹明确重建当轮副本，证据写明重建依据与验证；无法重建则对应维度留空并列具体缺项，不猜测，不用默认分补齐。
-交付完整性、指令遵循、任务规划、推理能力、执行能力各自按 1—5 锚点判断，分别写自然、具体的中文依据。规划不要求特定 TODO 工具或验收矩阵；没有固定形式不单独扣分。低分不等于数据无效，后轮成功不回改前轮分数。按任务实际需要检查入口、状态、持久化、返回结果和反馈，不能仅凭构建成功宣称业务通过。
-先按各维度证据独立确定五项分数，再计算总分。平台仅收录总分不超过21的记录；总分超过21时保留真实评分和 ready 状态，由应用排除正式导出。不得为跨过收录门槛、凑数量、配额或交差而把真实分数改低，也不得虚构扣分理由。
-评分后按 description-quality 逐格复核：每个 1—4 分描述都要说清本维度哪里不合适、具体行为与位置、证据支持的客观后果。只复述“未先读取、失败后补读”不够；只有证据表明步骤顺序安排遗漏前置条件时，才归为规划不足，不把单次工具失败自动升级为缺乏规划机制。执行不足直接写失败、补救动作或未覆盖的具体验证行为，不用“不算完全干净”等主观感受词。
+交付完整性、指令遵循、任务规划、推理能力、执行能力各自按3—5锚点判断，分别写自然、具体的中文依据。规划不要求特定 TODO 工具或验收矩阵；没有固定形式不单独扣分。低分不等于数据无效，后轮成功不回改前轮分数。按任务实际需要检查入口、状态、持久化、返回结果和反馈，不能仅凭构建成功宣称业务通过。
+五项初评后计算总分；超过21时必须回查真实轨迹中的过程不足，校准相应分数、descriptions 和 descriptionChecks 后再输出。不得返回超限结果，不得将单项降到3以下，也不得机械减分或虚构扣分理由。
+评分后按 description-quality 逐格复核：每个3—4分描述都要说清本维度哪里不合适、具体行为与位置、证据支持的客观后果。只复述“未先读取、失败后补读”不够；只有证据表明步骤顺序安排遗漏前置条件时，才归为规划不足，不把单次工具失败自动升级为缺乏规划机制。执行不足直接写失败、补救动作或未覆盖的具体验证行为，不用“不算完全干净”等主观感受词。
 缺少浏览器记录不自动扣分。根据实际需求与已有测试判断未覆盖哪项具体交互，只能写现有验证无法确认的行为，不能写成已发生的故障或泛泛的潜在运行时风险。仅因所提供材料缺失而无法判断时用 null 并列缺项。满分描述有正向依据，涉及已恢复的失误时须解释维度归属，不能留下分数与理由冲突。
 在同一次评价中完成事实核对和自然表达复读，缺少上述要素就回看证据重写；不能为保留低分而补造不足。每格写成一段连贯中文，直接说明本轮做了什么、哪里存在不足以及它带来的实际结果，不写分析提纲、日志清单或审计报告。五格不能统一套句、先夸后批，也不能用“综上所述”“总体而言”“因此给X分”等结尾。禁止“以下是”“作为 AI”等AI式前言、机械总结、反引号、Markdown 标题或列表、用箭头串联自然语言、Emoji、勾选图标，以及“触发节点：”“实际行为：”“证据：”“业务影响：”等固定标签；需要表达前后关系时改用正常中文连接句子。逐项比较五格，不得出现两格内容重复、文字重复比例过高、语义高度相似却只替换维度名或少量同义词的情况。每句话都要完整通顺，不保留成分残缺、搭配生硬或未写完的句子。
 文件名、路径、函数名、命令、参数、报错和关键数据都是必要技术引用，不得为了润色而删除、模糊或改名，也不能因为含英文或技术符号就判定为机器化表达。命令、代码和原始报错中的 ASCII 箭头（如 ->、=>）属于必要技术信息，必须原样保留；只有用来串联自然语言段落的箭头才需要改成正常中文连接。去掉的只是文件名等内容外层不必要的反引号和装饰符号，例如直接写 validation.go、ValidateEvaluation 和 go test ./internal/annotation。正文保留理解评分和定位问题所需的全部关键信息，只有与结论无关的冗长日志才放入 evidence。没有把后补验证归给模型，没有杜撰文件或测试。润色不得改变事实、分数、问题严重性和执行者归属，保留 AI 评价来源；不用不可靠的AI检测器分数代替逐句质量检查，也不伪造人工评价身份。
 scores/descriptions 顺序固定为上述五维。证据不足的分数用 null，并在 missing 写出对应维度与缺项，status=needs_evidence。ready 要求五项依据和可核查证据齐全。environment 依据实际项目可复现条件，不因使用 Docker CLI 就自动写可一键起环境；版本和系统依据原会话，不能用评价电脑环境回填。os 只能填写 MacOS/Linux、Windows 或空字符串，解释与不确定性写入 evidence、limitations 或 missing，不能写进 os。
-功能完成度、五维表现和是否需要代码修复分别判断。功能完成达标也可能有规划、推理或执行扣分，五维非满分不证明功能未完成。修复提示词只能基于代码与轨迹确认的原需求未完成、回归或未解决 Bug，不能为生成提示词而降低分数，也不能因低分强找问题。仅有 process/evidence 时保留真实分数和依据，nextPrompt 与 nextPromptType 留空；五维全满分时两项也必须为空。不需要填写不满意原因。提示词只写有证据的修复事项与预期结果，不扩展需求，不要求提高分数。缺证据时标记 needs_evidence 并列缺项，不把未知当缺陷。达到 10 个有效轮次后不再引导追加轮次，但确认 Bug 的修复建议仍保留供检查。issues.kind 分别用 bug/process/evidence。
+功能完成度、五维表现和是否需要代码修复分别判断。功能完成达标也可能有规划、推理或执行扣分，五维非满分不证明功能未完成。修复提示词只能基于代码与轨迹确认的原需求未完成、回归或未解决 Bug，不能为生成提示词而降低分数，也不能因低分强找问题。仅有 process/evidence 时保留评分依据，nextPrompt 与 nextPromptType 留空；没有确认的轮末 Bug 时两项也必须为空。不需要填写不满意原因。提示词只写有证据的修复事项与预期结果，不扩展需求，不要求提高分数。缺证据时标记 needs_evidence 并列缺项，不把未知当缺陷。达到 10 个有效轮次后不再引导追加轮次，但确认 Bug 的修复建议仍保留供检查。issues.kind 分别用 bug/process/evidence。
 每项负面描述必须在 descriptions 正文保留实际操作节点及工具调用，并引用相关文件名、函数名或命令，不能只放 evidence。验证遗漏须定位到有证据的具体阶段、实际检查命令及结果，说明未覆盖哪项原始需求；没有记录不能编成“构建通过后”或“提交前”。命令失败必须引用完整失败命令（关键参数及目标测试文件/脚本）、关键报错和实际恢复动作，凭据脱敏。仅写 node: bad option 或 npx tsc 不足；回读原工具调用核实，禁止把用户举例的命令当作事实。没有环境和当时可得信息的支持，不称为“可避免的失败”。缺少必要原文时撤回无证据指控或标明待补证据，不为保留低分补造命令、步骤号、文件或函数。润色后再次核对这些引用仍在描述正文中。
-先逐项复核原始提示词的功能要求、约束、验收条件及本轮变更引入的回归，将每项原需求及其结论写入 requirementChecks，再进行五维评分。requirement、status、evidence 均不能为空；status 只用 completed、failed、unverified。evidence 写具体文件、命令输出或静态依据，明确验证是原模型执行、评价助手复验还是静态判断。missing 只记录会阻止需求结论或五维评分成立的关键证据缺口；存在 missing 时 status 必须为 needs_evidence。limitations 记录不阻止现有结论成立的验证边界，例如已经由静态证据和自动化测试确认需求，但未补做真实设备或特定系统版本验证；limitations 可以与 ready 同时存在。failed 只用于有事实支持的轮末未完成项或未解决 Bug，并同步列入 issues.kind=bug；unverified 表示现有证据无法核实，不是 Bug，不得强行生成修复提示词，并将关键证据缺口具体写入 missing、status 标为 needs_evidence。若只有未验证项、没有已确认 Bug，交付完整性分数填 null；若同轮另有已确认的 failed/Bug，则可依据该 Bug 将交付完整性评为 1—4，同时保留 unverified、needs_evidence 和 missing。未验证项不强迫其他维度清空或降分。缺关键证据时不得以五维全 5 宣称逐项核验完成。已确认的轮末功能遗漏、新引入的功能问题和未解决 Bug 必须列入 issues.kind=bug，交付完整性按证据及锚点评为 1—4，其他维度独立评分。每个 Bug 都必须由具体修复建议覆盖，nextPrompt 正文必须以“修复”开头，后接问题、触发条件与预期结果，nextPromptType=Bug修复。五维全满分不得同时有未解决 Bug 或修复提示词。遇到矛盾必须回查证据重新评价，不能凑分、删掉真实问题或虚构验证。已恢复的过程错误和未知行为不能冒充 Bug。
+先逐项复核原始提示词的功能要求、约束、验收条件及本轮变更引入的回归，将每项原需求及其结论写入 requirementChecks，再进行五维评分。requirement、status、evidence 均不能为空；status 只用 completed、failed、unverified。evidence 写具体文件、命令输出或静态依据，明确验证是原模型执行、评价助手复验还是静态判断。missing 只记录会阻止需求结论或五维评分成立的关键证据缺口；存在 missing 时 status 必须为 needs_evidence。limitations 记录不阻止现有结论成立的验证边界，例如已经由静态证据和自动化测试确认需求，但未补做真实设备或特定系统版本验证；limitations 可以与 ready 同时存在。failed 只用于有事实支持的轮末未完成项或未解决 Bug，并同步列入 issues.kind=bug；unverified 表示现有证据无法核实，不是 Bug，不得强行生成修复提示词，并将关键证据缺口具体写入 missing、status 标为 needs_evidence。若只有未验证项、没有已确认 Bug，交付完整性分数填 null；若同轮另有已确认的 failed/Bug，则可依据该 Bug 将交付完整性评为3—4，同时保留 unverified、needs_evidence 和 missing。未验证项不强迫其他维度清空或降分。缺关键证据时不得宣称逐项核验完成。已确认的轮末功能遗漏、新引入的功能问题和未解决 Bug 必须列入 issues.kind=bug，交付完整性按证据及锚点评为3—4，其他维度独立评分。每个 Bug 都必须由具体修复建议覆盖，nextPrompt 正文必须以“修复”开头，后接问题、触发条件与预期结果，nextPromptType=Bug修复。遇到矛盾必须回查证据重新评价，不能凑分、删掉真实问题或虚构验证。已恢复的过程错误和未知行为不能冒充 Bug。
 规划低分不能仅写“中途构建失败，随后修复”：必须引用真实阶段/步骤、工具调用及文件或完整命令，并指出该处计划、依赖顺序或状态追踪的独立不足与后果；如果只能证明编辑执行错误，不能借此给规划扣分，也不能编造步骤编号。命令原文须与同一次工具返回逐项配对，含实际参数及测试脚本，不能用 node: bad option 加 npx tsc 替代完整失败上下文。
 所有失败先确认执行者及原因。评价助手在独立副本未装依赖导致的构建失败，记录到 evidence/验证说明，不属于原模型执行不足，不据此降为 4，也不能混进满分描述让读者误认为原模型构建失败。满分依据写原模型实际操作及原轨迹结果；若需提复验环境限制，明确双方行为和证据归属。模型自己造成且构成执行不足的错误，不能因为后来修好就自动给执行满分；合理诊断、预期失败用例、环境故障不自动扣分。5 分描述出现失败、错误、遗漏或返工时逐条核对执行者、原因和维度归属，不以删掉负面文字代替重评，不按关键词机械扣分。无法解释的矛盾回查重写，缺必要证据时标明缺项。
 推理非满分必须定位到具体判断或验证步骤，引用实际测试命令、测试文件/用例或函数及对应输出，写清模型当时可见的判断与操作、该判断违反的需求或遗漏的条件、产生的客观结果。不能只写“从测试输出中识别出空文本返回结果不合理”。涉及空输入等边界时，保留真实输入条件、实际返回值/行为、有需求依据的预期结果及差异；静态推断须明确标注，不编造测试、返回值或内部思考。正确发现并修复问题本身不能单独支撑推理扣分；需有此前理解、条件推导、根因判断或无效试错的独立证据。没有证据时回读事件，扣分不成立则按锚点重评，必要材料缺失则列缺项，不为保留旧分补造事实。
@@ -154,7 +163,7 @@ func satisfactionSchema() map[string]any {
 	}}
 	props := map[string]any{
 		"status":            map[string]any{"type": "string", "enum": []string{"ready", "needs_evidence"}},
-		"scores":            map[string]any{"type": "array", "minItems": 5, "maxItems": 5, "items": map[string]any{"type": []string{"integer", "null"}, "minimum": 1, "maximum": 5}},
+		"scores":            map[string]any{"type": "array", "minItems": 5, "maxItems": 5, "items": map[string]any{"type": []string{"integer", "null"}, "minimum": 3, "maximum": 5}},
 		"descriptions":      map[string]any{"type": "array", "minItems": 5, "maxItems": 5, "items": map[string]any{"type": "string", "description": "一段自然连贯的中文评价；保留文件名、路径、函数名、命令、关键数据及其中的 ASCII 箭头，不使用 Markdown、自然语言箭头串联、Emoji、固定标签或评分套话"}},
 		"descriptionChecks": map[string]any{"type": "array", "minItems": 5, "maxItems": 5, "items": check},
 		"taskType":          enum("Bug修复", "0-1代码生成", "feature迭代", "代码理解", "代码重构", "工程化", "代码测试"),
@@ -180,52 +189,85 @@ func (s *CliService) RunSatisfactionReview(ctx context.Context, req Satisfaction
 		return nil, err
 	}
 	schemaPath := filepath.Join(req.WorkDir, "evaluation-schema.json")
-	outPath := filepath.Join(req.WorkDir, "evaluation.json")
 	if err := os.WriteFile(schemaPath, schema, 0600); err != nil {
 		return nil, err
 	}
-	args := []string{"exec", "-", "-C", req.WorkDir, "--sandbox", "workspace-write", "-c", `approval_policy="never"`, "--skip-git-repo-check", "--output-schema", schemaPath, "-o", outPath, "--ephemeral", "--json"}
-	if strings.TrimSpace(req.Model) != "" {
-		args = append(args, "-m", req.Model)
-	}
-	cmd := exec.CommandContext(ctx, binary, args...)
-	cmd.Dir = req.WorkDir
+	var commandEnv []string
+	var cleanup func()
 	if req.DeepSeek != nil {
-		codexHome, cleanup, err := prepareDeepSeekCodexHome(*req.DeepSeek)
+		codexHome, cleanupHome, err := prepareDeepSeekCodexHome(*req.DeepSeek)
 		if err != nil {
 			return nil, err
 		}
-		defer cleanup()
-		cmd.Env = applyEnvOverrides(os.Environ(), map[string]string{"CODEX_HOME": codexHome})
+		cleanup = cleanupHome
+		commandEnv = applyEnvOverrides(os.Environ(), map[string]string{"CODEX_HOME": codexHome})
 	}
-	cmd.Stdin = strings.NewReader(buildSatisfactionPrompt(req))
-	cmd.WaitDelay = 5_000_000_000
+	if cleanup != nil {
+		defer cleanup()
+	}
 	logFile, err := os.OpenFile(filepath.Join(req.WorkDir, "evaluator.log"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return nil, err
 	}
 	defer logFile.Close()
 	writer := &satisfactionLogWriter{file: logFile, onLine: onLine}
-	cmd.Stdout = writer
-	cmd.Stderr = &satisfactionLogWriter{file: logFile}
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+	prompt := buildSatisfactionPrompt(req)
+	const maxScoreReviewAttempts = 3
+	for attempt := 1; attempt <= maxScoreReviewAttempts; attempt++ {
+		outPath := filepath.Join(req.WorkDir, fmt.Sprintf("evaluation-attempt-%d.json", attempt))
+		args := []string{"exec", "-", "-C", req.WorkDir, "--sandbox", "workspace-write", "-c", `approval_policy="never"`, "--skip-git-repo-check", "--output-schema", schemaPath, "-o", outPath, "--ephemeral", "--json"}
+		if strings.TrimSpace(req.Model) != "" {
+			args = append(args, "-m", req.Model)
 		}
-		return nil, fmt.Errorf("五维审核执行失败（详情见 %s）：%w", filepath.Join(req.WorkDir, "evaluator.log"), err)
+		cmd := exec.CommandContext(ctx, binary, args...)
+		cmd.Dir = req.WorkDir
+		cmd.Env = commandEnv
+		cmd.Stdin = strings.NewReader(prompt)
+		cmd.WaitDelay = 5_000_000_000
+		cmd.Stdout = writer
+		cmd.Stderr = &satisfactionLogWriter{file: logFile}
+		if err := cmd.Run(); err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			return nil, fmt.Errorf("五维审核执行失败（详情见 %s）：%w", filepath.Join(req.WorkDir, "evaluator.log"), err)
+		}
+		raw, err := os.ReadFile(outPath)
+		if err != nil {
+			return nil, err
+		}
+		evaluation, err := decodeSatisfactionEvaluation(raw)
+		if err != nil {
+			return nil, err
+		}
+		reason := satisfactionScoreViolation(evaluation)
+		if reason == "" {
+			if err := os.WriteFile(filepath.Join(req.WorkDir, "evaluation.json"), bytes.TrimSpace(raw), 0600); err != nil {
+				return nil, err
+			}
+			return evaluation, nil
+		}
+		if attempt == maxScoreReviewAttempts {
+			return nil, fmt.Errorf("审核模型连续%d次未按证据完成21分以内的评分复核", maxScoreReviewAttempts)
+		}
+		if onLine != nil {
+			onLine("评分超出3至5分或总分21分上限，正在基于证据自动复核")
+		}
+		prompt = buildSatisfactionCorrectionPrompt(req, bytes.TrimSpace(raw), reason)
 	}
-	raw, err := os.ReadFile(outPath)
-	if err != nil {
-		return nil, err
-	}
+	return nil, errors.New("五维审核未产生结果")
+}
+
+func decodeSatisfactionEvaluation(raw []byte) (*domain.Evaluation, error) {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 {
 		return nil, fmt.Errorf("审核未返回结构化评价")
 	}
-	raw, err = unwrapJSONCodeFence(raw)
+	unwrapped, err := unwrapJSONCodeFence(raw)
 	if err != nil {
 		return nil, fmt.Errorf("评分 JSON 无效：%w", err)
 	}
+	raw = unwrapped
 	var shape struct {
 		Scores            []json.RawMessage `json:"scores"`
 		Descriptions      []json.RawMessage `json:"descriptions"`
@@ -250,6 +292,28 @@ func (s *CliService) RunSatisfactionReview(ctx context.Context, req Satisfaction
 		return nil, fmt.Errorf("评分 JSON 包含多余内容")
 	}
 	return &eval, nil
+}
+
+func satisfactionScoreViolation(evaluation *domain.Evaluation) string {
+	if evaluation == nil {
+		return "审核结果为空"
+	}
+	total := 0
+	complete := true
+	for index, score := range evaluation.Scores {
+		if score == nil {
+			complete = false
+			continue
+		}
+		if *score < domain.MinCollectableDimensionScore || *score > 5 {
+			return fmt.Sprintf("第%d维分数为%d，允许范围是3至5", index+1, *score)
+		}
+		total += *score
+	}
+	if complete && total > domain.MaxCollectableScoreTotal {
+		return fmt.Sprintf("五维总分为%d，超过%d", total, domain.MaxCollectableScoreTotal)
+	}
+	return ""
 }
 
 func unwrapJSONCodeFence(raw []byte) ([]byte, error) {

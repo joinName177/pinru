@@ -109,7 +109,7 @@ func (s *AnnotationService) reviewLocked(ctx context.Context, req ReviewRequest)
 			if e.EvidenceHash != r.EvidenceHash {
 				continue
 			}
-			if e.EvidenceHash == r.EvidenceHash && e.SkillHash == skillHash && e.Model == reviewExecution.Label && e.Status == "ready" && e.SourceHash == stableKey(cap.Hash+":"+cap.TraceHash) {
+			if e.EvidenceHash == r.EvidenceHash && e.SkillHash == skillHash && e.Model == reviewExecution.Label && domain.IsCollectableEvaluation(e) && e.SourceHash == stableKey(cap.Hash+":"+cap.TraceHash) {
 				if err := verifyReviewArtifacts(ctx, e); err != nil {
 					return nil, err
 				}

@@ -169,37 +169,39 @@ func (s *AnnotationService) ListCases(projectID string) ([]domain.Case, error) {
 			return nil, err
 		}
 		c.Preparation = preparations[task.ID]
-		for ri := range c.Rounds {
-			r := &c.Rounds[ri]
-			var sourceHash string
-			for _, cap := range c.Captures {
-				if cap.ID == r.CaptureID {
-					sourceHash = stableKey(cap.Hash + ":" + cap.TraceHash)
-					break
-				}
-			}
-			// Earlier rounds captured together use the same reconstruction evidence
-			// as reviewLocked; this does not assert an exact historical code state.
-			if sourceHash == "" && len(c.Captures) > 0 {
-				cap := c.Captures[len(c.Captures)-1]
-				sourceHash = stableKey(cap.Hash + ":" + cap.TraceHash)
-			}
-			for ei := range r.Evaluations {
-				e := &r.Evaluations[ei]
-				// A completed table record remains exportable when the configured
-				// evaluator model changes. Model identity is retained for audit and
-				// review-cache decisions; freshness here describes the frozen
-				// evidence and scoring-rule version shown on the task card.
-				current := e.SkillHash == skillHash && e.EvidenceHash == r.EvidenceHash && sourceHash != "" && e.SourceHash == sourceHash
-				if modelErr == nil {
-					current = current && e.Model == reviewExecution.Label
-				}
-				e.Current = &current
-			}
-		}
+		markEvaluationFreshness(c, skillHash, reviewExecution.Label, modelErr == nil)
 		result = append(result, *c)
 	}
 	return result, nil
+}
+
+func markEvaluationFreshness(c *domain.Case, skillHash, reviewLabel string, requireModel bool) {
+	for ri := range c.Rounds {
+		r := &c.Rounds[ri]
+		var sourceHash string
+		for _, cap := range c.Captures {
+			if cap.ID == r.CaptureID {
+				sourceHash = stableKey(cap.Hash + ":" + cap.TraceHash)
+				break
+			}
+		}
+		// Earlier rounds captured together use the same reconstruction evidence
+		// as reviewLocked; this does not assert an exact historical code state.
+		if sourceHash == "" && len(c.Captures) > 0 {
+			cap := c.Captures[len(c.Captures)-1]
+			sourceHash = stableKey(cap.Hash + ":" + cap.TraceHash)
+		}
+		for ei := range r.Evaluations {
+			e := &r.Evaluations[ei]
+			// Model identity remains part of review-cache freshness even though a
+			// completed record keeps its audit metadata after configuration changes.
+			current := e.SkillHash == skillHash && e.EvidenceHash == r.EvidenceHash && sourceHash != "" && e.SourceHash == sourceHash
+			if requireModel {
+				current = current && e.Model == reviewLabel
+			}
+			e.Current = &current
+		}
+	}
 }
 
 // PrepareCase establishes the initial snapshot before a container is bound.

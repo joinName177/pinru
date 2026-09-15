@@ -16,6 +16,24 @@ func TestValidateEvaluationAcceptsFiveIndependentReadyScores(t *testing.T) {
 	}
 }
 
+func TestValidateEvaluationRejectsReadyScoresOutsideCollectionBand(t *testing.T) {
+	round := Round{PromptID: "p-1", EvidenceHash: "evidence-hash"}
+
+	belowMinimum := validEvaluation("evidence-hash")
+	two := 2
+	belowMinimum.Scores[1] = &two
+	if err := ValidateEvaluation(round, belowMinimum); err == nil || !strings.Contains(err.Error(), "3 to 5") {
+		t.Fatalf("score below three error = %v, want 3 to 5 rejection", err)
+	}
+
+	overLimit := validEvaluation("evidence-hash")
+	five := 5
+	overLimit.Scores = [5]*int{&five, &five, &five, &five, &five}
+	if err := ValidateEvaluation(round, overLimit); err == nil || !strings.Contains(err.Error(), "exceeds 21") {
+		t.Fatalf("score total above 21 error = %v, want score ceiling rejection", err)
+	}
+}
+
 func TestValidateEvaluationAcceptsLegacyRecordWithoutRequirementChecks(t *testing.T) {
 	round := Round{PromptID: "p-1", EvidenceHash: "evidence-hash"}
 	evaluation := validEvaluation("evidence-hash")
@@ -73,6 +91,7 @@ func TestValidateEvaluationRequiresConcreteDescriptionChecksBelowFive(t *testing
 	evaluation := validEvaluation("evidence-hash")
 	evaluation.Scores[2] = &four
 	evaluation.QualityVersion = 2
+	evaluation.DescriptionChecks[2] = DescriptionCheck{}
 	evaluation.Descriptions[2] = "规划阶段存在遗漏。"
 	if err := ValidateEvaluation(round, evaluation); err == nil || !strings.Contains(err.Error(), "description check 3") {
 		t.Fatalf("ValidateEvaluation() error = %v, want structured description evidence error", err)
@@ -188,12 +207,15 @@ func TestValidateEvaluationRejectsBadEnumsScoreAndEvidenceMismatch(t *testing.T)
 func TestValidateEvaluationRejectsSimpleScoreDescriptionContradictions(t *testing.T) {
 	round := Round{PromptID: "p-1", EvidenceHash: "round-hash"}
 	evaluation := validEvaluation("round-hash")
+	five := 5
+	four := 4
+	evaluation.Scores[0] = &four
+	evaluation.Scores[4] = &five
 	evaluation.Descriptions[4] = "执行过程中遗漏了一个边界，因此扣1分。"
 	if err := ValidateEvaluation(round, evaluation); err == nil || !strings.Contains(err.Error(), "contradict") {
 		t.Fatalf("score 5 contradiction error = %v", err)
 	}
 
-	four := 4
 	evaluation = validEvaluation("round-hash")
 	evaluation.Scores[0] = &four
 	evaluation.Descriptions[0] = "所有交付均完整，无任何问题。"
@@ -306,11 +328,11 @@ func TestValidateEvaluationRejectsMachineWrittenRepairPrompt(t *testing.T) {
 	}
 }
 
-func TestPreflightCountsLowScoredReadyRoundsAndBlocksIncompleteMaterial(t *testing.T) {
+func TestPreflightCountsMinimumScoredReadyRoundsAndBlocksIncompleteMaterial(t *testing.T) {
 	sha := strings.Repeat("a", 40)
 	evaluation := validEvaluation("trace-hash")
-	one := 1
-	evaluation.Scores[0] = &one
+	three := 3
+	evaluation.Scores[0] = &three
 	evaluation.Descriptions[0] = "交付缺少关键实现，证据见产物差异。"
 	cases := []Case{{
 		TaskID: "task-1", ProjectID: "project-1", Completed: true,
@@ -331,7 +353,7 @@ func TestPreflightCountsLowScoredReadyRoundsAndBlocksIncompleteMaterial(t *testi
 	}
 }
 
-func TestPreflightCollectsTwentyOneButKeepsTruthfulTwentyTwoOut(t *testing.T) {
+func TestPreflightCollectsTwentyOneAndRejectsLegacyTwentyTwo(t *testing.T) {
 	sha := strings.Repeat("a", 40)
 	makeCase := func(taskID string, scores [5]int) Case {
 		evaluation := validEvaluation("trace-hash-" + taskID)
@@ -352,8 +374,8 @@ func TestPreflightCollectsTwentyOneButKeepsTruthfulTwentyTwoOut(t *testing.T) {
 
 	report := Preflight(cases)
 
-	if report.Ready != 1 || report.NotCollected != 1 || len(report.Issues) != 0 {
-		t.Fatalf("Preflight() = %#v, want one collectable and one truthful over-limit evaluation", report)
+	if report.Ready != 1 || report.NotCollected != 0 || !containsIssue(report.Issues, "exceeds 21") {
+		t.Fatalf("Preflight() = %#v, want one collectable and one invalid legacy over-limit evaluation", report)
 	}
 	got := make([]int, 0, 5)
 	for _, score := range cases[1].Rounds[0].Evaluations[0].Scores {
@@ -418,12 +440,26 @@ func TestPreflightRequiresFrozenCaptureDirectoryAndArtifacts(t *testing.T) {
 
 func validEvaluation(evidenceHash string) Evaluation {
 	five := 5
+	four := 4
 	return Evaluation{
 		ID: "eval-1", CreatedAt: 10, SkillHash: "skill-hash", Model: "model",
 		EvidenceHash: evidenceHash, Status: "ready",
-		Scores:       [5]*int{&five, &five, &five, &five, &five},
-		Descriptions: [5]string{"交付完整。", "遵循指令。", "规划合理。", "推理准确。", "执行有效。"},
-		TaskType:     "feature迭代", Difficulty: "中等", Language: "Go",
+		Scores: [5]*int{&five, &four, &four, &four, &four},
+		Descriptions: [5]string{
+			"交付完整。",
+			"在第1轮核对用户约束时，指令覆盖仍有轻微遗漏，模型没有逐项说明边界条件，导致约束对应关系不够清晰。",
+			"在第1轮开始实现前，规划拆解不够具体，模型没有列出验证步骤，导致完成路径缺少明确检查节点。",
+			"在第1轮分析实现条件时，推理覆盖存在轻微不足，模型没有说明次要边界，导致部分判断依据未被明确记录。",
+			"在第1轮交付前的验证环节，执行覆盖存在轻微不足，模型只完成主要检查，导致次要场景没有留下验证记录。",
+		},
+		DescriptionChecks: [5]DescriptionCheck{
+			{},
+			{Judgment: "指令覆盖仍有轻微遗漏", Location: "第1轮核对用户约束时", Behavior: "模型没有逐项说明边界条件", Consequence: "导致约束对应关系不够清晰"},
+			{Judgment: "规划拆解不够具体", Location: "第1轮开始实现前", Behavior: "模型没有列出验证步骤", Consequence: "导致完成路径缺少明确检查节点"},
+			{Judgment: "推理覆盖存在轻微不足", Location: "第1轮分析实现条件时", Behavior: "模型没有说明次要边界", Consequence: "导致部分判断依据未被明确记录"},
+			{Judgment: "执行覆盖存在轻微不足", Location: "第1轮交付前的验证环节", Behavior: "模型只完成主要检查", Consequence: "导致次要场景没有留下验证记录"},
+		},
+		TaskType: "feature迭代", Difficulty: "中等", Language: "Go",
 		Environment: "无外部依赖", HarnessVersion: "2.1.0", OS: "MacOS/Linux",
 		Evidence: []string{"trace.jsonl:1-4", "code/tree"},
 	}

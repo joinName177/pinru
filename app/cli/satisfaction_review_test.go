@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	annotation "github.com/blueship581/pinru/internal/annotation"
 )
 
 func TestSatisfactionPromptKeepsFiveDimensionRulesAndEvidenceBoundaries(t *testing.T) {
@@ -50,6 +52,43 @@ func TestSatisfactionSchemaRequiresExactScoreAndDescriptionCounts(t *testing.T) 
 	requirementChecks := props["requirementChecks"].(map[string]any)
 	if requirementChecks["minItems"] != 1 {
 		t.Fatalf("requirementChecks minItems = %#v, want 1", requirementChecks["minItems"])
+	}
+}
+
+func TestSatisfactionSchemaRestrictsScoresToThreeThroughFive(t *testing.T) {
+	schema := satisfactionSchema()
+	props := schema["properties"].(map[string]any)
+	scores := props["scores"].(map[string]any)
+	items := scores["items"].(map[string]any)
+	if items["minimum"] != 3 || items["maximum"] != 5 {
+		t.Fatalf("score bounds = %#v..%#v, want 3..5", items["minimum"], items["maximum"])
+	}
+}
+
+func TestRunSatisfactionReviewAutomaticallyRechecksScoreTotalAboveTwentyOne(t *testing.T) {
+	workDir := t.TempDir()
+	first := reviewJSONWithScores(t, [5]int{5, 5, 5, 5, 5})
+	second := reviewJSONWithScores(t, [5]int{5, 4, 4, 4, 4})
+	counter := filepath.Join(t.TempDir(), "attempts")
+	binary := writeFakeCodex(t, fakeCodexWritesReviewSequence(t, counter, first, second))
+	service := NewWithResolver(func(string) (string, error) { return binary, nil })
+
+	evaluation, err := service.RunSatisfactionReview(context.Background(), SatisfactionReviewRequest{
+		WorkDir: workDir, SkillDir: filepath.Join(workDir, "skill"), InputPath: filepath.Join(workDir, "input.json"),
+	}, nil)
+	if err != nil {
+		t.Fatalf("RunSatisfactionReview() error = %v", err)
+	}
+	total, complete := annotationScoreTotal(evaluation)
+	if !complete || total != 21 {
+		t.Fatalf("corrected score total = %d, complete=%v, want 21", total, complete)
+	}
+	attempts, err := os.ReadFile(counter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(attempts)) != "2" {
+		t.Fatalf("attempt count = %q, want 2", attempts)
 	}
 }
 
@@ -102,7 +141,7 @@ func TestRunSatisfactionReviewAcceptsExactlyFiveItemsAndRejectsFourOrSix(t *test
 				if err != nil {
 					t.Fatalf("RunSatisfactionReview() error = %v", err)
 				}
-				if evaluation == nil || evaluation.Scores[4] == nil || *evaluation.Scores[4] != 5 || evaluation.Descriptions[4] != "dimension 5" {
+				if evaluation == nil || evaluation.Scores[4] == nil || *evaluation.Scores[4] != 4 || evaluation.Descriptions[4] != "dimension 5" {
 					t.Fatalf("evaluation = %#v", evaluation)
 				}
 				return
@@ -179,7 +218,7 @@ func TestRunSatisfactionReviewAcceptsSingleJSONCodeFence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunSatisfactionReview() error = %v", err)
 	}
-	if evaluation == nil || evaluation.Status != "ready" || evaluation.Scores[4] == nil || *evaluation.Scores[4] != 5 {
+	if evaluation == nil || evaluation.Status != "ready" || evaluation.Scores[4] == nil || *evaluation.Scores[4] != 4 {
 		t.Fatalf("evaluation = %#v", evaluation)
 	}
 }
@@ -265,8 +304,11 @@ func validReviewJSON(t *testing.T, count int) string {
 	scores := make([]int, count)
 	descriptions := make([]string, count)
 	for index := 0; index < count; index++ {
-		scores[index] = 5
+		scores[index] = 4
 		descriptions[index] = fmt.Sprintf("dimension %d", index+1)
+	}
+	if count > 0 {
+		scores[0] = 5
 	}
 	payload := map[string]any{
 		"status": "ready", "scores": scores, "descriptions": descriptions,
@@ -282,6 +324,34 @@ func validReviewJSON(t *testing.T, count int) string {
 		t.Fatal(err)
 	}
 	return string(raw)
+}
+
+func reviewJSONWithScores(t *testing.T, scores [5]int) string {
+	t.Helper()
+	var document map[string]any
+	if err := json.Unmarshal([]byte(validReviewJSON(t, 5)), &document); err != nil {
+		t.Fatal(err)
+	}
+	document["scores"] = []int{scores[0], scores[1], scores[2], scores[3], scores[4]}
+	raw, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+func annotationScoreTotal(evaluation *annotation.Evaluation) (int, bool) {
+	if evaluation == nil {
+		return 0, false
+	}
+	total := 0
+	for _, score := range evaluation.Scores {
+		if score == nil {
+			return 0, false
+		}
+		total += *score
+	}
+	return total, true
 }
 
 func fakeCodexWritesReview(t *testing.T, payload, stdout, stderr string) string {
@@ -300,6 +370,37 @@ func fakeCodexWritesReview(t *testing.T, payload, stdout, stderr string) string 
 		`printf '%s\n' ` + shellSingleQuote(stdout),
 		`printf '%s\n' ` + shellSingleQuote(stderr) + ` >&2`,
 	}, "\n") + "\n"
+}
+
+func fakeCodexWritesReviewSequence(t *testing.T, counter string, payloads ...string) string {
+	t.Helper()
+	fixtures := make([]string, len(payloads))
+	for index, payload := range payloads {
+		fixture := filepath.Join(t.TempDir(), fmt.Sprintf("evaluation-%d.json", index+1))
+		if err := os.WriteFile(fixture, []byte(payload), 0600); err != nil {
+			t.Fatal(err)
+		}
+		fixtures[index] = fixture
+	}
+	lines := []string{
+		`out=""`,
+		`while [ "$#" -gt 0 ]; do`,
+		`  if [ "$1" = "-o" ]; then shift; out="$1"; fi`,
+		`  shift`,
+		`done`,
+		`attempt=1`,
+		`if [ -f ` + shellSingleQuote(counter) + ` ]; then attempt=$(($(cat ` + shellSingleQuote(counter) + `) + 1)); fi`,
+		`printf '%s\n' "$attempt" > ` + shellSingleQuote(counter),
+	}
+	for index, fixture := range fixtures {
+		keyword := "elif"
+		if index == 0 {
+			keyword = "if"
+		}
+		lines = append(lines, fmt.Sprintf(`%s [ "$attempt" -eq %d ]; then cp %s "$out"`, keyword, index+1, shellSingleQuote(fixture)))
+	}
+	lines = append(lines, `else cp `+shellSingleQuote(fixtures[len(fixtures)-1])+` "$out"`, `fi`)
+	return strings.Join(lines, "\n") + "\n"
 }
 
 func writeFakeCodex(t *testing.T, body string) string {

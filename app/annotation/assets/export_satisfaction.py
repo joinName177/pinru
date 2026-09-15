@@ -147,8 +147,8 @@ def _validate_evaluation(evaluation, scope):
         issues.append(_issue(scope, "evaluation scores must contain five integers"))
     else:
         for index, score in enumerate(scores, 1):
-            if isinstance(score, bool) or not isinstance(score, int) or not 1 <= score <= 5:
-                issues.append(_issue(scope, f"evaluation score {index} must be an integer from 1 to 5"))
+            if isinstance(score, bool) or not isinstance(score, int) or not 3 <= score <= 5:
+                issues.append(_issue(scope, f"evaluation score {index} must be an integer from 3 to 5"))
     prompt = _as_text(evaluation.get("nextPrompt")).strip()
     prompt_type = _as_text(evaluation.get("nextPromptType")).strip()
     if scores == [5, 5, 5, 5, 5] and (prompt or prompt_type):
@@ -157,7 +157,7 @@ def _validate_evaluation(evaluation, scope):
     if not has_bug and (prompt or prompt_type):
         issues.append(_issue(scope, "修复提示词缺少已确认的代码问题依据，不能仅因低分生成，请重新审核"))
     if has_bug:
-        if not isinstance(scores, list) or not scores or type(scores[0]) is not int or not 1 <= scores[0] < 5:
+        if not isinstance(scores, list) or not scores or type(scores[0]) is not int or not 3 <= scores[0] < 5:
             issues.append(_issue(scope, "存在功能遗漏或 Bug，交付完整性必须低于 5 分，请重新审核"))
         if not prompt.startswith("修复") or not prompt[2:].strip() or prompt_type != "Bug修复":
             issues.append(_issue(scope, "Bug 必须有以“修复”开头的具体修复提示词，请重新审核"))
@@ -198,7 +198,7 @@ def _evaluation_score_total(evaluation):
     scores = evaluation.get("scores")
     if not isinstance(scores, list) or len(scores) != 5:
         return None
-    if any(isinstance(score, bool) or not isinstance(score, int) or not 1 <= score <= 5 for score in scores):
+    if any(isinstance(score, bool) or not isinstance(score, int) or not 3 <= score <= 5 for score in scores):
         return None
     return sum(scores)
 
@@ -386,7 +386,7 @@ def _row_values(batch, case, round_item, evaluation, trace_relative, draft, over
     raw_scores = evaluation.get("scores", []) if has_evaluation else []
     raw_descriptions = evaluation.get("descriptions", []) if has_evaluation else []
     scores = [
-        score if isinstance(score, int) and not isinstance(score, bool) and 1 <= score <= 5 else None
+        score if isinstance(score, int) and not isinstance(score, bool) and 3 <= score <= 5 else None
         for score in raw_scores[:5]
     ]
     scores.extend([None] * (5 - len(scores)))

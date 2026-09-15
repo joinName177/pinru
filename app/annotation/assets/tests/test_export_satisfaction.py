@@ -176,7 +176,7 @@ class ExportSatisfactionTests(unittest.TestCase):
         capture_b = self.capture("capture-b")
         stale = self.evaluation("old-hash", scores=[5, 5, 5, 5, 5])
         first_match = self.evaluation("hash-a", scores=[4, 4, 4, 4, 4])
-        latest_match = self.evaluation("hash-a", scores=[2, 3, 4, 5, 1])
+        latest_match = self.evaluation("hash-a", scores=[3, 3, 4, 5, 3])
         first = self.round("prompt-a", "capture-a", 1, prompt="first failed attempt", evidence_hash="hash-a", evaluations=[stale, first_match, latest_match])
         second = self.round("prompt-b", "capture-b", 2, prompt="later success", session_id="session-2")
         cases = [self.case("task-b", [second], [capture_b]), self.case("task-a", [first], [capture_a])]
@@ -193,7 +193,7 @@ class ExportSatisfactionTests(unittest.TestCase):
         workbook = openpyxl.load_workbook(result["outputPath"], data_only=False)
         sheet = workbook.active
         self.assertEqual([sheet.cell(row, 1).value for row in (2, 3)], ["first failed attempt", "later success"])
-        self.assertEqual([sheet.cell(2, col).value for col in (13, 15, 17, 19, 21)], [2, 3, 4, 5, 1])
+        self.assertEqual([sheet.cell(2, col).value for col in (13, 15, 17, 19, 21)], [3, 3, 4, 5, 3])
         copied_capture = self.attachment_root(output, "task-a", "capture-a")
         self.assertTrue((copied_capture / "trace" / "subagents" / "child.jsonl").is_file())
         self.assertEqual(sheet["E2"].value, str((copied_capture / "trace" / "session.jsonl").resolve()))
@@ -396,6 +396,27 @@ class ExportSatisfactionTests(unittest.TestCase):
 
         self.assertNotEqual(checked.returncode, 0)
         self.assertIn("score total exceeds 21", checked.stdout)
+
+    @unittest.skipIf(openpyxl is None, "openpyxl is only needed for workbook behavior tests")
+    def test_checker_rejects_a_dimension_score_below_three(self):
+        capture = self.capture("capture-a")
+        case = self.case("task-a", [self.round("prompt-a", "capture-a", 1)], [capture])
+        proc, result, output = self.run_export(self.payload([case]))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        workbook = openpyxl.load_workbook(result["outputPath"])
+        workbook.active.cell(2, 13).value = 2
+        workbook.save(result["outputPath"])
+
+        checked = subprocess.run([
+            sys.executable,
+            str(CHECKER),
+            result["outputPath"],
+            "--rounds-json",
+            str(output / "manifest.json"),
+        ], text=True, capture_output=True)
+
+        self.assertNotEqual(checked.returncode, 0)
+        self.assertIn("numeric integer 3–5", checked.stdout)
 
     def test_same_frozen_input_preserves_values_except_absolute_export_location(self):
         capture = self.capture("capture-a")

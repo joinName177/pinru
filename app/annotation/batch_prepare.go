@@ -42,7 +42,7 @@ func latestReadyEvaluation(round domain.Round) *domain.Evaluation {
 		return nil
 	}
 	e := &round.Evaluations[len(round.Evaluations)-1]
-	if round.Status != "complete" || e.Status != "ready" || e.EvidenceHash != round.EvidenceHash || (e.Current != nil && !*e.Current) {
+	if round.Status != "complete" || e.EvidenceHash != round.EvidenceHash || (e.Current != nil && !*e.Current) || !domain.IsCollectableEvaluation(*e) {
 		return nil
 	}
 	return e
@@ -246,6 +246,11 @@ func (s *AnnotationService) prepareBatchCase(ctx context.Context, c domain.Case,
 
 func (s *AnnotationService) batchPrepareCases(req BatchPrepareRequest) ([]domain.Case, error) {
 	if len(req.TaskIDs) > 0 {
+		_, skillHash, err := s.reviewSkill(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		reviewExecution, modelErr := s.reviewExecution()
 		seen := make(map[string]struct{}, len(req.TaskIDs))
 		cases := make([]domain.Case, 0, len(req.TaskIDs))
 		for _, rawID := range req.TaskIDs {
@@ -261,6 +266,7 @@ func (s *AnnotationService) batchPrepareCases(req BatchPrepareRequest) ([]domain
 			if err != nil {
 				return nil, fmt.Errorf("加载题目 %s 失败：%w", taskID, err)
 			}
+			markEvaluationFreshness(current, skillHash, reviewExecution.Label, modelErr == nil)
 			cases = append(cases, *current)
 		}
 		if len(cases) == 0 {

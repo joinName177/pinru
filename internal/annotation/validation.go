@@ -51,13 +51,14 @@ var allowedRequirementCheckStatuses = map[string]struct{}{
 }
 
 const MaxCollectableScoreTotal = 21
+const MinCollectableDimensionScore = 3
 
 // EvaluationScoreTotal returns the saved five-dimensional score without
 // changing it. Incomplete evaluations have no collection total yet.
 func EvaluationScoreTotal(e Evaluation) (int, bool) {
 	total := 0
 	for _, score := range e.Scores {
-		if score == nil || *score < 1 || *score > 5 {
+		if score == nil || *score < MinCollectableDimensionScore || *score > 5 {
 			return 0, false
 		}
 		total += *score
@@ -228,8 +229,8 @@ func ValidateEvaluation(round Round, evaluation Evaluation) error {
 			nilScores++
 			continue
 		}
-		if *score < 1 || *score > 5 {
-			return fmt.Errorf("evaluation score %d must be an integer from 1 to 5", index+1)
+		if *score < MinCollectableDimensionScore || *score > 5 {
+			return fmt.Errorf("evaluation score %d must be an integer from 3 to 5", index+1)
 		}
 		if description == "" {
 			return fmt.Errorf("evaluation description %d is required for its score", index+1)
@@ -298,6 +299,9 @@ func ValidateEvaluation(round Round, evaluation Evaluation) error {
 		if len(evaluation.Missing) != 0 {
 			return fmt.Errorf("ready evaluation still lists missing evidence")
 		}
+	}
+	if total, complete := EvaluationScoreTotal(evaluation); complete && total > MaxCollectableScoreTotal {
+		return fmt.Errorf("evaluation score total %d exceeds %d", total, MaxCollectableScoreTotal)
 	}
 
 	hasBug := false

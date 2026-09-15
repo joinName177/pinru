@@ -86,10 +86,10 @@ func fakeReviewCLI(t *testing.T) (*appcli.CliService, string) {
 func fakeReviewCLIWithDelay(t *testing.T, delay string) (*appcli.CliService, string) {
 	t.Helper()
 	eval := map[string]any{
-		"status": "ready", "scores": []int{4, 5, 5, 5, 2}, "descriptions": []string{"加法入口能返回结果；在 code/main.py 的 add 函数中，空值反馈不完整，函数只计算 a+b，导致空值输入时没有明确提示。", "按原要求提供了加法入口。", "按入口、计算、反馈顺序组织实现。", "从输入类型推导处理分支。", "在本轮交付阶段，模型只运行了普通加法用例，没有执行空值输入验证，导致 code/main.py 的空值反馈缺陷在结束前没有被发现。"},
+		"status": "ready", "scores": []int{4, 5, 4, 5, 3}, "descriptions": []string{"加法入口能返回结果；在 code/main.py 的 add 函数中，空值反馈不完整，函数只计算 a+b，导致空值输入时没有明确提示。", "按原要求提供了加法入口。", "在第1轮开始实现前，规划拆解不够具体，模型没有列出空值输入的验证步骤，导致空值反馈没有进入交付前检查。", "从输入类型推导处理分支。", "在本轮交付阶段，模型只运行了普通加法用例，没有执行空值输入验证，导致 code/main.py 的空值反馈缺陷在结束前没有被发现。"},
 		"descriptionChecks": []any{
 			map[string]string{"judgment": "空值反馈不完整", "location": "code/main.py 的 add 函数", "behavior": "函数只计算 a+b", "consequence": "空值输入时没有明确提示"},
-			map[string]string{}, map[string]string{}, map[string]string{}, map[string]string{"judgment": "没有执行空值输入验证", "location": "本轮交付阶段", "behavior": "模型只运行了普通加法用例", "consequence": "导致 code/main.py 的空值反馈缺陷在结束前没有被发现"},
+			map[string]string{}, map[string]string{"judgment": "规划拆解不够具体", "location": "第1轮开始实现前", "behavior": "模型没有列出空值输入的验证步骤", "consequence": "导致空值反馈没有进入交付前检查"}, map[string]string{}, map[string]string{"judgment": "没有执行空值输入验证", "location": "本轮交付阶段", "behavior": "模型只运行了普通加法用例", "consequence": "导致 code/main.py 的空值反馈缺陷在结束前没有被发现"},
 		},
 		"taskType": "0-1代码生成", "difficulty": "简单", "language": "Python", "environment": "无外部依赖", "harnessVersion": "2.1.0", "os": "MacOS/Linux",
 		"evidence": []string{"原轨迹第 2 行回复；静态检查 code/main.py；审核日志 evaluator.log"}, "missing": []string{},
@@ -193,16 +193,16 @@ func TestAnnotationLocalWorkflowPreservesGradesAndExportsWholeBatchDraft(t *test
 func TestReviewRepairsPresentationFormattingWithoutChangingScoresOrTechnicalEvidence(t *testing.T) {
 	s, trace, _ := annotationFixture(t)
 	eval := map[string]any{
-		"status": "ready", "scores": []int{4, 5, 5, 5, 4}, "descriptions": []string{
+		"status": "ready", "scores": []int{4, 5, 4, 5, 3}, "descriptions": []string{
 			"以下是交付结果：`code/main.py` → 空值反馈不完整，函数只计算 a+b，导致空值输入没有提示。",
 			"实现内容符合原始需求，没有扩展任务范围。",
-			"先定位现有入口，再完成实现和验证。",
+			"在第1轮开始实现前，规划拆解不够具体，模型没有列出空值输入的验证步骤，导致该边界没有进入交付前检查。",
 			"根据输入类型判断处理分支，结论与代码一致。",
 			"执行过程出现环境命令失败，corepack enable 报 symlink '../lib/pnpm.js' -> '/usr/local/bin/pnpm'，随后改用临时目录并完成验证。",
 		},
 		"descriptionChecks": []any{
 			map[string]string{"judgment": "空值反馈不完整", "location": "`code/main.py` →", "behavior": "函数只计算 a+b", "consequence": "空值输入没有提示"},
-			map[string]any{}, map[string]any{}, map[string]any{},
+			map[string]any{}, map[string]string{"judgment": "规划拆解不够具体", "location": "第1轮开始实现前", "behavior": "模型没有列出空值输入的验证步骤", "consequence": "导致该边界没有进入交付前检查"}, map[string]any{},
 			map[string]string{"judgment": "执行过程出现环境命令失败", "location": "corepack enable", "behavior": "symlink '../lib/pnpm.js' -> '/usr/local/bin/pnpm'", "consequence": "随后改用临时目录并完成验证"},
 		},
 		"taskType": "0-1代码生成", "difficulty": "简单", "language": "Python", "environment": "无外部依赖", "harnessVersion": "2.1.0", "os": "MacOS/Linux",
@@ -230,7 +230,7 @@ func TestReviewRepairsPresentationFormattingWithoutChangingScoresOrTechnicalEvid
 	if !strings.Contains(got.Descriptions[4], "symlink '../lib/pnpm.js' -> '/usr/local/bin/pnpm'") {
 		t.Fatalf("technical error text was changed: %q", got.Descriptions[4])
 	}
-	wantScores := []int{4, 5, 5, 5, 4}
+	wantScores := []int{4, 5, 4, 5, 3}
 	for index, score := range got.Scores {
 		if score == nil || *score != wantScores[index] {
 			t.Fatalf("score %d changed during language normalization: %#v", index+1, score)

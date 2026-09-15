@@ -196,6 +196,90 @@ func TestBatchCaptureAndTablePreparesThenSkipsValidSavedData(t *testing.T) {
 	}
 }
 
+func TestBatchSelectedTasksRechecksLegacyOverLimitEvaluation(t *testing.T) {
+	s, trace, _ := annotationFixture(t)
+	if _, err := s.Capture(CaptureRequest{TaskID: "题目-1", TracePath: trace}); err != nil {
+		t.Fatal(err)
+	}
+	cli, count := fakeReviewCLI(t)
+	s.cli = cli
+	if _, err := s.Review(ReviewRequest{TaskID: "题目-1", PromptID: "p1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	c, err := s.store.GetAnnotationCase("题目-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	five, four := 5, 4
+	c.Rounds[0].Evaluations[0].Scores = [5]*int{&five, &five, &five, &five, &four}
+	c.Rounds[0].Evaluations[0].NextPrompt = ""
+	c.Rounds[0].Evaluations[0].NextPromptType = ""
+	c.Rounds[0].Evaluations[0].Issues = nil
+	if _, err := s.store.SaveAnnotationCase(*c, c.Revision); err != nil {
+		t.Fatal(err)
+	}
+
+	payload, _ := json.Marshal(BatchPrepareRequest{TaskIDs: []string{"题目-1"}})
+	if _, err := s.ExecuteJob(context.Background(), "annotation_batch_capture_table", string(payload)); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.store.GetAnnotationCase("题目-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Rounds[0].Evaluations) != 2 {
+		t.Fatalf("legacy over-limit evaluation was reused: %+v", stored.Rounds[0].Evaluations)
+	}
+	if total, ok := domain.EvaluationScoreTotal(stored.Rounds[0].Evaluations[1]); !ok || total > 21 {
+		t.Fatalf("replacement evaluation total = %d, complete = %v", total, ok)
+	}
+	runs, _ := os.ReadFile(count)
+	if string(runs) != "called\ncalled\n" {
+		t.Fatalf("legacy over-limit evaluation did not trigger a new review: %q", runs)
+	}
+}
+
+func TestBatchSelectedTasksRechecksEvaluationFromStaleRules(t *testing.T) {
+	s, trace, _ := annotationFixture(t)
+	if _, err := s.Capture(CaptureRequest{TaskID: "题目-1", TracePath: trace}); err != nil {
+		t.Fatal(err)
+	}
+	cli, count := fakeReviewCLI(t)
+	s.cli = cli
+	if _, err := s.Review(ReviewRequest{TaskID: "题目-1", PromptID: "p1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	c, err := s.store.GetAnnotationCase("题目-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Rounds[0].Evaluations[0].SkillHash = "legacy-review-rules"
+	c.Rounds[0].Evaluations[0].NextPrompt = ""
+	c.Rounds[0].Evaluations[0].NextPromptType = ""
+	c.Rounds[0].Evaluations[0].Issues = nil
+	if _, err := s.store.SaveAnnotationCase(*c, c.Revision); err != nil {
+		t.Fatal(err)
+	}
+
+	payload, _ := json.Marshal(BatchPrepareRequest{TaskIDs: []string{"题目-1"}})
+	if _, err := s.ExecuteJob(context.Background(), "annotation_batch_capture_table", string(payload)); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.store.GetAnnotationCase("题目-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Rounds[0].Evaluations) != 2 {
+		t.Fatalf("stale evaluation was reused: %+v", stored.Rounds[0].Evaluations)
+	}
+	runs, _ := os.ReadFile(count)
+	if string(runs) != "called\ncalled\n" {
+		t.Fatalf("stale evaluation did not trigger a new review: %q", runs)
+	}
+}
+
 func TestCaptureAndTableCachesGradesWithoutRequiringAnotherRound(t *testing.T) {
 	s, trace, source := annotationFixture(t)
 	cli, count := fakeReviewCLI(t)
@@ -234,8 +318,8 @@ func TestCaptureAndTableCachesGradesWithoutRequiringAnotherRound(t *testing.T) {
 func TestCaptureAndTablePreservesNonBlockingReadyGapsAsLimitations(t *testing.T) {
 	s, trace, _ := annotationFixture(t)
 	eval := map[string]any{
-		"status": "ready", "scores": []int{5, 5, 5, 5, 4}, "descriptions": []string{"交付完整。", "遵循要求。", "规划完整。", "推理正确。", "执行阶段出现了一次多余调用，这项操作没有帮助完成任务，增加了无效步骤。"},
-		"descriptionChecks": []any{map[string]any{}, map[string]any{}, map[string]any{}, map[string]any{}, map[string]string{
+		"status": "ready", "scores": []int{5, 4, 4, 4, 4}, "descriptions": []string{"交付完整。", "在第1轮核对约束时，指令说明存在轻微遗漏，模型没有逐项说明边界条件，导致约束对应关系不够清晰。", "在第1轮开始实现前，规划拆解不够具体，模型没有列出验证步骤，导致完成路径缺少检查节点。", "在第1轮分析输入时，推理覆盖存在轻微不足，模型没有说明次要边界，导致部分判断依据未被记录。", "执行阶段出现了一次多余调用，这项操作没有帮助完成任务，增加了无效步骤。"},
+		"descriptionChecks": []any{map[string]any{}, map[string]string{"judgment": "指令说明存在轻微遗漏", "location": "第1轮核对约束时", "behavior": "模型没有逐项说明边界条件", "consequence": "导致约束对应关系不够清晰"}, map[string]string{"judgment": "规划拆解不够具体", "location": "第1轮开始实现前", "behavior": "模型没有列出验证步骤", "consequence": "导致完成路径缺少检查节点"}, map[string]string{"judgment": "推理覆盖存在轻微不足", "location": "第1轮分析输入时", "behavior": "模型没有说明次要边界", "consequence": "导致部分判断依据未被记录"}, map[string]string{
 			"judgment": "出现了一次多余调用", "location": "执行阶段", "behavior": "这项操作没有帮助完成任务", "consequence": "增加了无效步骤",
 		}},
 		"taskType": "0-1代码生成", "difficulty": "简单", "language": "Python", "environment": "无外部依赖", "harnessVersion": "2.1.0", "os": "MacOS/Linux",
@@ -282,8 +366,9 @@ func TestCaptureAndTableUsesContainerExecutionOSInsteadOfEvaluatorCommentary(t *
 		t.Fatal(err)
 	}
 	eval := map[string]any{
-		"status": "ready", "scores": []int{5, 5, 5, 5, 5}, "descriptions": []string{"交付完整。", "遵循要求。", "规划完整。", "推理正确。", "执行完整。"},
-		"taskType": "0-1代码生成", "difficulty": "简单", "language": "Python", "environment": "无外部依赖", "harnessVersion": "2.1.0",
+		"status": "ready", "scores": []int{5, 4, 4, 4, 4}, "descriptions": []string{"交付完整。", "在第1轮核对约束时，指令说明存在轻微遗漏，模型没有逐项说明边界条件，导致约束对应关系不够清晰。", "在第1轮开始实现前，规划拆解不够具体，模型没有列出验证步骤，导致完成路径缺少检查节点。", "在第1轮分析输入时，推理覆盖存在轻微不足，模型没有说明次要边界，导致部分判断依据未被记录。", "在第1轮交付前，执行覆盖存在轻微不足，模型只完成主要检查，导致次要场景没有留下验证记录。"},
+		"descriptionChecks": []any{map[string]any{}, map[string]string{"judgment": "指令说明存在轻微遗漏", "location": "第1轮核对约束时", "behavior": "模型没有逐项说明边界条件", "consequence": "导致约束对应关系不够清晰"}, map[string]string{"judgment": "规划拆解不够具体", "location": "第1轮开始实现前", "behavior": "模型没有列出验证步骤", "consequence": "导致完成路径缺少检查节点"}, map[string]string{"judgment": "推理覆盖存在轻微不足", "location": "第1轮分析输入时", "behavior": "模型没有说明次要边界", "consequence": "导致部分判断依据未被记录"}, map[string]string{"judgment": "执行覆盖存在轻微不足", "location": "第1轮交付前", "behavior": "模型只完成主要检查", "consequence": "导致次要场景没有留下验证记录"}},
+		"taskType":          "0-1代码生成", "difficulty": "简单", "language": "Python", "environment": "无外部依赖", "harnessVersion": "2.1.0",
 		"os":       "待补：被测轨迹未记录操作系统，报错格式偏向 Linux，仅为静态推断",
 		"evidence": []string{"代码和构建结果均已核验"}, "missing": []string{}, "limitations": []string{"未做浏览器实机验证"},
 		"requirementChecks": []map[string]string{{"requirement": "实现加法功能", "status": "completed", "evidence": "静态检查和构建均通过"}},
