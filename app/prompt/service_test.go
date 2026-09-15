@@ -125,6 +125,10 @@ func TestBuildCustomProjectPromptDocumentPromptUsesActualDifficultyByDefault(t *
 		"不要写成需要改代码或改多文件的任务",
 		"模板化表达、AI式前言",
 		"语义和句式都要明显不同",
+		"可核查的交付结果",
+		"至少一个真实边界",
+		"不得出现五维评分、21分收录门槛",
+		"不能故意制造失败",
 	}
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(prompt, snippet) {
@@ -540,6 +544,10 @@ func TestBuildSkillPromptAddsProjectRequirementGenerationRules(t *testing.T) {
 		"Feature迭代必须是在已有功能基础上的规则增强、流程延展或能力补齐",
 		"难度按理解成本、决策成本和约束复杂度判断",
 		"Feature迭代额外规则",
+		"可核查的交付结果",
+		"至少一个真实边界",
+		"不得出现五维评分、21分收录门槛",
+		"不能故意制造失败",
 	} {
 		if !strings.Contains(featurePrompt, want) {
 			t.Fatalf("buildSkillPrompt(feature) missing %q in:\n%s", want, featurePrompt)
@@ -1562,6 +1570,59 @@ func TestGenerateTaskPromptWithContextRejectsMachineWrittenPromptBeforeSaving(t 
 	}
 	if stored.PromptText != nil && strings.TrimSpace(*stored.PromptText) != "" {
 		t.Fatalf("machine-written prompt was saved: %q", *stored.PromptText)
+	}
+}
+
+func TestGenerateTaskPromptWithContextRegeneratesPromptThatFailsQualityPrecheck(t *testing.T) {
+	testStore := testutil.OpenTestStore(t)
+	defer testStore.Close()
+
+	workDir := t.TempDir()
+	task := store.Task{
+		ID:              "task-regenerate-quality-failure",
+		GitLabProjectID: 3003,
+		ProjectName:     "Prompt Quality Retry Demo",
+		TaskType:        "Feature迭代",
+		LocalPath:       &workDir,
+	}
+	if err := testStore.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+
+	invalidPrompt := "新增订单导出能力，并让五维评分不超过21分，方便后续收录。"
+	validPrompt := "运营现在只能逐页查看订单，月底核对时很容易漏掉跨页数据。请在现有订单列表增加按时间和状态导出的能力，导出内容要与页面筛选结果一致；没有符合条件的记录时给出清楚提示，原有分页和查询方式保持不变。"
+	callCount := 0
+	svc := &PromptService{
+		store:  testStore,
+		cliSvc: appcli.NewWithResolver(func(string) (string, error) { return "/tmp/fake-claude", nil }),
+		promptGenerator: func(_ context.Context, _ string, prompt string, _ string) (generatedPromptResult, error) {
+			callCount++
+			if callCount == 1 {
+				return generatedPromptResult{PromptText: invalidPrompt, PromptDifficulty: "一般"}, nil
+			}
+			if !strings.Contains(prompt, invalidPrompt) || !strings.Contains(prompt, "审核规则") || !strings.Contains(prompt, "质量预检") {
+				t.Fatalf("quality regeneration prompt missing rejected result and reason: %q", prompt)
+			}
+			return generatedPromptResult{PromptText: validPrompt, PromptDifficulty: "一般"}, nil
+		},
+	}
+
+	result, err := svc.GenerateTaskPromptWithContext(context.Background(), GeneratePromptRequest{TaskID: task.ID, TaskType: task.TaskType})
+	if err != nil {
+		t.Fatalf("GenerateTaskPromptWithContext() error = %v", err)
+	}
+	if callCount != 2 {
+		t.Fatalf("prompt generator calls = %d, want 2", callCount)
+	}
+	if result.PromptText != validPrompt {
+		t.Fatalf("PromptText = %q, want regenerated prompt %q", result.PromptText, validPrompt)
+	}
+	stored, getErr := testStore.GetTask(task.ID)
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	if stored.PromptText == nil || *stored.PromptText != validPrompt {
+		t.Fatalf("stored prompt = %v, want regenerated prompt", stored.PromptText)
 	}
 }
 

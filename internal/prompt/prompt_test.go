@@ -76,6 +76,39 @@ func TestValidatePromptWritingQualityRejectsMachineWriting(t *testing.T) {
 	}
 }
 
+func TestValidatePromptWritingQualityRejectsAuditRuleLeakageAndEmptyGoals(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want string
+	}{
+		{
+			name: "score threshold leakage",
+			text: "新增订单导出能力，并让五维评分不超过21分，方便后续收录。",
+			want: "审核规则",
+		},
+		{
+			name: "induced failure leakage",
+			text: "调整会员列表，并故意保留一个问题让模型容易出错，方便扣分。",
+			want: "审核规则",
+		},
+		{
+			name: "vague goal only",
+			text: "优化体验，完善逻辑，增强稳定性。",
+			want: "过于空泛",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidatePromptWritingQuality(test.text)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ValidatePromptWritingQuality() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestValidatePromptWritingQualityAcceptsNaturalTechnicalReferences(t *testing.T) {
 	text := "导入项目后，页面没有及时刷新已生成的任务。请保留 project.json 的现有字段，并确保重新打开页面时能看到最新结果。"
 	if err := ValidatePromptWritingQuality(text); err != nil {

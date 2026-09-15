@@ -14,6 +14,9 @@ var (
 	fivePointDeduction   = regexp.MustCompile(`扣\s*(?:1|一)\s*分`)
 	negatedDeduction     = regexp.MustCompile(`(?:没有|并未|未|无需|不)\s*扣\s*(?:1|一)\s*分`)
 	markdownListPrefix   = regexp.MustCompile(`^\s*(?:#{1,6}\s+|[-+*]\s+|\d+[.)、]\s+)`)
+	aiWritingPrefix      = regexp.MustCompile(`(?i)^\s*(?:作为一个\s*ai|作为\s*ai|以下是|基于以上分析|我将从以下几个方面)[，,:：\s]*`)
+	spaceBeforeChinese   = regexp.MustCompile(`[ \t]+([，。！？；：])`)
+	spaceAfterChinese    = regexp.MustCompile(`([，。！？；：])[ \t]+`)
 	scoreConclusion      = regexp.MustCompile(`(?:因此|故)给\s*(?:[1-5]|一|二|三|四|五)\s*分`)
 	perfectClaimPatterns = []string{"无任何问题", "没有任何问题", "无任何不足", "没有任何不足", "全部完美", "完全无误", "满分表现"}
 	descriptionLabels    = []string{"触发节点：", "触发节点:", "实际行为：", "实际行为:", "业务影响：", "业务影响:", "证据：", "证据:"}
@@ -70,6 +73,92 @@ func IsCollectableEvaluation(e Evaluation) bool {
 	}
 	total, complete := EvaluationScoreTotal(e)
 	return complete && total <= MaxCollectableScoreTotal
+}
+
+// NormalizeEvaluationLanguage repairs presentation-only formatting before
+// validation. Scores, evidence, findings, and other review facts are left
+// untouched. ASCII arrows remain available for literal commands and errors.
+func NormalizeEvaluationLanguage(e *Evaluation) {
+	if e == nil {
+		return
+	}
+	for index := range e.Descriptions {
+		e.Descriptions[index] = normalizeNaturalProse(e.Descriptions[index])
+		check := &e.DescriptionChecks[index]
+		check.Judgment = normalizeNaturalProse(check.Judgment)
+		check.Location = normalizeNaturalProse(check.Location)
+		check.Behavior = normalizeNaturalProse(check.Behavior)
+		check.Consequence = normalizeNaturalProse(check.Consequence)
+	}
+	if prompt := strings.TrimSpace(e.NextPrompt); prompt != "" {
+		if strings.HasPrefix(prompt, "修复") {
+			e.NextPrompt = "修复" + strings.TrimLeft(normalizeNaturalProse(strings.TrimPrefix(prompt, "修复")), " ，,：:。")
+		} else {
+			e.NextPrompt = normalizeNaturalProse(prompt)
+		}
+	}
+}
+
+func normalizeNaturalProse(value string) string {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.ReplaceAll(value, "\r", "\n")
+	lines := strings.Split(value, "\n")
+	var normalized strings.Builder
+	for _, line := range lines {
+		line = strings.TrimSpace(markdownListPrefix.ReplaceAllString(strings.TrimSpace(line), ""))
+		if line == "" {
+			continue
+		}
+		if normalized.Len() > 0 && !endsWithSentencePunctuation(normalized.String()) {
+			normalized.WriteRune('。')
+		}
+		normalized.WriteString(line)
+	}
+	value = normalized.String()
+	value = aiWritingPrefix.ReplaceAllString(value, "")
+	value = strings.ReplaceAll(value, "`", "")
+	value = strings.ReplaceAll(value, "**", "")
+	for _, label := range descriptionLabels {
+		value = strings.ReplaceAll(value, label, "")
+	}
+	for _, phrase := range stockConclusions {
+		value = strings.ReplaceAll(value, phrase, "")
+	}
+	value = scoreConclusion.ReplaceAllString(value, "")
+	var cleaned strings.Builder
+	for _, r := range value {
+		if isPresentationArrow(r) {
+			cleaned.WriteRune('，')
+			continue
+		}
+		if isDecorativeWritingRune(r) {
+			continue
+		}
+		cleaned.WriteRune(r)
+	}
+	value = strings.TrimSpace(cleaned.String())
+	value = strings.TrimLeft(value, "，,；;：:。 ")
+	value = strings.ReplaceAll(value, "，，", "，")
+	value = spaceBeforeChinese.ReplaceAllString(value, "$1")
+	value = spaceAfterChinese.ReplaceAllString(value, "$1")
+	return value
+}
+
+func endsWithSentencePunctuation(value string) bool {
+	runes := []rune(strings.TrimSpace(value))
+	if len(runes) == 0 {
+		return false
+	}
+	return strings.ContainsRune("。！？；，.!?;,", runes[len(runes)-1])
+}
+
+func isPresentationArrow(r rune) bool {
+	return (r >= 0x2190 && r <= 0x21FF) || r == '➜' || r == '➡'
+}
+
+func isDecorativeWritingRune(r rune) bool {
+	return r == 0x2022 || (r >= 0x2460 && r <= 0x24FF) || (r >= 0x25A0 && r <= 0x27BF) ||
+		(r >= 0x1F000 && r <= 0x1FAFF) || r == 0xFE0F
 }
 
 // ValidateEvaluation checks only structural, enum, evidence, and obvious
@@ -241,7 +330,7 @@ func validateDescriptionStyle(description string) error {
 		return fmt.Errorf("不要使用 Markdown 反引号；文件名、路径、函数名和命令须保留为普通文本")
 	}
 	if strings.Contains(description, "→") || strings.Contains(description, "⇒") || strings.Contains(description, "➜") ||
-		strings.Contains(description, "➡") || strings.Contains(description, "->") || strings.Contains(description, "=>") {
+		strings.Contains(description, "➡") {
 		return fmt.Errorf("不要使用箭头串联内容，请改用自然中文说明前后关系")
 	}
 	for _, r := range description {
@@ -277,8 +366,7 @@ func validateDescriptionStyle(description string) error {
 		return fmt.Errorf("不要使用“因此给X分”等评价套话，分数已经单独记录")
 	}
 	for _, r := range description {
-		if r == 0x2022 || (r >= 0x2460 && r <= 0x24FF) || (r >= 0x25A0 && r <= 0x27BF) ||
-			(r >= 0x1F000 && r <= 0x1FAFF) || r == 0xFE0F {
+		if isDecorativeWritingRune(r) {
 			return fmt.Errorf("不要使用 Emoji、勾选图标等装饰符号")
 		}
 	}

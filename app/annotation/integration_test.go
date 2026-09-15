@@ -190,6 +190,60 @@ func TestAnnotationLocalWorkflowPreservesGradesAndExportsWholeBatchDraft(t *test
 	}
 }
 
+func TestReviewRepairsPresentationFormattingWithoutChangingScoresOrTechnicalEvidence(t *testing.T) {
+	s, trace, _ := annotationFixture(t)
+	eval := map[string]any{
+		"status": "ready", "scores": []int{4, 5, 5, 5, 4}, "descriptions": []string{
+			"以下是交付结果：`code/main.py` → 空值反馈不完整，函数只计算 a+b，导致空值输入没有提示。",
+			"实现内容符合原始需求，没有扩展任务范围。",
+			"先定位现有入口，再完成实现和验证。",
+			"根据输入类型判断处理分支，结论与代码一致。",
+			"执行过程出现环境命令失败，corepack enable 报 symlink '../lib/pnpm.js' -> '/usr/local/bin/pnpm'，随后改用临时目录并完成验证。",
+		},
+		"descriptionChecks": []any{
+			map[string]string{"judgment": "空值反馈不完整", "location": "`code/main.py` →", "behavior": "函数只计算 a+b", "consequence": "空值输入没有提示"},
+			map[string]any{}, map[string]any{}, map[string]any{},
+			map[string]string{"judgment": "执行过程出现环境命令失败", "location": "corepack enable", "behavior": "symlink '../lib/pnpm.js' -> '/usr/local/bin/pnpm'", "consequence": "随后改用临时目录并完成验证"},
+		},
+		"taskType": "0-1代码生成", "difficulty": "简单", "language": "Python", "environment": "无外部依赖", "harnessVersion": "2.1.0", "os": "MacOS/Linux",
+		"evidence": []string{"原轨迹记录 code/main.py 与完整命令输出"}, "missing": []string{},
+		"requirementChecks": []map[string]string{{"requirement": "实现加法功能", "status": "completed", "evidence": "code/main.py 中的 add 返回计算结果"}},
+		"issues": []map[string]string{
+			{"kind": "bug", "description": "空值输入没有反馈", "evidence": "code/main.py 仅返回 a+b"},
+			{"kind": "process", "description": "环境命令首次执行失败", "evidence": "corepack enable 返回 EACCES"},
+		},
+		"nextPrompt": "修复`code/main.py` → 补上空值输入提示。", "nextPromptType": "Bug修复",
+	}
+	s.cli, _ = fakeReviewCLIWithEvaluation(t, eval, "")
+	if _, err := s.Capture(CaptureRequest{TaskID: "题目-1", TracePath: trace}); err != nil {
+		t.Fatal(err)
+	}
+
+	c, err := s.Review(ReviewRequest{TaskID: "题目-1", PromptID: "p1"})
+	if err != nil {
+		t.Fatalf("review rejected repairable presentation formatting: %v", err)
+	}
+	got := c.Rounds[0].Evaluations[0]
+	if strings.Contains(got.Descriptions[0], "以下是") || strings.ContainsAny(got.Descriptions[0], "`→") {
+		t.Fatalf("description was not normalized to natural prose: %q", got.Descriptions[0])
+	}
+	if !strings.Contains(got.Descriptions[4], "symlink '../lib/pnpm.js' -> '/usr/local/bin/pnpm'") {
+		t.Fatalf("technical error text was changed: %q", got.Descriptions[4])
+	}
+	wantScores := []int{4, 5, 5, 5, 4}
+	for index, score := range got.Scores {
+		if score == nil || *score != wantScores[index] {
+			t.Fatalf("score %d changed during language normalization: %#v", index+1, score)
+		}
+	}
+	if len(got.Evidence) != 1 || got.Evidence[0] != "原轨迹记录 code/main.py 与完整命令输出" {
+		t.Fatalf("evidence changed during language normalization: %#v", got.Evidence)
+	}
+	if len(got.Issues) != 2 || got.Issues[0].Description != "空值输入没有反馈" || got.NextPrompt != "修复code/main.py，补上空值输入提示。" {
+		t.Fatalf("review findings changed during language normalization: issues=%#v nextPrompt=%q", got.Issues, got.NextPrompt)
+	}
+}
+
 func TestCachedReviewRejectsAlteredCodeAndTraceAttachments(t *testing.T) {
 	for _, part := range []string{"code", "traces", "review"} {
 		t.Run(part, func(t *testing.T) {

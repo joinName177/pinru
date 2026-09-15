@@ -450,6 +450,22 @@ func ValidatePromptWritingQuality(promptText string) error {
 			return fmt.Errorf("不要使用“%s”等模板化表达，直接陈述需求", prefix)
 		}
 	}
+	for _, fragment := range []string{
+		"五维评分", "审核分数", "评分门槛", "收录门槛", "压低分数",
+		"为了扣分", "方便扣分", "制造扣分", "故意保留一个问题", "让模型容易出错",
+	} {
+		if strings.Contains(compactLower, fragment) {
+			return fmt.Errorf("提示词不得包含评分、收录或诱导失败等审核规则")
+		}
+	}
+	vagueOnly := compactLower
+	for _, phrase := range []string{"优化体验", "完善逻辑", "增强稳定性"} {
+		vagueOnly = strings.ReplaceAll(vagueOnly, phrase, "")
+	}
+	vagueOnly = strings.Trim(vagueOnly, "，。！？；：、,.!?;:（）()")
+	if vagueOnly == "" {
+		return fmt.Errorf("提示词内容过于空泛，请写明真实场景、目标行为和可核查结果")
+	}
 	if strings.Contains(trimmed, "`") || strings.Contains(trimmed, "→") || strings.Contains(trimmed, "⇒") ||
 		strings.Contains(trimmed, "➜") || strings.Contains(trimmed, "➡") || strings.Contains(trimmed, "->") || strings.Contains(trimmed, "=>") {
 		return fmt.Errorf("不要使用箭头、反引号等装饰符号")

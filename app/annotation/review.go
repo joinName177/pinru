@@ -239,6 +239,7 @@ func (s *AnnotationService) reviewLocked(ctx context.Context, req ReviewRequest)
 	}
 	normalizeNextPrompt(evaluation, validRounds)
 	normalizeEvidenceState(evaluation)
+	domain.NormalizeEvaluationLanguage(evaluation)
 	if err := domain.ValidateEvaluation(r, *evaluation); err != nil {
 		return nil, fmt.Errorf("五维评分校验失败：%w", err)
 	}
