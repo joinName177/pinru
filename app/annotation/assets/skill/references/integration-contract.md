@@ -7,7 +7,7 @@
 应用传入一个 JSON 对象，字段为：
 
 - `taskName`：题目名称。
-- `round`：当前真实轮次，包含 `sessionId`、`promptId`、原始 `prompt`、事件顺序、状态、`evidenceHash`、版本、工作目录和可能为空的 `captureId`。
+- `round`：当前真实轮次，包含 `sessionId`、原始提示词的 `promptId`、原始 `prompt`、事件顺序、状态、`evidenceHash`、版本、工作目录和可能为空的 `captureId`。若中途出现纯恢复指令，本轮证据区间包含恢复后的执行，但身份仍取首个实质性提示词。
 - `sessionRounds`：同一题的真实轮次上下文；当前评价仍只针对 `round`。
 - `initialSha`、`snapshotUrl`、`initial`：首轮前提交及可用的冻结初始目录。
 - `tracePath`：包含当前轮的冻结原始轨迹。
@@ -61,7 +61,7 @@
 
 功能完成度与五维分数分别判断：功能完成但过程有不足时可以非全满分；仅有 process/evidence、没有代码事实支持的未完成项或未解决缺陷时，nextPrompt 和 nextPromptType 必须为空。不得为了提示词降分，也不得从低分反推 Bug；过程扣分保留真实依据。
 
-- 原始 Prompt 不做清理、压缩或改写，包括“继续”、换行、空格和代码。
+- 原始 Prompt 不做清理、压缩或改写，保留首个实质性提示词的换行、空格和代码；纯“继续”等恢复指令只保留在轨迹证据中，不替换原始 Prompt，也不单独导出。
 - 5 分写出实际正向依据；低于 5 分写出与锚点匹配的具体不足，不按总分或比例换算。
 - 工程故障、评价助手独立复验和被测模型行为分别归属。没有验证就写未验证。
 - `nextPrompt` 与 `nextPromptType` 按 [下一轮建议](next-turn-guidance.md) 填写。先逐项复核需求完成度并把需求、证据、结论存入 requirementChecks；原需求遗漏、回归或未解决 Bug 必须列为 bug，交付完整性低于5，并生成以“修复”开头的具体提示词。没有确认的 Bug 时不得生成修复提示词，不要求填写不满意原因。矛盾结果回查证据重评，不机械改分或删除问题。

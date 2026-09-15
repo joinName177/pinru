@@ -14,7 +14,7 @@ import (
 	domain "github.com/blueship581/pinru/internal/annotation"
 )
 
-const reviewPipelineVersion = "review-v3-score-cap"
+const reviewPipelineVersion = "review-v4-continuation-chain"
 
 func annotationDifficulty(value string) string {
 	switch strings.TrimSpace(value) {
