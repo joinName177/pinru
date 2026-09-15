@@ -430,7 +430,7 @@ export function CustomProjectPickerModal({
   const prefixLabel = formatCustomProjectPrefixes(scanResult?.prefixes);
   const [selectedNames, setSelectedNames] = useState<string[]>([]);
   const [quantities, setQuantities] = useState({ codeGen: '10', feature: '10', bugFix: '2' });
-  const [difficultyQuantities, setDifficultyQuantities] = useState({ general: '13', difficult: '12' });
+  const [difficultyQuantities, setDifficultyQuantities] = useState({ general: '0', difficult: '22' });
   const counts: CustomPromptCounts = {
     codeGen: Number(quantities.codeGen),
     feature: Number(quantities.feature),
@@ -438,7 +438,7 @@ export function CustomProjectPickerModal({
     general: Number(difficultyQuantities.general),
     difficult: Number(difficultyQuantities.difficult),
   };
-  const totalCount = counts.codeGen + counts.feature + counts.bugFix + 3;
+  const totalCount = counts.codeGen + counts.feature + counts.bugFix;
   const difficultyTotal = counts.general + counts.difficult;
   const allQuantityValues = [
     quantities.codeGen,
@@ -522,7 +522,7 @@ export function CustomProjectPickerModal({
               {['代码理解', '代码测试', '代码重构'].map((label) => (
                 <label key={label} className="text-xs text-stone-500">
                   {label}
-                  <input type="number" value={1} disabled className="mt-1 w-full rounded-lg border border-stone-200 bg-stone-100 p-2 dark:border-stone-700 dark:bg-stone-800" />
+                  <input type="number" value={0} disabled className="mt-1 w-full rounded-lg border border-stone-200 bg-stone-100 p-2 dark:border-stone-700 dark:bg-stone-800" />
                 </label>
               ))}
             </div>
@@ -542,7 +542,7 @@ export function CustomProjectPickerModal({
               </div>
             </div>
             <p className="mt-2 text-xs text-stone-500">
-              前三类可输入非负整数，填 0 表示不生成；其他三类固定各 1 题。
+              前三类可输入非负整数，填 0 表示不生成；其他题型固定为 0，不参与生成。
               {!validCountInputs
                 ? '请输入有效的非负整数。'
                 : difficultyAllocationMatches

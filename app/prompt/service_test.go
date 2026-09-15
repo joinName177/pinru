@@ -51,19 +51,11 @@ func TestGenerateCustomProjectPromptDocumentsWritesMarkdownToCustomRoot(t *testi
 	expectedDoc := strings.Join([]string{
 		"**0-1代码生成**",
 		"",
-		"1. 【一般】新增完整地址簿能力，让用户能维护常用地址并在发布流程中复用。",
+		"1. 【困难】新增完整地址簿能力，让用户能维护常用地址并在发布流程中复用。",
 		"",
 		"**Feature迭代**",
 		"",
-		"1. 【一般】在已有列表里补充状态筛选，方便快速定位异常数据。",
-		"",
-		"**代码理解**",
-		"",
-		"1. 【困难】梳理发布流程从填写到提交完成的关键状态流和失败分支，并沉淀为 README 文档。",
-		"**代码测试**",
-		"1. 【困难】补充发布失败后的回归验证。",
-		"**代码重构**",
-		"1. 【一般】整理发布状态处理逻辑并保持现有行为。",
+		"1. 【困难】在已有列表里补充状态筛选，方便快速定位异常数据。",
 	}, "\n")
 	svc := &PromptService{
 		store:  testStore,
@@ -82,7 +74,7 @@ func TestGenerateCustomProjectPromptDocumentsWritesMarkdownToCustomRoot(t *testi
 	result, err := svc.GenerateCustomProjectPromptDocuments(GenerateCustomProjectPromptDocumentsRequest{
 		ProjectID:    "project-custom-doc",
 		ProjectNames: []string{"zw-001"},
-		Counts:       &internalprompt.DocumentCounts{CodeGen: 1, Feature: 1, General: 3, Difficult: 2},
+		Counts:       &internalprompt.DocumentCounts{CodeGen: 1, Feature: 1, General: 0, Difficult: 2},
 	})
 	if err != nil {
 		t.Fatalf("GenerateCustomProjectPromptDocuments() error = %v", err)
@@ -116,13 +108,11 @@ func TestBuildCustomProjectPromptDocumentPromptUsesActualDifficultyByDefault(t *
 	prompt := buildCustomProjectPromptDocumentPrompt("zw-001", nil)
 
 	requiredSnippets := []string{
-		"只生成 25 条，其中 0-1代码生成 10 条，Feature迭代 10 条，Bug修复 2 条",
-		"整批严格生成【一般】13 条、【困难】12 条",
+		"只生成 22 条，其中 0-1代码生成 10 条，Feature迭代 10 条，Bug修复 2 条",
+		"整批严格生成【一般】0 条、【困难】22 条",
 		"只允许使用【一般】和【困难】两种标签",
 		"避免对项目已经具备的功能重复出题",
 		"交付边界点到为止",
-		"要求把梳理结果沉淀为 README 文档",
-		"不要写成需要改代码或改多文件的任务",
 		"模板化表达、AI式前言",
 		"语义和句式都要明显不同",
 		"可核查的交付结果",
@@ -162,8 +152,8 @@ func TestBuildCustomProjectPromptDocumentPromptUsesActualDifficultyByDefault(t *
 }
 
 func TestBuildCustomProjectPromptDocumentPromptAppliesExactDifficultyAllocation(t *testing.T) {
-	prompt := buildCustomProjectPromptDocumentPrompt("zw-001", nil, internalprompt.DocumentCounts{Feature: 3, BugFix: 2, General: 4, Difficult: 4})
-	for _, want := range []string{"难度数量：整批严格生成【一般】4 条、【困难】4 条", "只允许使用【一般】和【困难】", "题型数量与难度数量是两套独立约束"} {
+	prompt := buildCustomProjectPromptDocumentPrompt("zw-001", nil, internalprompt.DocumentCounts{Feature: 3, BugFix: 2, General: 2, Difficult: 3})
+	for _, want := range []string{"难度数量：整批严格生成【一般】2 条、【困难】3 条", "只允许使用【一般】和【困难】", "题型数量与难度数量是两套独立约束"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("difficulty allocation prompt missing %q:\n%s", want, prompt)
 		}
@@ -225,12 +215,12 @@ func TestGenerateCustomProjectPromptDocumentsRejectsInvalidCliOutput(t *testing.
 }
 
 func TestCustomDocumentUsesRequestedCountsAndAllowsNoCodeGeneration(t *testing.T) {
-	counts := internalprompt.DocumentCounts{Feature: 2, BugFix: 1, General: 4, Difficult: 2}
+	counts := internalprompt.DocumentCounts{Feature: 2, BugFix: 1, General: 1, Difficult: 2}
 	prompt := buildCustomProjectPromptDocumentPrompt("cyc-05", nil, counts)
-	if !strings.Contains(prompt, "只生成 6 条，其中 0-1代码生成 0 条，Feature迭代 2 条，Bug修复 1 条") {
+	if !strings.Contains(prompt, "只生成 3 条，其中 0-1代码生成 0 条，Feature迭代 2 条，Bug修复 1 条") {
 		t.Fatal("generation prompt did not use configured counts")
 	}
-	content := "**Feature迭代**\n1. 【一般】需求一\n2. 【一般】需求二\n**Bug修复**\n1. 【一般】修复已有问题\n**代码理解**\n1. 【一般】梳理并生成 README\n**代码测试**\n1. 【困难】回归测试\n**代码重构**\n1. 【困难】整理代码"
+	content := "**Feature迭代**\n1. 【一般】需求一\n2. 【困难】需求二\n**Bug修复**\n1. 【困难】修复已有问题"
 	svc := &PromptService{requirementDocGenerator: func(context.Context, string, string, string) (string, error) { return "生成说明\n" + content, nil }}
 	got, err := svc.generateCustomProjectPromptDocument(context.Background(), t.TempDir(), "cyc-05", "", counts)
 	if err != nil || got != content {

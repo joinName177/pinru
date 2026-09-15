@@ -45,6 +45,8 @@ type parsedTraceLine struct {
 }
 
 // ParseTrace extracts real top-level human turns from a Claude Code JSONL trace.
+// A standalone recovery command such as "继续" extends the preceding prompt's
+// evidence range instead of creating a separately exportable annotation round.
 // It returns an error for any malformed non-empty line so callers never persist a
 // plausible-looking prefix of a trace that was still being written.
 func ParseTrace(data []byte) ([]Round, error) {
@@ -99,6 +101,17 @@ func ParseTrace(data []byte) ([]Round, error) {
 				fillRoundMetadata(current, line.event)
 				continue
 			}
+			continuingCurrent := current != nil && isContinuationPrompt(line.prompt, line.attachments) &&
+				(current.SessionID == "" || line.event.SessionID == "" || current.SessionID == line.event.SessionID)
+			if continuingCurrent {
+				// The user is only asking the interrupted model to resume the same
+				// task. Keep the original prompt identity, but include this event and
+				// everything after it in the evidence reviewed for that task.
+				fillRoundMetadata(current, line.event)
+				currentComplete = false
+				prefixRaw = append(prefixRaw, line.raw)
+				continue
+			}
 			finish(line.number - 1)
 			current = &Round{
 				PromptID:    promptID,
@@ -133,6 +146,20 @@ func ParseTrace(data []byte) ([]Round, error) {
 
 	markPromptIDConflicts(rounds)
 	return rounds, nil
+}
+
+func isContinuationPrompt(prompt string, attachments []string) bool {
+	if len(attachments) > 0 {
+		return false
+	}
+	normalized := strings.ToLower(strings.TrimSpace(prompt))
+	normalized = strings.TrimSpace(strings.Trim(normalized, "。.!！?？"))
+	switch normalized {
+	case "继续", "请继续", "继续吧", "请继续吧", "接着做", "请接着做", "继续完成", "请继续完成", "continue", "please continue", "go on", "please go on":
+		return true
+	default:
+		return false
+	}
 }
 
 func decodeTraceLines(data []byte) ([]parsedTraceLine, error) {
@@ -363,6 +390,12 @@ func MergeRounds(previous, incoming []Round) []Round {
 
 	for index, old := range previous {
 		if used[index] {
+			continue
+		}
+		if isContinuationPrompt(old.Prompt, old.Attachments) {
+			// Older parser versions stored recovery commands as independent
+			// rounds. A fresh capture folds that evidence into the prior prompt,
+			// so the legacy row must not survive as a conflict/export row.
 			continue
 		}
 		missing := old

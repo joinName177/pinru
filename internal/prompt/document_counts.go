@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// The remaining three task types are fixed at one per generated document.
+// Only code generation, feature iteration, and bug fixing are generated.
 type DocumentCounts struct {
 	CodeGen   int `json:"codeGen"`
 	Feature   int `json:"feature"`
@@ -16,11 +16,11 @@ type DocumentCounts struct {
 }
 
 func DefaultDocumentCounts() DocumentCounts {
-	return DocumentCounts{CodeGen: 10, Feature: 10, BugFix: 2, General: 13, Difficult: 12}
+	return DocumentCounts{CodeGen: 10, Feature: 10, BugFix: 2, General: 0, Difficult: 22}
 }
 
 func (c DocumentCounts) Total() int {
-	return c.CodeGen + c.Feature + c.BugFix + 3
+	return c.CodeGen + c.Feature + c.BugFix
 }
 
 // NormalizeDifficultyAllocation keeps requests from older clients usable. New
@@ -42,7 +42,7 @@ func (c DocumentCounts) Validate() error {
 	c = c.NormalizeDifficultyAllocation()
 	// Keep arithmetic and browser integer representation consistent.
 	const maxCount = 9007199254740987
-	if uint64(c.CodeGen) > maxCount || uint64(c.Feature) > maxCount || uint64(c.BugFix) > maxCount || uint64(c.General) > maxCount || uint64(c.Difficult) > maxCount || uint64(c.CodeGen)+uint64(c.Feature)+uint64(c.BugFix)+3 > maxCount {
+	if uint64(c.CodeGen) > maxCount || uint64(c.Feature) > maxCount || uint64(c.BugFix) > maxCount || uint64(c.General) > maxCount || uint64(c.Difficult) > maxCount || uint64(c.CodeGen)+uint64(c.Feature)+uint64(c.BugFix) > maxCount {
 		return fmt.Errorf("题型总数过大")
 	}
 	if uint64(c.General)+uint64(c.Difficult) != uint64(c.Total()) {
@@ -52,7 +52,7 @@ func (c DocumentCounts) Validate() error {
 }
 
 func (c DocumentCounts) ByType() map[string]int {
-	return map[string]int{"0-1代码生成": c.CodeGen, "Feature迭代": c.Feature, "Bug修复": c.BugFix, "代码理解": 1, "工程化": 0, "代码测试": 1, "代码重构": 1}
+	return map[string]int{"0-1代码生成": c.CodeGen, "Feature迭代": c.Feature, "Bug修复": c.BugFix, "代码理解": 0, "工程化": 0, "代码测试": 0, "代码重构": 0}
 }
 
 func (c DocumentCounts) ValidateDocument(content string) error {

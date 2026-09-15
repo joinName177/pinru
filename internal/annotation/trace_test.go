@@ -36,6 +36,60 @@ func TestParseTraceExtractsOnlyHumanPromptsAndCompletion(t *testing.T) {
 	}
 }
 
+func TestParseTraceMergesStandaloneContinueIntoPreviousPromptChain(t *testing.T) {
+	trace := strings.Join([]string{
+		`{"type":"user","uuid":"u-1","promptId":"p-1","sessionId":"s-1","message":{"role":"user","content":"实现订单筛选功能"}}`,
+		`{"type":"assistant","sessionId":"s-1","message":{"role":"assistant","content":[{"type":"tool_use","name":"Edit"}],"stop_reason":"tool_use"}}`,
+		`{"type":"user","uuid":"u-2","promptId":"p-continue","sessionId":"s-1","message":{"role":"user","content":"继续"}}`,
+		`{"type":"assistant","sessionId":"s-1","message":{"role":"assistant","content":[{"type":"text","text":"已完成并验证。"}],"stop_reason":"end_turn"}}`,
+		`{"type":"system","subtype":"turn_duration","sessionId":"s-1"}`,
+	}, "\n")
+
+	rounds, err := ParseTrace([]byte(trace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rounds) != 1 {
+		t.Fatalf("len(rounds) = %d, want one merged prompt chain: %#v", len(rounds), rounds)
+	}
+	round := rounds[0]
+	if round.Prompt != "实现订单筛选功能" || round.PromptID != "p-1" {
+		t.Fatalf("merged round replaced the original prompt identity: %#v", round)
+	}
+	if round.Status != "complete" || round.SourceStart != 1 || round.SourceEnd != 5 {
+		t.Fatalf("merged round boundary/status = %#v", round)
+	}
+}
+
+func TestParseTraceKeepsSubstantivePromptBeginningWithContinueAsNewRound(t *testing.T) {
+	trace := strings.Join([]string{
+		`{"type":"user","promptId":"p-1","sessionId":"s","message":{"role":"user","content":"实现订单筛选功能"}}`,
+		`{"type":"system","subtype":"turn_duration","sessionId":"s"}`,
+		`{"type":"user","promptId":"p-2","sessionId":"s","message":{"role":"user","content":"继续完善筛选条件，并增加日期范围查询"}}`,
+		`{"type":"system","subtype":"turn_duration","sessionId":"s"}`,
+	}, "\n")
+
+	rounds, err := ParseTrace([]byte(trace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rounds) != 2 || rounds[1].PromptID != "p-2" {
+		t.Fatalf("substantive follow-up was merged as a recovery command: %#v", rounds)
+	}
+}
+
+func TestMergeRoundsDropsLegacyStandaloneContinueRoundAfterRecapture(t *testing.T) {
+	previous := []Round{
+		{PromptID: "p-1", SessionID: "s", Prompt: "实现订单筛选功能", EvidenceHash: "old"},
+		{PromptID: "p-continue", SessionID: "s", Prompt: "继续", EvidenceHash: "old-continue"},
+	}
+	incoming := []Round{{PromptID: "p-1", SessionID: "s", Prompt: "实现订单筛选功能", EvidenceHash: "merged"}}
+	merged := MergeRounds(previous, incoming)
+	if len(merged) != 1 || merged[0].EvidenceHash != "merged" {
+		t.Fatalf("legacy continuation remained as an exportable round: %#v", merged)
+	}
+}
+
 func TestParseTraceTreatsSidechainsMetaAndToolResultsAsNonHuman(t *testing.T) {
 	trace := strings.Join([]string{
 		`{"type":"user","isSidechain":true,"promptId":"sub","message":{"role":"user","content":"subagent prompt"}}`,
