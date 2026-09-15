@@ -4,6 +4,7 @@ import type { AnnotationCase } from '../../api/annotation';
 import { AnnotationWorkspace } from './index';
 
 const api = vi.hoisted(() => ({
+  getConfig: vi.fn(),
   getAnnotationContainerApiKey: vi.fn(),
   getProjects: vi.fn(),
   bindContainer: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock('@wailsio/runtime', async () => ({
 
 vi.mock('../../api/config', async () => ({
   ...await vi.importActual<typeof import('../../api/config')>('../../api/config'),
+  getConfig: api.getConfig,
   getAnnotationContainerApiKey: api.getAnnotationContainerApiKey,
   getProjects: api.getProjects,
 }));
@@ -106,6 +108,7 @@ describe('AnnotationWorkspace', () => {
   beforeEach(() => {
     Object.values(api).forEach((mock) => mock.mockReset());
     wailsClipboard.setText.mockReset().mockResolvedValue(undefined);
+    api.getConfig.mockResolvedValue('xh04,cyc');
     api.getAnnotationContainerApiKey.mockResolvedValue('');
     api.getProjects.mockResolvedValue([
       { id: 'project-1', name: '项目一' },
@@ -114,6 +117,30 @@ describe('AnnotationWorkspace', () => {
     api.listCases.mockResolvedValue([makeCase()]);
     api.listContainers.mockResolvedValue([]);
     api.listTraces.mockResolvedValue([]);
+  });
+
+  it('orders configured container prefix groups and keeps unmatched names last', async () => {
+    api.listContainers.mockResolvedValue([
+      { id: 'cyc-4', name: 'cyc-claude-4', state: 'running', image: 'claude', workspacePath: '/cyc-4' },
+      { id: 'zulu', name: 'zulu-runner', state: 'running', image: 'claude', workspacePath: '/zulu' },
+      { id: 'xh04-2', name: 'xh04-claude-2', state: 'running', image: 'claude', workspacePath: '/xh04-2' },
+      { id: 'cyc-12', name: 'cyc-claude-12', state: 'running', image: 'claude', workspacePath: '/cyc-12' },
+      { id: 'alpha', name: 'alpha-runner', state: 'running', image: 'claude', workspacePath: '/alpha' },
+      { id: 'xh04-10', name: 'xh04-claude-10', state: 'running', image: 'claude', workspacePath: '/xh04-10' },
+    ]);
+
+    render(<AnnotationWorkspace projectId="project-1" taskId="task-1" />);
+
+    const select = await screen.findByRole('combobox', { name: '容器' });
+    await waitFor(() => expect(Array.from(select.querySelectorAll('option')).map((option) => option.textContent)).toEqual([
+      '选择实际容器',
+      'xh04-claude-10 · running · /xh04-10',
+      'xh04-claude-2 · running · /xh04-2',
+      'cyc-claude-12 · running · /cyc-12',
+      'cyc-claude-4 · running · /cyc-4',
+      'alpha-runner · running · /alpha',
+      'zulu-runner · running · /zulu',
+    ]));
   });
 
   it('restores running state and disables duplicate reviews after reopening details', async () => {
@@ -175,8 +202,10 @@ describe('AnnotationWorkspace', () => {
   it('exports only checked prepared tasks and resets the selection between projects', async () => {
     const first = makeCase({ taskName: '第一题' });
     first.rounds[0].evaluations![0].status = 'ready';
+    first.rounds[0].evaluations![0].scores = [4, 4, 4, 4, 4];
     const second = makeCase({ taskId: 'task-2', taskName: '第二题' });
     second.rounds[0].evaluations![0].status = 'ready';
+    second.rounds[0].evaluations![0].scores = [4, 4, 4, 4, 4];
     api.listCases.mockResolvedValue([first, second, makeCase({ taskId: 'task-3', taskName: '未制表题', rounds: [] })]);
     api.exportCases.mockResolvedValue({ id: 'selected-export', status: 'pending' });
     api.getAnnotationJob.mockResolvedValue({ id: 'selected-export', status: 'done', outputPayload: JSON.stringify({ outputPath: '/exports/selected.xlsx', rows: 1, issues: [] }) });
@@ -289,13 +318,14 @@ describe('AnnotationWorkspace', () => {
     expect(await screen.findByText('容器启动命令已复制，请在本地终端执行')).toBeInTheDocument();
   });
 
-  it('shows approval and hides a stale repair prompt when all five scores are perfect', async () => {
+  it('keeps a truthful perfect score but marks it as not collected', async () => {
     const item = makeCase();
     item.rounds[0].evaluations![0].scores = [5, 5, 5, 5, 5];
     api.listCases.mockResolvedValue([item]);
     render(<AnnotationWorkspace projectId="project-1" taskId="task-1" view="review" />);
-    expect(await screen.findByText('五维满分 · 数据已保存')).toBeInTheDocument();
+    expect(await screen.findByText('五维总分 25 · 超过21，不收录')).toBeInTheDocument();
     expect(screen.queryByText('下一轮修复提示词（仅复制）')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '继续准备未完成轮次' })).not.toBeInTheDocument();
   });
 
   it('shows five-dimensional review in the detail review view and keeps batch export separate', async () => {

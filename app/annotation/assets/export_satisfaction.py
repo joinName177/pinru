@@ -192,6 +192,17 @@ def _validate_evaluation(evaluation, scope):
     return issues
 
 
+def _evaluation_score_total(evaluation):
+    if not isinstance(evaluation, dict):
+        return None
+    scores = evaluation.get("scores")
+    if not isinstance(scores, list) or len(scores) != 5:
+        return None
+    if any(isinstance(score, bool) or not isinstance(score, int) or not 1 <= score <= 5 for score in scores):
+        return None
+    return sum(scores)
+
+
 def _write_json(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -634,6 +645,10 @@ def export_batch(batch, input_dir, input_hash, output, draft):
                 evaluation = dict(evaluation, taskType=case["taskType"])
             if included:
                 blockers.extend(_validate_evaluation(evaluation, round_scope))
+            score_total = _evaluation_score_total(evaluation)
+            if included and evaluation and evaluation.get("status") == "ready" and score_total is not None and score_total > 21:
+                included = False
+                reason = f"五维评分总分 {score_total} 超过 21，不符合平台收录规则；评分按真实结果保留"
             review_attachment = ""
             if included and evaluation:
                 review_source = _source_path(evaluation.get("reviewPath"), input_dir)
@@ -676,7 +691,7 @@ def export_batch(batch, input_dir, input_hash, output, draft):
 
             overlong_prompt = len(prompt) > 32767
             prompt_attachment = ""
-            if overlong_prompt:
+            if included and overlong_prompt:
                 blockers.append(_issue(round_scope, "original prompt exceeds Excel's 32767-character limit"))
                 round_component = _opaque_component("round", session_id, prompt_id, str(original_index))
                 prompt_attachment = (Path("attachments") / task_component / "original-prompts" / f"{round_component}.txt").as_posix()
@@ -694,6 +709,7 @@ def export_batch(batch, input_dir, input_hash, output, draft):
                 "reason": reason,
                 "included": included,
                 "valid": included,
+                "scoreTotal": score_total,
                 "evidenceHash": round_item.get("evidenceHash", ""),
                 "roundVersion": round_item.get("version", ""),
                 "cwd": round_item.get("cwd", ""),

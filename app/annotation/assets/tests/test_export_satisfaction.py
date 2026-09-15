@@ -90,7 +90,7 @@ class ExportSatisfactionTests(unittest.TestCase):
             "model": "review-model",
             "evidenceHash": evidence_hash,
             "status": status,
-            "scores": scores if scores is not None else [5, 5, 5, 5, 5],
+            "scores": scores if scores is not None else [5, 4, 4, 4, 4],
             "descriptions": ["交付依据", "遵循依据", "规划依据", "推理依据", "执行依据"],
             "taskType": "feature迭代",
             "difficulty": "中等",
@@ -325,6 +325,22 @@ class ExportSatisfactionTests(unittest.TestCase):
             ("valid", True, ""),
         ])
 
+    def test_score_total_above_twenty_one_is_manifested_but_not_exported(self):
+        capture = self.capture("capture-a")
+        score_21 = self.round("score-21", "capture-a", 1, evaluations=[self.evaluation("evidence-score-21", scores=[5, 4, 4, 4, 4])], evidence_hash="evidence-score-21")
+        score_22 = self.round("score-22", "capture-a", 2, evaluations=[self.evaluation("evidence-score-22", scores=[5, 5, 4, 4, 4])], evidence_hash="evidence-score-22")
+
+        proc, result, output = self.run_export(self.payload([self.case("task-a", [score_21, score_22], [capture])]))
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(result["rows"], 1)
+        manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual([(item["promptId"], item["included"], item["scoreTotal"]) for item in manifest["rounds"]], [
+            ("score-21", True, 21),
+            ("score-22", False, 22),
+        ])
+        self.assertIn("超过 21", manifest["rounds"][1]["reason"])
+
     def test_input_issues_block_formal_export_but_remain_in_draft(self):
         capture = self.capture("capture-a")
         case = self.case("task-a", [self.round("prompt-a", "capture-a", 1)], [capture])
@@ -358,6 +374,28 @@ class ExportSatisfactionTests(unittest.TestCase):
         self.assertEqual(report["round_identity_check"], "compared_to_supplied_manifest")
         self.assertEqual(report["validation_ranges"]["M"], "M2:M100")
         self.assertIn("score/reason consistency and natural prose", report["not_checked"])
+
+    @unittest.skipIf(openpyxl is None, "openpyxl is only needed for workbook behavior tests")
+    def test_checker_rejects_a_row_whose_score_total_exceeds_twenty_one(self):
+        capture = self.capture("capture-a")
+        case = self.case("task-a", [self.round("prompt-a", "capture-a", 1)], [capture])
+        proc, result, output = self.run_export(self.payload([case]))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        workbook = openpyxl.load_workbook(result["outputPath"])
+        for column in (13, 15, 17, 19, 21):
+            workbook.active.cell(2, column).value = 5
+        workbook.save(result["outputPath"])
+
+        checked = subprocess.run([
+            sys.executable,
+            str(CHECKER),
+            result["outputPath"],
+            "--rounds-json",
+            str(output / "manifest.json"),
+        ], text=True, capture_output=True)
+
+        self.assertNotEqual(checked.returncode, 0)
+        self.assertIn("score total exceeds 21", checked.stdout)
 
     def test_same_frozen_input_preserves_values_except_absolute_export_location(self):
         capture = self.capture("capture-a")
@@ -554,7 +592,7 @@ class ExportSatisfactionTests(unittest.TestCase):
         draft_proc, draft_result, _ = self.run_export(self.payload([case]), draft=True, output_name="draft-missing-review")
         self.assertEqual(draft_proc.returncode, 0, draft_proc.stderr)
         draft_sheet = openpyxl.load_workbook(draft_result["outputPath"], data_only=False).active
-        self.assertEqual([draft_sheet.cell(2, column).value for column in (13, 15, 17, 19, 21)], [5, 5, 5, 5, 5])
+        self.assertEqual([draft_sheet.cell(2, column).value for column in (13, 15, 17, 19, 21)], [5, 4, 4, 4, 4])
         self.assertTrue(any("review evidence directory is missing" in issue for issue in draft_result["issues"]))
 
 

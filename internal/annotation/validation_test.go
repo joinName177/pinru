@@ -3,6 +3,7 @@ package annotation
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -327,6 +328,39 @@ func TestPreflightCountsLowScoredReadyRoundsAndBlocksIncompleteMaterial(t *testi
 	report = Preflight(cases)
 	if report.Ready != 0 || len(report.Issues) < 2 {
 		t.Fatalf("blocked Preflight() = %#v", report)
+	}
+}
+
+func TestPreflightCollectsTwentyOneButKeepsTruthfulTwentyTwoOut(t *testing.T) {
+	sha := strings.Repeat("a", 40)
+	makeCase := func(taskID string, scores [5]int) Case {
+		evaluation := validEvaluation("trace-hash-" + taskID)
+		for index := range scores {
+			score := scores[index]
+			evaluation.Scores[index] = &score
+		}
+		return Case{
+			TaskID: taskID, ProjectID: "project-1", Completed: true,
+			InitialSHA: sha, SnapshotURL: "https://github.com/acme/repo/commit/" + sha,
+			Rounds: []Round{{PromptID: "p-" + taskID, SessionID: "s-" + taskID, Order: 1, Status: "complete", EvidenceHash: evaluation.EvidenceHash, Evaluations: []Evaluation{evaluation}}},
+		}
+	}
+	cases := []Case{
+		makeCase("score-21", [5]int{5, 4, 4, 4, 4}),
+		makeCase("score-22", [5]int{5, 5, 4, 4, 4}),
+	}
+
+	report := Preflight(cases)
+
+	if report.Ready != 1 || report.NotCollected != 1 || len(report.Issues) != 0 {
+		t.Fatalf("Preflight() = %#v, want one collectable and one truthful over-limit evaluation", report)
+	}
+	got := make([]int, 0, 5)
+	for _, score := range cases[1].Rounds[0].Evaluations[0].Scores {
+		got = append(got, *score)
+	}
+	if !reflect.DeepEqual(got, []int{5, 5, 4, 4, 4}) {
+		t.Fatalf("Preflight changed truthful scores: %v", got)
 	}
 }
 

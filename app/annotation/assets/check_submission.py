@@ -161,12 +161,17 @@ def inspect(path, manifest=None, selected=None, allow_draft=False):
                     for column in COLS[:22] + ["X"]:
                         if values.get(column) is None or not str(values[column]).strip():
                             flag(errors, location + ":" + column, "Required value missing")
+                score_values = []
                 for column in SCORE_COLS:
                     value, kind, formula = cells.get(column, (None, "", False))
                     if value is None and allow_draft:
                         continue
                     if kind != "n" or formula or not re.fullmatch(r"[1-5]", str(value)):
                         flag(errors, location + ":" + column, "Score must be a numeric integer 1–5")
+                    else:
+                        score_values.append(int(value))
+                if len(score_values) == 5 and sum(score_values) > 21:
+                    flag(errors, location, "Five-dimensional score total exceeds 21 and is not collectable")
                 for column, choices in ENUMS.items():
                     if values.get(column) and values[column] not in choices:
                         flag(errors, location + ":" + column, "Value outside template enum")

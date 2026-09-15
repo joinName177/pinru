@@ -15,7 +15,7 @@ func TestQuickExportRejectsConflictingCacheAndAcceptsLatestRepair(t *testing.T) 
 		}
 	}
 	good := bad
-	good.Scores[0] = &four
+	good.Scores = [5]*int{&four, &four, &four, &four, &four}
 	good.NextPrompt = "修复空值输入没有提示的问题"
 	good.NextPromptType = "Bug修复"
 	c.Rounds[0].Evaluations = append(c.Rounds[0].Evaluations, good)

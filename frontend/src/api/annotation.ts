@@ -113,6 +113,7 @@ export interface AnnotationPreflightReport {
   tasks: number;
   rounds: number;
   ready: number;
+  notCollected: number;
   issues: string[];
 }
 

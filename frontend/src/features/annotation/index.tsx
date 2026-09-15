@@ -41,8 +41,12 @@ import { useAppStore } from '../../store';
 import { writeClipboardText } from '../../shared/lib/clipboard';
 import { waitForAnnotationJob } from './job';
 import { buildContainerCommand } from './containerCommand';
-import { getAnnotationContainerApiKey } from '../../api/config';
-import { getTableProgress, latestEvaluation } from './tableProgress';
+import { getAnnotationContainerApiKey, getConfig } from '../../api/config';
+import {
+  CONTAINER_SORT_PREFIXES_CONFIG_KEY,
+  sortContainersByPrefixes,
+} from './containerSorting';
+import { evaluationScoreTotal, getTableProgress, latestEvaluation } from './tableProgress';
 import { TableStatusBadge } from './TableStatusBadge';
 import { CrossProjectBatchSelector } from './CrossProjectBatchSelector';
 
@@ -127,6 +131,7 @@ function ScoreGrid({ evaluation }: { evaluation: AnnotationEvaluation }) {
 }
 
 function EvaluationCard({ evaluation, index }: { evaluation: AnnotationEvaluation; index: number; key?: string }) {
+  const scoreTotal = evaluationScoreTotal(evaluation);
   return (
     <div className="rounded-2xl border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900/60">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -137,7 +142,7 @@ function EvaluationCard({ evaluation, index }: { evaluation: AnnotationEvaluatio
           </p>
         </div>
         <span className="rounded-full bg-stone-100 px-2.5 py-1 text-[11px] font-semibold text-stone-600 dark:bg-stone-800 dark:text-stone-300">
-          {evaluation.current === false ? '历史评价 · 待重新复审' : evaluation.status === 'needs_evidence' ? '审核待补证据' : isPerfectEvaluation(evaluation) ? '五维满分 · 数据已保存' : '五维有扣分 · 数据已保存'}
+          {evaluation.current === false ? '历史评价 · 待重新复审' : evaluation.status === 'needs_evidence' ? '审核待补证据' : scoreTotal !== null && scoreTotal > 21 ? `五维总分 ${scoreTotal} · 超过21，不收录` : isPerfectEvaluation(evaluation) ? '五维满分 · 数据已保存' : `五维总分 ${scoreTotal ?? '-'} · 可收录`}
         </span>
       </div>
       <ScoreGrid evaluation={evaluation} />
@@ -239,6 +244,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     () => cases.find((item) => item.taskId === (taskId ?? selectedTaskId)) ?? null,
     [cases, selectedTaskId, taskId],
   );
+  const selectedProgress = selectedCase ? getTableProgress(selectedCase) : null;
   const persistedJob = selectedCase?.preparation;
   const persistedBusy: BusyAction | null = selectedCase && persistedJob && ['pending','running'].includes(persistedJob.status)
     ? {taskId:selectedCase.taskId,label:'准备制表数据',jobId:persistedJob.jobId,progress:persistedJob.progress,message:persistedJob.message} : null;
@@ -256,26 +262,22 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     setLoading(true);
     setLoadError('');
     try {
-      const [caseResult, containerResult] = await Promise.allSettled([
+      const [caseResult, containerResult, prefixResult] = await Promise.allSettled([
         listCases(targetProjectId),
         listContainers(),
+        getConfig(CONTAINER_SORT_PREFIXES_CONFIG_KEY),
       ]);
       if (epoch !== projectEpoch.current || targetProjectId !== activeProjectId.current) return;
       const nextCases = caseResult.status === 'fulfilled' ? caseResult.value : [];
       const nextContainers = containerResult.status === 'fulfilled' ? containerResult.value : [];
+      const containerSortPrefixes = prefixResult.status === 'fulfilled' ? prefixResult.value : 'cyc';
       setCases(nextCases);
-      setContainers([...nextContainers].sort((a, b) => {
-        const aIsCyc = /^cyc/i.test(a.name);
-        const bIsCyc = /^cyc/i.test(b.name);
-        if (aIsCyc !== bIsCyc) return aIsCyc ? -1 : 1;
-        if (!aIsCyc) return 0;
-        const sortName = (name: string) => name.replace(/^cyc[-_ ]*/i, 'cyc');
-        return sortName(b.name).localeCompare(sortName(a.name), 'en', { numeric: true, sensitivity: 'base' });
-      }));
+      setContainers(sortContainersByPrefixes(nextContainers, containerSortPrefixes));
       setSelectedTaskId((current) => nextCases.some((item) => item.taskId === current) ? current : (nextCases[0]?.taskId ?? ''));
       const errors = [
         caseResult.status === 'rejected' ? `题目加载失败：${errorMessage(caseResult.reason)}` : '',
         containerResult.status === 'rejected' ? `容器列表加载失败：${errorMessage(containerResult.reason)}` : '',
+        prefixResult.status === 'rejected' ? `容器排序设置加载失败：${errorMessage(prefixResult.reason)}` : '',
       ].filter(Boolean);
       setLoadError(errors.join('；'));
     } catch (error) {
@@ -742,7 +744,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                     ><FileSearch className="h-4 w-4" />采集并准备制表数据</button>
                     </div>
                   </div>
-                  <p className="mt-3 text-xs leading-5 text-stone-500">采集并准备制表数据会保存轨迹与代码，逐轮复核提示词要求是否完成、是否引入新问题，并保存五维评分和依据。确认存在功能遗漏或 Bug 时，评分不能全满分，必须提供以“修复”开头的提示词；五维全满分时不生成修复提示词。此时不生成 Excel，单题或统一导出时才生成文件。修复建议仅供复制，不会自动执行下一轮。</p>
+                  <p className="mt-3 text-xs leading-5 text-stone-500">采集并准备制表数据会保存轨迹与代码，逐轮复核提示词要求是否完成、是否引入新问题，并保存五维评分和依据。五项必须按证据独立评分，不能为了收录或凑数量压分；总分超过21的评价保留真实结果，但不进入导出。确认存在功能遗漏或 Bug 时，评分不能全满分，必须提供以“修复”开头的提示词；五维全满分时不生成修复提示词。此时不生成 Excel，单题或统一导出时才生成文件。修复建议仅供复制，不会自动执行下一轮。</p>
                   {traceCandidates.length === 0 && selectedCase.containerId && <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">当前绑定未发现可选轨迹，请确认容器会话已产生记录。</p>}
                   {taskId && <p className="mt-3 text-xs text-stone-500">已采集 {selectedCase.rounds.length} 轮、{selectedCase.captures.length} 份代码与轨迹快照。评分详情在“AI复审”查看；导出按钮位于本页顶部。</p>}
                 </section>
@@ -750,18 +752,19 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                 <section className="rounded-3xl border border-stone-200 bg-white p-5 dark:border-stone-800 dark:bg-stone-900">
                   <div className="flex flex-wrap items-center gap-3">
                     <h3 className="text-base font-bold dark:text-stone-100">制表数据准备状态</h3>
-                    <TableStatusBadge progress={getTableProgress(selectedCase)} />
-                    <span className="text-xs text-stone-500">可导出 {getTableProgress(selectedCase).prepared}/{getTableProgress(selectedCase).total} 轮</span>
+                    <TableStatusBadge progress={selectedProgress!} />
+                    <span className="text-xs text-stone-500">可导出 {selectedProgress!.prepared}/{selectedProgress!.total} 轮</span>
                   </div>
-                  <p className="mt-2 text-xs text-stone-500">采集轨迹与代码 → 按真实轮次审核需求和五维表现 → 校验并保存数据。点击导出时才生成 Excel。</p>
+                  <p className="mt-2 text-xs text-stone-500">采集轨迹与代码 → 按真实轮次审核需求和五维表现 → 校验并保存数据。总分不超过21才计入可导出轮次，超限评分仍原样保留。</p>
                   {taskId && view !== 'review' && <p className="mt-2 text-xs text-stone-500">在“AI复审”中查看逐项需求核验、评分依据，以及是否需要修复。</p>}
                   {selectedBusy && <p className="mt-2 text-sm text-indigo-500">{selectedBusy.message}</p>}
                   {persistedJob && <>
-                    <p className="mt-2 text-xs text-stone-500">耗时 {Math.floor((getTableProgress(selectedCase).elapsed ?? 0)/60)} 分钟 · 最后活动 {new Date(persistedJob.lastActivityAt*1000).toLocaleTimeString()}</p>
-                    {getTableProgress(selectedCase).quiet && <p className="mt-2 text-sm text-amber-600">超过 2 分钟没有新的审核进展，可能仍在等待模型响应；尚不能判定断线。可在后台任务中取消后重试。</p>}
+                    <p className="mt-2 text-xs text-stone-500">耗时 {Math.floor((selectedProgress!.elapsed ?? 0)/60)} 分钟 · 最后活动 {new Date(persistedJob.lastActivityAt*1000).toLocaleTimeString()}</p>
+                    {selectedProgress!.quiet && <p className="mt-2 text-sm text-amber-600">超过 2 分钟没有新的审核进展，可能仍在等待模型响应；尚不能判定断线。可在后台任务中取消后重试。</p>}
                     {persistedJob.error && <p className="mt-2 break-all text-sm text-red-500">{persistedJob.error}；已保存的轨迹与评分保留。</p>}
                   </>}
-                  {!selectedBusy && selectedCase.rounds.some((r) => r.status==='complete') && getTableProgress(selectedCase).state!=='ready' &&
+                  {!selectedBusy && selectedCase.rounds.some((r) => r.status==='complete') && selectedProgress &&
+                    (selectedProgress.reviewed! < selectedProgress.total || Boolean(selectedProgress.missing) || Boolean(selectedProgress.stale)) &&
                     <button className={`${SECONDARY_BUTTON} mt-3`} disabled={globalBusy} onClick={() => void runCaseJob(selectedCase.taskId,'继续准备制表数据',()=>resumeTable(selectedCase.taskId))}>继续准备未完成轮次</button>}
                 </section>
 
@@ -786,7 +789,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                             </div>
                             <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-stone-700 dark:text-stone-300">{round.prompt}</p>
                             <p className="mt-2 text-[11px] text-stone-400">来源 {round.sourceStart}-{round.sourceEnd} · cwd {round.cwd || '未记录'} · capture {round.captureId || '未记录'}</p>
-                            <p className="mt-2 text-xs text-stone-500">{!latestEvaluation(round) ? '轨迹已保存，尚无审核结果；暂不能判断功能是否完成或需要修复。' : latestEvaluation(round)?.current === false ? '评价对应的规则或证据已变化，需要重新复审。' : latestEvaluation(round)?.status === 'needs_evidence' ? '已复审，待补证据，暂不可正式导出。' : '本轮评价已保存；历史版本不重复计入复审轮数。'}</p>
+                            <p className="mt-2 text-xs text-stone-500">{!latestEvaluation(round) ? '轨迹已保存，尚无审核结果；暂不能判断功能是否完成或需要修复。' : latestEvaluation(round)?.current === false ? '评价对应的规则或证据已变化，需要重新复审。' : latestEvaluation(round)?.status === 'needs_evidence' ? '已复审，待补证据，暂不可正式导出。' : (evaluationScoreTotal(latestEvaluation(round)!) ?? 0) > 21 ? '本轮评价已保存，但五维总分超过21，不进入正式导出；系统不会改低真实评分。' : '本轮评价已保存；历史版本不重复计入复审轮数。'}</p>
                             {round.reason && <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">{round.reason}</p>}
                           </div>
                           <button
@@ -849,7 +852,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h3 className="text-base font-bold text-stone-900 dark:text-stone-50">批次预检与统一导出</h3>
-                  <p className="mt-1 text-xs text-stone-400">导出只汇总已保存的五维评价，不会自动审核。请先完成各轮审核；草稿允许评分留空。</p>
+                  <p className="mt-1 text-xs text-stone-400">导出只汇总已保存且五维总分不超过21的评价，不会自动审核或改分。请先完成各轮审核；草稿允许评分留空。</p>
                 </div>
                 <button className={SECONDARY_BUTTON} onClick={() => void handlePreflight()} disabled={preflightLoading || globalBusy || Object.keys(caseBusy).length > 0 || saving}>
                   {preflightLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}批次预检
@@ -857,10 +860,11 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
               </div>
               {report && (
                 <div className="mt-4 rounded-2xl bg-stone-50 p-4 dark:bg-stone-800/50">
-                  <div className="grid grid-cols-3 gap-3 text-center">
+                  <div className="grid grid-cols-2 gap-3 text-center md:grid-cols-4">
                     <div><p className="text-xl font-bold text-stone-800 dark:text-stone-100">{report.tasks}</p><p className="text-[11px] text-stone-400">题目</p></div>
                     <div><p className="text-xl font-bold text-stone-800 dark:text-stone-100">{report.rounds}</p><p className="text-[11px] text-stone-400">真实轮次</p></div>
                     <div><p className="text-xl font-bold text-stone-800 dark:text-stone-100">{report.ready}</p><p className="text-[11px] text-stone-400">可导出评价</p></div>
+                    <div><p className="text-xl font-bold text-stone-800 dark:text-stone-100">{report.notCollected ?? 0}</p><p className="text-[11px] text-stone-400">超过21不收录</p></div>
                   </div>
                   {report.issues.length > 0 && <ul className="mt-3 space-y-1 border-t border-stone-200 pt-3 text-xs text-amber-700 dark:border-stone-700 dark:text-amber-300">{report.issues.map((issue) => <li key={issue}>• {issue}</li>)}</ul>}
                 </div>

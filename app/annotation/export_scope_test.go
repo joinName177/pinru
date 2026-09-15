@@ -7,11 +7,20 @@ import (
 	"testing"
 )
 
+func scoredEvaluation(hash string, scores [5]int) domain.Evaluation {
+	evaluation := domain.Evaluation{ID: hash, Status: "ready", EvidenceHash: hash}
+	for index := range scores {
+		score := scores[index]
+		evaluation.Scores[index] = &score
+	}
+	return evaluation
+}
+
 func TestExportSelectionKeepsReviewedRoundsAcrossTasks(t *testing.T) {
 	makeRound := func(id, hash string, evaluated bool) domain.Round {
 		r := domain.Round{PromptID: id, EvidenceHash: hash, Status: "complete"}
 		if evaluated {
-			r.Evaluations = []domain.Evaluation{{ID: id, Status: "ready", EvidenceHash: hash}}
+			r.Evaluations = []domain.Evaluation{scoredEvaluation(hash, [5]int{4, 4, 4, 4, 4})}
 		}
 		return r
 	}
@@ -37,7 +46,8 @@ func TestExportSelectionKeepsReviewedRoundsAcrossTasks(t *testing.T) {
 }
 
 func TestReviewedExportRejectsLatestMissingOrStaleEvenWithOlderReady(t *testing.T) {
-	old := domain.Evaluation{Status: "ready", EvidenceHash: "h", CreatedAt: 1}
+	old := scoredEvaluation("h", [5]int{4, 4, 4, 4, 4})
+	old.CreatedAt = 1
 	stale := false
 	for _, latest := range []domain.Evaluation{
 		{Status: "needs_evidence", EvidenceHash: "h", CreatedAt: 2},
@@ -47,6 +57,26 @@ func TestReviewedExportRejectsLatestMissingOrStaleEvenWithOlderReady(t *testing.
 		if _, err := selectExportCases([]domain.Case{c}, ExportRequest{ReviewedOnly: true}); err == nil {
 			t.Fatal("export accepted stale or incomplete latest review")
 		}
+	}
+}
+
+func TestReviewedExportKeepsTwentyOneAndExcludesTruthfulTwentyTwo(t *testing.T) {
+	collectable := domain.Round{PromptID: "score-21", Status: "complete", EvidenceHash: "h21", Evaluations: []domain.Evaluation{scoredEvaluation("h21", [5]int{5, 4, 4, 4, 4})}}
+	overLimit := domain.Round{PromptID: "score-22", Status: "complete", EvidenceHash: "h22", Evaluations: []domain.Evaluation{scoredEvaluation("h22", [5]int{5, 5, 4, 4, 4})}}
+	cases := []domain.Case{{TaskID: "a", TaskName: "边界题", Rounds: []domain.Round{collectable, overLimit}}}
+
+	got, err := selectExportCases(cases, ExportRequest{ReviewedOnly: true})
+	if err != nil || len(got) != 1 || len(got[0].Rounds) != 1 || got[0].Rounds[0].PromptID != "score-21" {
+		t.Fatalf("selected = %+v, err = %v", got, err)
+	}
+	if *cases[0].Rounds[1].Evaluations[0].Scores[1] != 5 {
+		t.Fatal("selection changed the truthful over-limit score")
+	}
+	if _, err := selectExportCases(cases, ExportRequest{TaskID: "a", ReviewedOnly: true}); err != nil {
+		t.Fatalf("mixed task should still export its collectable round: %v", err)
+	}
+	if _, err := selectExportCases([]domain.Case{{TaskID: "b", TaskName: "超限题", Rounds: []domain.Round{overLimit}}}, ExportRequest{TaskID: "b", ReviewedOnly: true}); err == nil || !strings.Contains(err.Error(), "超过 21") {
+		t.Fatalf("over-limit-only export error = %v", err)
 	}
 }
 
@@ -95,7 +125,7 @@ func TestCaseAlwaysReadsCurrentCardTypeInsteadOfSavedReviewType(t *testing.T) {
 }
 
 func TestExportExplicitSubsetRequiresAvailableReviewedTasks(t *testing.T) {
-	r := domain.Round{Status: "complete", EvidenceHash: "h", Evaluations: []domain.Evaluation{{Status: "ready", EvidenceHash: "h"}}}
+	r := domain.Round{Status: "complete", EvidenceHash: "h", Evaluations: []domain.Evaluation{scoredEvaluation("h", [5]int{4, 4, 4, 4, 4})}}
 	cases := []domain.Case{{TaskID: "a", Rounds: []domain.Round{r}}, {TaskID: "b", Rounds: []domain.Round{r}}, {TaskID: "c", Rounds: []domain.Round{r}}, {TaskID: "empty"}}
 	got, err := selectExportCases(cases, ExportRequest{TaskIDs: []string{"c", "a", "a"}, ReviewedOnly: true})
 	if err != nil || len(got) != 2 || got[0].TaskID != "a" || got[1].TaskID != "c" {

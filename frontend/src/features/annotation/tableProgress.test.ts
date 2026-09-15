@@ -19,7 +19,14 @@ describe('table progress', () => {
   });
 
   it('counts a newly captured unreviewed round in the total to remove the completed mark', () => {
-    const evaluations = [{ status: 'ready', evidenceHash: 'current' }] as AnnotationRound['evaluations'];
+    const evaluations = [{ status: 'ready', evidenceHash: 'current', scores: [4, 4, 4, 4, 4] }] as AnnotationRound['evaluations'];
     expect(getTableProgress({ rounds: [round({ evaluations }), round()] })).toMatchObject({ prepared: 1, total: 2 });
+  });
+
+  it('collects total score 21 but marks truthful score 22 as not collected', () => {
+    const score21 = [{ status: 'ready', evidenceHash: 'current', scores: [5, 4, 4, 4, 4] }] as AnnotationRound['evaluations'];
+    const score22 = [{ status: 'ready', evidenceHash: 'current', scores: [5, 5, 4, 4, 4] }] as AnnotationRound['evaluations'];
+    expect(getTableProgress({ rounds: [round({ evaluations: score21 })] })).toMatchObject({ prepared: 1, notCollected: 0, state: 'ready' });
+    expect(getTableProgress({ rounds: [round({ evaluations: score22 })] })).toMatchObject({ prepared: 0, notCollected: 1, state: 'not_collected' });
   });
 });

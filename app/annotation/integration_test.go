@@ -86,10 +86,10 @@ func fakeReviewCLI(t *testing.T) (*appcli.CliService, string) {
 func fakeReviewCLIWithDelay(t *testing.T, delay string) (*appcli.CliService, string) {
 	t.Helper()
 	eval := map[string]any{
-		"status": "ready", "scores": []int{4, 5, 5, 5, 5}, "descriptions": []string{"加法入口能返回结果；在 code/main.py 的 add 函数中，空值反馈不完整，函数只计算 a+b，导致空值输入时没有明确提示。", "按原要求提供了加法入口。", "按入口、计算、反馈顺序组织实现。", "从输入类型推导处理分支。", "完成实现并运行了轨迹中记录的用例。"},
+		"status": "ready", "scores": []int{4, 5, 5, 5, 2}, "descriptions": []string{"加法入口能返回结果；在 code/main.py 的 add 函数中，空值反馈不完整，函数只计算 a+b，导致空值输入时没有明确提示。", "按原要求提供了加法入口。", "按入口、计算、反馈顺序组织实现。", "从输入类型推导处理分支。", "在本轮交付阶段，模型只运行了普通加法用例，没有执行空值输入验证，导致 code/main.py 的空值反馈缺陷在结束前没有被发现。"},
 		"descriptionChecks": []any{
 			map[string]string{"judgment": "空值反馈不完整", "location": "code/main.py 的 add 函数", "behavior": "函数只计算 a+b", "consequence": "空值输入时没有明确提示"},
-			map[string]string{}, map[string]string{}, map[string]string{}, map[string]string{},
+			map[string]string{}, map[string]string{}, map[string]string{}, map[string]string{"judgment": "没有执行空值输入验证", "location": "本轮交付阶段", "behavior": "模型只运行了普通加法用例", "consequence": "导致 code/main.py 的空值反馈缺陷在结束前没有被发现"},
 		},
 		"taskType": "0-1代码生成", "difficulty": "简单", "language": "Python", "environment": "无外部依赖", "harnessVersion": "2.1.0", "os": "MacOS/Linux",
 		"evidence": []string{"原轨迹第 2 行回复；静态检查 code/main.py；审核日志 evaluator.log"}, "missing": []string{},

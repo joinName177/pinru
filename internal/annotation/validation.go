@@ -47,6 +47,31 @@ var allowedRequirementCheckStatuses = map[string]struct{}{
 	"completed": {}, "failed": {}, "unverified": {},
 }
 
+const MaxCollectableScoreTotal = 21
+
+// EvaluationScoreTotal returns the saved five-dimensional score without
+// changing it. Incomplete evaluations have no collection total yet.
+func EvaluationScoreTotal(e Evaluation) (int, bool) {
+	total := 0
+	for _, score := range e.Scores {
+		if score == nil || *score < 1 || *score > 5 {
+			return 0, false
+		}
+		total += *score
+	}
+	return total, true
+}
+
+// IsCollectableEvaluation applies the platform's collection threshold after
+// the reviewer has independently saved the evidence-based scores.
+func IsCollectableEvaluation(e Evaluation) bool {
+	if e.Status != "ready" {
+		return false
+	}
+	total, complete := EvaluationScoreTotal(e)
+	return complete && total <= MaxCollectableScoreTotal
+}
+
 // ValidateEvaluation checks only structural, enum, evidence, and obvious
 // score-description consistency. It deliberately does not invent a semantic
 // score or claim that the underlying implementation was verified.
@@ -441,6 +466,10 @@ func Preflight(cases []Case) Report {
 			}
 			if err := ValidateEvaluation(round, *evaluation); err != nil {
 				addIssue("round %q evaluation is invalid: %v", round.PromptID, err)
+				continue
+			}
+			if !IsCollectableEvaluation(*evaluation) {
+				report.NotCollected++
 				continue
 			}
 			readyRounds++

@@ -112,8 +112,9 @@ type Preparation struct {
 }
 
 type Report struct {
-	Tasks  int      `json:"tasks"`
-	Rounds int      `json:"rounds"`
-	Ready  int      `json:"ready"`
-	Issues []string `json:"issues"`
+	Tasks        int      `json:"tasks"`
+	Rounds       int      `json:"rounds"`
+	Ready        int      `json:"ready"`
+	NotCollected int      `json:"notCollected"`
+	Issues       []string `json:"issues"`
 }

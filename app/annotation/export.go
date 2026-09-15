@@ -216,6 +216,9 @@ func (s *AnnotationService) export(ctx context.Context, req ExportRequest) (*Exp
 		return nil, err
 	}
 	report := s.preflight(ctx, cases)
+	if report.Ready == 0 && report.NotCollected > 0 && len(report.Issues) == 0 {
+		return nil, fmt.Errorf("所选评价五维总分均超过 %d，不符合平台收录规则；评分已按真实结果保留", domain.MaxCollectableScoreTotal)
+	}
 
 	if strings.TrimSpace(req.Submitter) == "" {
 		report.Issues = append(report.Issues, "提交人未填写")
@@ -307,6 +310,7 @@ func selectExportCases(cases []domain.Case, req ExportRequest) ([]domain.Case, e
 	}
 	selected := make([]domain.Case, 0, len(cases))
 	found := req.TaskID == ""
+	totalOverLimit := 0
 	for _, c := range cases {
 		if req.TaskIDs != nil && !wanted[c.TaskID] {
 			continue
@@ -315,31 +319,41 @@ func selectExportCases(cases []domain.Case, req ExportRequest) ([]domain.Case, e
 			continue
 		}
 		found = true
-		if req.ReviewedOnly {
-			rounds := make([]domain.Round, 0, len(c.Rounds))
-			for _, r := range c.Rounds {
-				if r.Status != "complete" {
+		rounds := make([]domain.Round, 0, len(c.Rounds))
+		overLimit := 0
+		for _, r := range c.Rounds {
+			var latest *domain.Evaluation
+			for i := range r.Evaluations {
+				e := &r.Evaluations[i]
+				if latest == nil || e.CreatedAt >= latest.CreatedAt {
+					latest = e
+				}
+			}
+			currentReady := r.Status == "complete" && latest != nil && latest.EvidenceHash == r.EvidenceHash && latest.Status == "ready" && (latest.Current == nil || *latest.Current)
+			if currentReady {
+				if err := domain.ValidateRepairConsistency(*latest); err != nil {
+					return nil, fmt.Errorf("题目 %s 第 %d 轮：%w", c.TaskName, r.Order, err)
+				}
+				if total, complete := domain.EvaluationScoreTotal(*latest); complete && total > domain.MaxCollectableScoreTotal {
+					overLimit++
+					totalOverLimit++
 					continue
 				}
-				var latest *domain.Evaluation
-				for i := range r.Evaluations {
-					e := &r.Evaluations[i]
-					if latest == nil || e.CreatedAt >= latest.CreatedAt {
-						latest = e
-					}
-				}
-				if latest != nil && latest.EvidenceHash == r.EvidenceHash && latest.Status == "ready" && (latest.Current == nil || *latest.Current) {
-					rounds = append(rounds, r)
-				}
 			}
-			if len(rounds) == 0 {
-				if req.TaskIDs != nil {
-					return nil, fmt.Errorf("题目 %s 暂无可导出的制表数据，请刷新后重新选择", c.TaskName)
-				}
-				continue
+			if !req.ReviewedOnly || (currentReady && domain.IsCollectableEvaluation(*latest)) {
+				rounds = append(rounds, r)
 			}
-			c.Rounds = rounds
 		}
+		if len(rounds) == 0 {
+			if overLimit > 0 && (req.TaskID != "" || req.TaskIDs != nil) {
+				return nil, fmt.Errorf("题目 %s 的五维总分超过 %d，不符合平台收录规则；评分已按真实结果保留", c.TaskName, domain.MaxCollectableScoreTotal)
+			}
+			if req.TaskIDs != nil {
+				return nil, fmt.Errorf("题目 %s 暂无可导出的制表数据，请刷新后重新选择", c.TaskName)
+			}
+			continue
+		}
+		c.Rounds = rounds
 		for _, r := range c.Rounds {
 			if r.Status == "excluded" {
 				continue
@@ -362,6 +376,9 @@ func selectExportCases(cases []domain.Case, req ExportRequest) ([]domain.Case, e
 	}
 	if !found {
 		return nil, errors.New("题目不属于当前项目")
+	}
+	if len(selected) == 0 && totalOverLimit > 0 {
+		return nil, fmt.Errorf("所选评价五维总分均超过 %d，不符合平台收录规则；评分已按真实结果保留", domain.MaxCollectableScoreTotal)
 	}
 	if req.ReviewedOnly && len(selected) == 0 {
 		return nil, errors.New("暂无已制表内容，请先完成至少一轮五维审核")

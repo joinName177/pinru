@@ -51,6 +51,8 @@
 
 `status=ready` 要求五项分数和描述齐全、轮次已完成、必要身份与证据可定位；否则为 `needs_evidence`。`evidence` 只列实际使用的轨迹事件、文件、差异或验证输出。`issues.kind` 只使用 `bug`、`process` 或 `evidence`：轮末未解决的真实产物缺陷为 `bug`，过程问题为 `process`，材料缺口为 `evidence`。
 
+收录资格不写入 `status`。五项先按证据独立定分，再求总分；总分不超过21才可收录，超过21时仍返回原始真实分数，证据完整仍用 `ready`，由应用在正式导出时排除。不得为了门槛、数量、配额或交差而将分数压到21及以下，也不得制造扣分依据。
+
 `requirementChecks` 必须非空，逐项覆盖原始提示词的功能要求、约束和验收条件。每项的 `requirement`、`status`、`evidence` 均不能为空；`status` 只使用 `completed`、`failed` 或 `unverified`。`evidence` 写具体文件、命令输出或明确标注的静态依据，并区分原模型执行、评价助手复验和静态判断。`failed` 只用于有事实支持的轮末未完成项或未解决 Bug，并必须有对应的 `issues.kind=bug`；`unverified` 表示现有证据无法核实，不是 Bug，不得据此生成修复提示词，同时必须设为 `needs_evidence` 并在 `missing` 写明具体缺口。若只有未验证项、没有已确认 Bug，交付完整性分数填为 `null`；若同轮另有已确认的 `failed`/Bug，可依据该 Bug 将交付完整性评为 1—4，同时保留未验证项及缺证据状态。未验证项不强迫其他维度清空或降分。关键证据缺失时不得以五维全 5 宣称逐项核验完成。
 
 ## 一致性检查
@@ -65,4 +67,4 @@
 - `nextPrompt` 与 `nextPromptType` 按 [下一轮建议](next-turn-guidance.md) 填写。先逐项复核需求完成度并把需求、证据、结论存入 requirementChecks；原需求遗漏、回归或未解决 Bug 必须列为 bug，交付完整性低于 5，生成以“修复”开头的具体提示词。五项均为 5 时不得有未解决 Bug 或修复提示词，不要求填写不满意原因。矛盾结果回查证据重评，不机械改分或删除问题。
 - JSON 中不声称外部审核通过，也不把 AI 评价标成人工评价。
 
-应用按 `evidenceHash`、skill 哈希和评价模型管理缓存与重试；模型只返回上述 schema。批量导出时由应用选择追加顺序中最后一个与该轮 `evidenceHash` 相同且 `status=ready` 的版本。
+应用按 `evidenceHash`、skill 哈希和评价模型管理缓存与重试；模型只返回上述 schema。批量导出时由应用选择追加顺序中最后一个与该轮 `evidenceHash` 相同且 `status=ready` 的版本，再按五维总分不超过21执行收录；超限版本保留在评价历史中，不改分、不落正式表。

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AnnotationCase, AnnotationEvaluation, AnnotationRound } from '../../api/annotation';
 import { getTableProgress } from './tableProgress';
 
-const evaluation = (overrides: Partial<AnnotationEvaluation> = {}) => ({ status: 'ready', evidenceHash: 'current', scores: [4,5,5,5,5], ...overrides }) as AnnotationEvaluation;
+const evaluation = (overrides: Partial<AnnotationEvaluation> = {}) => ({ status: 'ready', evidenceHash: 'current', scores: [4,4,4,4,4], ...overrides }) as AnnotationEvaluation;
 const round = (evaluations: AnnotationEvaluation[] = [], overrides: Partial<AnnotationRound> = {}) => ({ status:'complete', evidenceHash:'current', evaluations, ...overrides }) as AnnotationRound;
 const item = (rounds: AnnotationRound[], overrides: Partial<AnnotationCase> = {}) => ({rounds,...overrides}) as AnnotationCase;
 

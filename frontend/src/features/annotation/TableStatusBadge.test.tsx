@@ -16,4 +16,8 @@ describe('TableStatusBadge',()=>{
     render(<TableStatusBadge progress={{state:'needs_evidence',prepared:0,reviewed:1,total:1}} />);
     expect(screen.getByText('待补证据 · 已复审 1/1 轮')).toBeInTheDocument();
   });
+  it('explains that a truthful score above 21 is not collected',()=>{
+    render(<TableStatusBadge progress={{state:'not_collected',prepared:0,reviewed:1,notCollected:1,total:1}} />);
+    expect(screen.getByText('超过21分，不收录 · 已复审 1/1 轮')).toHaveAttribute('title', expect.stringContaining('不收录 1 轮'));
+  });
 });
