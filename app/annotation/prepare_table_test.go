@@ -10,6 +10,7 @@ import (
 	"time"
 
 	domain "github.com/blueship581/pinru/internal/annotation"
+	"github.com/blueship581/pinru/internal/store"
 )
 
 func TestBatchCaptureAndTableStartsIndependentReviewsTogether(t *testing.T) {
@@ -74,6 +75,65 @@ func TestBatchReviewConcurrencyUsesConfiguredBound(t *testing.T) {
 	}
 	if got := s.batchReviewConcurrency(3); got != 3 {
 		t.Fatalf("clamped concurrency = %d, want 3", got)
+	}
+}
+
+func TestBatchCaptureAndTableSelectsTasksAcrossProjects(t *testing.T) {
+	s, trace, _ := annotationFixture(t)
+	if _, err := s.Capture(CaptureRequest{TaskID: "题目-1", TracePath: trace}); err != nil {
+		t.Fatal(err)
+	}
+
+	secondProject := "batch-two"
+	if err := s.store.CreateProject(store.Project{ID: secondProject, Name: "第二批次", Models: "[]", CloneBasePath: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	original, err := s.store.GetTask("题目-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSource := t.TempDir()
+	if err := os.WriteFile(filepath.Join(secondSource, "main.py"), []byte("def sub(a,b): return a-b\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second := *original
+	second.ID = "题目-2"
+	second.ProjectConfigID = &secondProject
+	second.ProjectName = "第二项目题目"
+	second.LocalPath = &secondSource
+	if err := s.store.CreateTask(second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PrepareCase(PrepareRequest{TaskID: second.ID}); err != nil {
+		t.Fatal(err)
+	}
+	secondTrace := filepath.Join(t.TempDir(), "session.jsonl")
+	writeFixtureTrace(t, secondTrace, secondSource, 1)
+	if _, err := s.Capture(CaptureRequest{TaskID: second.ID, TracePath: secondTrace}); err != nil {
+		t.Fatal(err)
+	}
+
+	unselected := *original
+	unselected.ID = "题目-3"
+	unselected.ProjectName = "未选择题目"
+	if err := s.store.CreateTask(unselected); err != nil {
+		t.Fatal(err)
+	}
+
+	s.cli, _ = fakeReviewCLI(t)
+	payload, _ := json.Marshal(BatchPrepareRequest{TaskIDs: []string{"题目-2", "题目-1", "题目-2"}})
+	output, err := s.ExecuteJob(context.Background(), "annotation_batch_capture_table", string(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := output.(*BatchPrepareResult)
+	if result.Total != 2 || result.Prepared != 2 || result.Failed != 0 {
+		t.Fatalf("selected cross-project batch = %+v", result)
+	}
+	for _, item := range result.Items {
+		if item.TaskID == unselected.ID {
+			t.Fatalf("unselected task was reviewed: %+v", item)
+		}
 	}
 }
 
@@ -174,7 +234,10 @@ func TestCaptureAndTableCachesGradesWithoutRequiringAnotherRound(t *testing.T) {
 func TestCaptureAndTablePreservesNonBlockingReadyGapsAsLimitations(t *testing.T) {
 	s, trace, _ := annotationFixture(t)
 	eval := map[string]any{
-		"status": "ready", "scores": []int{5, 5, 5, 5, 4}, "descriptions": []string{"交付完整。", "遵循要求。", "规划完整。", "推理正确。", "执行存在一次多余调用。"},
+		"status": "ready", "scores": []int{5, 5, 5, 5, 4}, "descriptions": []string{"交付完整。", "遵循要求。", "规划完整。", "推理正确。", "执行阶段出现了一次多余调用，这项操作没有帮助完成任务，增加了无效步骤。"},
+		"descriptionChecks": []any{map[string]any{}, map[string]any{}, map[string]any{}, map[string]any{}, map[string]string{
+			"judgment": "出现了一次多余调用", "location": "执行阶段", "behavior": "这项操作没有帮助完成任务", "consequence": "增加了无效步骤",
+		}},
 		"taskType": "0-1代码生成", "difficulty": "简单", "language": "Python", "environment": "无外部依赖", "harnessVersion": "2.1.0", "os": "MacOS/Linux",
 		"evidence": []string{"代码和构建结果均已核验"}, "missing": []string{"未进行真实浏览器交互验证"},
 		"requirementChecks": []map[string]string{{"requirement": "实现加法功能", "status": "completed", "evidence": "静态检查和构建均通过"}},

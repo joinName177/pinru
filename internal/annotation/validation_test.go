@@ -218,6 +218,51 @@ func TestValidateEvaluationDoesNotTreatNegatedContradictionPhraseAsAClaim(t *tes
 	}
 }
 
+func TestValidateEvaluationAcceptsNaturalDescriptionsWithTechnicalReferences(t *testing.T) {
+	round := Round{PromptID: "p-1", EvidenceHash: "round-hash"}
+	evaluation := validEvaluation("round-hash")
+	evaluation.Descriptions[0] = "本轮修改了 internal/annotation/validation.go 中的 ValidateEvaluation，并通过 go test ./internal/annotation 验证了状态校验。文件名、函数名和命令都能直接定位到本轮交付。"
+	if err := ValidateEvaluation(round, evaluation); err != nil {
+		t.Fatalf("technical references in natural prose were rejected: %v", err)
+	}
+}
+
+func TestValidateEvaluationDoesNotRejectNaturalCausalWording(t *testing.T) {
+	round := Round{PromptID: "p-1", EvidenceHash: "round-hash"}
+	evaluation := validEvaluation("round-hash")
+	evaluation.Descriptions[0] = "validation.go 会检查空参数，因此给调用方返回明确错误。这个处理与本轮要求一致。"
+	if err := ValidateEvaluation(round, evaluation); err != nil {
+		t.Fatalf("natural causal wording was rejected: %v", err)
+	}
+}
+
+func TestValidateEvaluationRejectsMachineFormattedDescriptions(t *testing.T) {
+	round := Round{PromptID: "p-1", EvidenceHash: "round-hash"}
+	tests := []struct {
+		name        string
+		description string
+		want        string
+	}{
+		{"markdown backticks", "修改了 `validation.go`，并执行了 `go test ./...`。", "反引号"},
+		{"arrow chain", "修改 validation.go → 执行测试 → 完成交付。", "箭头"},
+		{"template labels", "触发节点：保存时。实际行为：写入失败。业务影响：数据丢失。", "固定标签"},
+		{"markdown list", "- 修改 validation.go\n- 执行 go test ./...", "单段"},
+		{"decorative emoji", "✅ validation.go 已修改，测试已经通过。", "装饰符号"},
+		{"decorative bullet", "● validation.go 已修改，测试已经通过。", "装饰符号"},
+		{"stock conclusion", "validation.go 已修改并完成测试，综上所述，因此给5分。", "套话"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			evaluation := validEvaluation("round-hash")
+			evaluation.Descriptions[0] = test.description
+			err := ValidateEvaluation(round, evaluation)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ValidateEvaluation() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestPreflightCountsLowScoredReadyRoundsAndBlocksIncompleteMaterial(t *testing.T) {
 	sha := strings.Repeat("a", 40)
 	evaluation := validEvaluation("trace-hash")

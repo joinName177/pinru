@@ -41,9 +41,10 @@ import { useAppStore } from '../../store';
 import { writeClipboardText } from '../../shared/lib/clipboard';
 import { waitForAnnotationJob } from './job';
 import { buildContainerCommand } from './containerCommand';
-import { getConfig } from '../../api/config';
+import { getAnnotationContainerApiKey } from '../../api/config';
 import { getTableProgress, latestEvaluation } from './tableProgress';
 import { TableStatusBadge } from './TableStatusBadge';
+import { CrossProjectBatchSelector } from './CrossProjectBatchSelector';
 
 const INPUT_CLASS = 'w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-800 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:border-stone-700 dark:bg-[#171B22] dark:text-stone-100 dark:focus:border-slate-500 dark:focus:ring-slate-800';
 const PRIMARY_BUTTON = 'inline-flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white';
@@ -225,6 +226,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
   const [exportBusy, setExportBusy] = useState<BusyAction | null>(null);
   const [batchBusy, setBatchBusy] = useState<BusyAction | null>(null);
   const [batchResult, setBatchResult] = useState<AnnotationBatchPrepareResult | null>(null);
+  const [showBatchSelection, setShowBatchSelection] = useState(false);
   const [showExportSelection, setShowExportSelection] = useState(false);
   const [exportTaskIds, setExportTaskIds] = useState<string[]>([]);
   const exportableCases = cases.filter((item) => getTableProgress(item).prepared > 0);
@@ -293,6 +295,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     setExportBusy(null);
     setBatchBusy(null);
     setBatchResult(null);
+    setShowBatchSelection(false);
     setShowExportSelection(false);
     setExportTaskIds([]);
     setSaving(false);
@@ -468,7 +471,8 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     }
   };
 
-  const handleBatchPrepare = async () => {
+  const handleBatchPrepare = async (taskIds: string[]) => {
+    if (taskIds.length === 0) return;
     const targetProjectId = activeProjectId.current;
     const label = '批量采集并准备制表数据';
     setActionError('');
@@ -476,7 +480,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     setBatchResult(null);
     setBatchBusy({ taskId: '', label, jobId: '', progress: 0, message: '正在提交批量后台任务' });
     try {
-      const submitted = await batchCaptureAndPrepareTable(targetProjectId);
+      const submitted = await batchCaptureAndPrepareTable(taskIds);
       if (targetProjectId !== activeProjectId.current) return;
       setBatchBusy({ taskId: '', label, jobId: submitted.id, progress: submitted.progress ?? 0, message: submitted.progressMessage ?? '等待执行' });
       const finished = await waitForAnnotationJob(submitted.id, (job) => {
@@ -525,7 +529,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {!taskId && <button className={SECONDARY_BUTTON} disabled={loading || globalBusy || Object.keys(caseBusy).length > 0 || cases.length === 0} onClick={() => void handleBatchPrepare()}>{batchBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}批量采集并准备制表数据</button>}
+            {!taskId && <button className={SECONDARY_BUTTON} disabled={loading || globalBusy || Object.keys(caseBusy).length > 0} aria-expanded={showBatchSelection} onClick={() => setShowBatchSelection((open) => !open)}>{batchBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}批量采集并准备制表数据</button>}
             <button className={SECONDARY_BUTTON} disabled={loading || globalBusy} aria-expanded={showExportSelection} onClick={() => setShowExportSelection((open) => !open)}><Download className="h-4 w-4" />选择题目导出</button>
             <button className={PRIMARY_BUTTON} disabled={loading || globalBusy || Object.keys(caseBusy).length > 0} onClick={() => void handleExport(true, taskId, true)}><Download className="h-4 w-4" />{taskId ? '导出本题 Excel' : '一键导出已制表'}</button>
             {taskId && <button className={SECONDARY_BUTTON} disabled={loading || globalBusy || Object.keys(caseBusy).length > 0} onClick={() => void handleExport(true, undefined, true)}><Download className="h-4 w-4" />导出全项目已制表</button>}
@@ -534,6 +538,10 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
           </button>
           </div>
         </div>
+
+        {showBatchSelection && !taskId && (
+          <CrossProjectBatchSelector disabled={Boolean(batchBusy)} onSubmit={handleBatchPrepare} />
+        )}
 
         {showExportSelection && (
           <section aria-label="选择导出题目" className="mb-5 rounded-2xl border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
@@ -648,7 +656,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                       </div>
                       <button className={SECONDARY_BUTTON} disabled={!startup?.value} onClick={() => {
                         if (!startup?.value) return;
-                        void getConfig('annotation_container_api_key')
+                        void getAnnotationContainerApiKey()
                           .then((apiKey) => writeClipboardText(buildContainerCommand(selectedCase, apiKey).command))
                           .then(() => setNotice('容器启动命令已复制，请在本地终端执行'))
                           .catch((error) => setActionError(errorMessage(error)));

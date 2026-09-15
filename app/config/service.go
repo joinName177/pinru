@@ -30,6 +30,11 @@ type CustomProjectSettings struct {
 	Prefixes string `json:"prefixes"`
 }
 
+type AnnotationSettings struct {
+	ReviewEngine       string `json:"reviewEngine"`
+	HasContainerAPIKey bool   `json:"hasContainerApiKey"`
+}
+
 // Service manages application configuration, projects, LLM providers, and
 // GitHub accounts.
 type ConfigService struct {
@@ -58,6 +63,43 @@ func (s *ConfigService) GetConfig(key string) (string, error) {
 
 func (s *ConfigService) SetConfig(key, value string) error {
 	return s.store.SetConfig(key, value)
+}
+
+func (s *ConfigService) GetAnnotationSettings() (*AnnotationSettings, error) {
+	engine, err := s.store.GetConfig("annotation_review_engine")
+	if err != nil {
+		return nil, err
+	}
+	engine = strings.ToLower(strings.TrimSpace(engine))
+	if engine == "" {
+		engine = "deepseek"
+	}
+	key, err := s.store.GetConfig("annotation_container_api_key")
+	if err != nil {
+		return nil, err
+	}
+	return &AnnotationSettings{
+		ReviewEngine:       engine,
+		HasContainerAPIKey: strings.TrimSpace(key) != "",
+	}, nil
+}
+
+func (s *ConfigService) SaveAnnotationSettings(reviewEngine, containerAPIKey string) error {
+	engine := strings.ToLower(strings.TrimSpace(reviewEngine))
+	if engine != "codex" && engine != "deepseek" {
+		return errors.New("审核引擎只支持 Codex CLI 或 DeepSeek V4 Flash")
+	}
+	if err := s.store.SetConfig("annotation_review_engine", engine); err != nil {
+		return err
+	}
+	if key := strings.TrimSpace(containerAPIKey); key != "" {
+		return s.store.SetConfig("annotation_container_api_key", key)
+	}
+	return nil
+}
+
+func (s *ConfigService) GetAnnotationContainerAPIKey() (string, error) {
+	return s.store.GetConfig("annotation_container_api_key")
 }
 
 func (s *ConfigService) TestGitLabConnection(url, token string, skipTLSVerify bool) (bool, error) {
@@ -516,5 +558,10 @@ func (s *ConfigService) SaveTraeSettings(workspaceStoragePath, logsPath string) 
 }
 
 func isSensitiveConfigKey(key string) bool {
-	return strings.EqualFold(strings.TrimSpace(key), "gitlab_token")
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "gitlab_token", "annotation_container_api_key":
+		return true
+	default:
+		return false
+	}
 }

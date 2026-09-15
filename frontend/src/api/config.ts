@@ -111,12 +111,34 @@ export interface CustomProjectSettings {
   prefixes: string;
 }
 
+export type AnnotationReviewEngine = 'codex' | 'deepseek';
+
+export interface AnnotationSettings {
+  reviewEngine: AnnotationReviewEngine;
+  hasContainerApiKey: boolean;
+}
+
 export async function getConfig(key: string): Promise<string> {
   return callService('ConfigService', 'GetConfig', key);
 }
 
 export async function setConfig(key: string, value: string): Promise<void> {
   return callService('ConfigService', 'SetConfig', key, value);
+}
+
+export async function getAnnotationSettings(): Promise<AnnotationSettings> {
+  return callService('ConfigService', 'GetAnnotationSettings');
+}
+
+export async function saveAnnotationSettings(
+  reviewEngine: AnnotationReviewEngine,
+  containerApiKey: string,
+): Promise<void> {
+  return callService('ConfigService', 'SaveAnnotationSettings', reviewEngine, containerApiKey);
+}
+
+export async function getAnnotationContainerApiKey(): Promise<string> {
+  return callService('ConfigService', 'GetAnnotationContainerAPIKey');
 }
 
 export async function testGitLabConnection(

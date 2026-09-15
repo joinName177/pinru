@@ -45,7 +45,8 @@ type CaptureRequest struct {
 	TracePath string `json:"tracePath"`
 }
 type BatchPrepareRequest struct {
-	ProjectID string `json:"projectId"`
+	ProjectID string   `json:"projectId"`
+	TaskIDs   []string `json:"taskIds,omitempty"`
 }
 type BatchPrepareItem struct {
 	TaskID   string `json:"taskId"`
@@ -161,7 +162,7 @@ func (s *AnnotationService) ListCases(projectID string) ([]domain.Case, error) {
 	if err != nil {
 		return nil, err
 	}
-	_, modelLabel, modelErr := s.reviewProvider()
+	reviewExecution, modelErr := s.reviewExecution()
 	for _, task := range tasks {
 		c, err := s.loadCase(task.ID)
 		if err != nil {
@@ -191,7 +192,7 @@ func (s *AnnotationService) ListCases(projectID string) ([]domain.Case, error) {
 				// evidence and scoring-rule version shown on the task card.
 				current := e.SkillHash == skillHash && e.EvidenceHash == r.EvidenceHash && sourceHash != "" && e.SourceHash == sourceHash
 				if modelErr == nil {
-					current = current && e.Model == modelLabel
+					current = current && e.Model == reviewExecution.Label
 				}
 				e.Current = &current
 			}

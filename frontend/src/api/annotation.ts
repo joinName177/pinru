@@ -211,11 +211,11 @@ export function captureAndPrepareTable(request: CaptureRequest): Promise<Backgro
   return submitAnnotationJob('annotation_capture_table', request.taskId, request);
 }
 
-export function batchCaptureAndPrepareTable(projectId: string): Promise<BackgroundJob> {
+export function batchCaptureAndPrepareTable(taskIds: string[]): Promise<BackgroundJob> {
   return submitJob({
     jobType: 'annotation_batch_capture_table',
     taskId: '',
-    inputPayload: JSON.stringify({ projectId }),
+    inputPayload: JSON.stringify({ taskIds }),
     maxRetries: 1,
     timeoutSeconds: 21600,
   });

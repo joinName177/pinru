@@ -12,7 +12,11 @@ var (
 	fullSHA              = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 	fivePointDeduction   = regexp.MustCompile(`扣\s*(?:1|一)\s*分`)
 	negatedDeduction     = regexp.MustCompile(`(?:没有|并未|未|无需|不)\s*扣\s*(?:1|一)\s*分`)
+	markdownListPrefix   = regexp.MustCompile(`^\s*(?:#{1,6}\s+|[-+*]\s+|\d+[.)、]\s+)`)
+	scoreConclusion      = regexp.MustCompile(`(?:因此|故)给\s*(?:[1-5]|一|二|三|四|五)\s*分`)
 	perfectClaimPatterns = []string{"无任何问题", "没有任何问题", "无任何不足", "没有任何不足", "全部完美", "完全无误", "满分表现"}
+	descriptionLabels    = []string{"触发节点：", "触发节点:", "实际行为：", "实际行为:", "业务影响：", "业务影响:", "证据：", "证据:"}
+	stockConclusions     = []string{"综上所述", "总体而言", "总的来说"}
 )
 
 var allowedTaskTypes = map[string]struct{}{
@@ -113,6 +117,9 @@ func ValidateEvaluation(round Round, evaluation Evaluation) error {
 		if description == "" {
 			return fmt.Errorf("evaluation description %d is required for its score", index+1)
 		}
+		if err := validateDescriptionStyle(description); err != nil {
+			return fmt.Errorf("evaluation description %d 文案不符合要求：%w", index+1, err)
+		}
 		if *score == 5 && fivePointDeduction.MatchString(description) && !negatedDeduction.MatchString(description) {
 			return fmt.Errorf("evaluation score and description %d contradict: score 5 claims a deduction", index+1)
 		}
@@ -193,6 +200,47 @@ func ValidateEvaluation(round Round, evaluation Evaluation) error {
 		return fmt.Errorf("unverified requirement without a confirmed bug requires a null delivery score")
 	}
 	return ValidateRepairConsistency(evaluation)
+}
+
+func validateDescriptionStyle(description string) error {
+	if strings.ContainsAny(description, "\r\n") {
+		return fmt.Errorf("请写成连贯的单段中文，不要使用换行或列表")
+	}
+	if strings.Contains(description, "`") {
+		return fmt.Errorf("不要使用 Markdown 反引号；文件名、路径、函数名和命令须保留为普通文本")
+	}
+	if strings.Contains(description, "→") || strings.Contains(description, "⇒") || strings.Contains(description, "➜") ||
+		strings.Contains(description, "➡") || strings.Contains(description, "->") || strings.Contains(description, "=>") {
+		return fmt.Errorf("不要使用箭头串联内容，请改用自然中文说明前后关系")
+	}
+	for _, r := range description {
+		if r >= 0x2190 && r <= 0x21FF {
+			return fmt.Errorf("不要使用箭头串联内容，请改用自然中文说明前后关系")
+		}
+	}
+	if markdownListPrefix.MatchString(description) || strings.Contains(description, "**") {
+		return fmt.Errorf("不要使用 Markdown 标题、列表或强调符号")
+	}
+	for _, label := range descriptionLabels {
+		if strings.Contains(description, label) {
+			return fmt.Errorf("不要使用“触发节点、实际行为、证据、业务影响”等固定标签")
+		}
+	}
+	for _, phrase := range stockConclusions {
+		if strings.Contains(description, phrase) {
+			return fmt.Errorf("不要使用“%s”等评价套话，直接陈述事实和影响", phrase)
+		}
+	}
+	if scoreConclusion.MatchString(description) {
+		return fmt.Errorf("不要使用“因此给X分”等评价套话，分数已经单独记录")
+	}
+	for _, r := range description {
+		if r == 0x2022 || (r >= 0x2460 && r <= 0x24FF) || (r >= 0x25A0 && r <= 0x27BF) ||
+			(r >= 0x1F000 && r <= 0x1FAFF) || r == 0xFE0F {
+			return fmt.Errorf("不要使用 Emoji、勾选图标等装饰符号")
+		}
+	}
+	return nil
 }
 
 // ValidateRepairConsistency also checks saved evaluations before export.

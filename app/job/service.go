@@ -33,7 +33,7 @@ const (
 	gitCloneRetryBackoff           = 2 * time.Second
 	gitCloneIdleTimeout            = 30 * time.Second
 	msgAiReviewCommitRequired      = "请先提交代码，再发起 AI 复审"
-	msgDeepSeekReviewProvider      = "请先在设置中添加带 API Key 的 DeepSeek V4 Flash API 提供商，AI 审核不会自动回退到 Codex 模型"
+	msgDeepSeekReviewProvider      = "请先在设置中添加带 API Key 的 DeepSeek V4 Flash API 提供商，或将审核引擎切换为 Codex CLI"
 )
 
 var errGitCloneIdleTimeout = fmt.Errorf(errs.FmtJobGitCloneIdleTimeout, gitCloneIdleTimeout)
@@ -80,13 +80,32 @@ func New(
 	return s
 }
 
-func (s *JobService) deepSeekReviewConfig() (appcli.DeepSeekCodexConfig, error) {
+type reviewExecutionSelection struct {
+	DeepSeek *appcli.DeepSeekCodexConfig
+	Label    string
+}
+
+func (s *JobService) reviewExecutionConfig() (reviewExecutionSelection, error) {
 	if s.store == nil {
-		return appcli.DeepSeekCodexConfig{}, errors.New(msgDeepSeekReviewProvider)
+		return reviewExecutionSelection{}, errors.New(msgDeepSeekReviewProvider)
+	}
+	engine, err := s.store.GetConfig("annotation_review_engine")
+	if err != nil {
+		return reviewExecutionSelection{}, err
+	}
+	engine = strings.ToLower(strings.TrimSpace(engine))
+	if engine == "" {
+		engine = "deepseek"
+	}
+	if engine == "codex" {
+		return reviewExecutionSelection{Label: "Codex CLI"}, nil
+	}
+	if engine != "deepseek" {
+		return reviewExecutionSelection{}, errors.New("不支持的审核引擎，请在设置中重新选择")
 	}
 	providers, err := s.store.ListLLMProviders()
 	if err != nil {
-		return appcli.DeepSeekCodexConfig{}, err
+		return reviewExecutionSelection{}, err
 	}
 	var selected *store.LLMProvider
 	for _, requireDefault := range []bool{true, false} {
@@ -101,16 +120,17 @@ func (s *JobService) deepSeekReviewConfig() (appcli.DeepSeekCodexConfig, error) 
 		}
 	}
 	if selected == nil {
-		return appcli.DeepSeekCodexConfig{}, errors.New(msgDeepSeekReviewProvider)
+		return reviewExecutionSelection{}, errors.New(msgDeepSeekReviewProvider)
 	}
 	baseURL := strings.TrimRight(strings.TrimSpace(*selected.BaseURL), "/")
 	baseURL = strings.TrimSuffix(baseURL, "/v1")
-	return appcli.DeepSeekCodexConfig{
+	config := &appcli.DeepSeekCodexConfig{
 		Model:           strings.TrimSpace(selected.Model),
 		BaseURL:         baseURL,
 		APIKey:          strings.TrimSpace(selected.APIKey),
 		ReasoningEffort: "high",
-	}, nil
+	}
+	return reviewExecutionSelection{DeepSeek: config, Label: "DeepSeek V4 Flash"}, nil
 }
 
 func isDeepSeekReviewProvider(provider store.LLMProvider) bool {
@@ -1248,7 +1268,7 @@ func (s *JobService) executeAiReview(
 	if payload.ReviewRoundID == nil || strings.TrimSpace(*payload.ReviewRoundID) == "" {
 		return jobExecutionResult{}, errors.New(errs.MsgJobAiReviewNoRound)
 	}
-	deepSeekConfig, err := s.deepSeekReviewConfig()
+	reviewExecution, err := s.reviewExecutionConfig()
 	if err != nil {
 		return jobExecutionResult{}, err
 	}
@@ -1285,6 +1305,7 @@ func (s *JobService) executeAiReview(
 		"review_round_id", round.ID,
 		"review_label", label,
 		"round_number", roundNumber,
+		"review_engine", reviewExecution.Label,
 	)
 	s.emitProgress(jobID, req.JobType, req.TaskID, "running", 10,
 		strPtr(fmt.Sprintf("[%s] 复核%s…", label, attemptLabel)),
@@ -1335,7 +1356,7 @@ func (s *JobService) executeAiReview(
 			IssueType:         "",
 			IssueTitle:        "",
 			ModelName:         strings.TrimSpace(round.ModelName),
-			DeepSeek:          &deepSeekConfig,
+			DeepSeek:          reviewExecution.DeepSeek,
 		}, func(line string) {
 			if isStructuredAiReviewLine(line) {
 				return
