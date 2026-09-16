@@ -3,8 +3,19 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Board from './index';
 import { useAppStore, type Task } from '../../store';
+import type { ProjectConfig } from '../../api/config';
+
+const annotationApi = vi.hoisted(() => ({
+  listCases: vi.fn(),
+}));
+
+vi.mock('../../api/annotation', async () => ({
+  ...await vi.importActual<typeof import('../../api/annotation')>('../../api/annotation'),
+  listCases: annotationApi.listCases,
+}));
 
 const eventsOnMock = vi.fn();
+let boardMainContentProps: Record<string, unknown> | null = null;
 let jobProgressHandler: ((event: { data: {
   id: string;
   jobType: string;
@@ -32,7 +43,10 @@ vi.mock('./components/BatchActionBar', () => ({
 }));
 
 vi.mock('./components/BoardMainContent', () => ({
-  BoardMainContent: () => <div>board</div>,
+  BoardMainContent: (props: Record<string, unknown>) => {
+    boardMainContentProps = props;
+    return <div>board</div>;
+  },
 }));
 
 vi.mock('./components/BoardLayerStack', () => ({
@@ -125,7 +139,52 @@ function createTask(overrides: Partial<Task> = {}): Task {
 describe('Board prompt job sync', () => {
   beforeEach(() => {
     jobProgressHandler = null;
+    boardMainContentProps = null;
     vi.clearAllMocks();
+    annotationApi.listCases.mockResolvedValue([]);
+  });
+
+  it('passes container quick actions and per-task state to task cards', async () => {
+    const task = createTask({ id: 'task-1', status: 'PromptReady' });
+    const activeProject: ProjectConfig = {
+      id: 'project-1',
+      name: 'PINRU',
+      gitlabUrl: '',
+      gitlabToken: '',
+      hasGitLabToken: false,
+      cloneBasePath: '',
+      models: 'ORIGIN',
+      sourceModelFolder: 'ORIGIN',
+      defaultSubmitRepo: '',
+      taskTypes: '',
+      taskTypeQuotas: '',
+      taskTypeTotals: '',
+      questionBankProjectIds: '[]',
+      overviewMarkdown: '',
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    useAppStore.setState({
+      tasks: [task],
+      loadTasks: vi.fn().mockResolvedValue(undefined),
+      loadActiveProject: vi.fn().mockResolvedValue(undefined),
+      removeTask: vi.fn(),
+      activeProject,
+      setActiveProject: vi.fn(),
+      updateTaskStatus: vi.fn(),
+      updateTaskType: vi.fn(),
+    });
+
+    render(
+      <MemoryRouter>
+        <Board />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(boardMainContentProps).not.toBeNull());
+    expect(boardMainContentProps?.containerActionStateByTaskId).toEqual({});
+    expect(boardMainContentProps?.onCopyContainerCommand).toEqual(expect.any(Function));
+    expect(boardMainContentProps?.onBindContainerAndCopyPrompt).toEqual(expect.any(Function));
   });
 
   it('refreshes task cards when a prompt_generate job completes', async () => {

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { Task } from '../../../store';
 import { TaskCard } from './BoardPresentation';
@@ -25,6 +25,60 @@ function createTask(overrides: Partial<Task> = {}): Task {
 }
 
 describe('TaskCard', () => {
+  it.each(['sm', 'four', 'md', 'lg'] as const)(
+    'shows container quick actions without opening the %s card',
+    (size) => {
+      const onClick = vi.fn();
+      const onCopyContainerCommand = vi.fn();
+      const onBindContainerAndCopyPrompt = vi.fn();
+      render(
+        <TaskCard
+          task={createTask()}
+          size={size}
+          onClick={onClick}
+          onContextMenu={vi.fn()}
+          onDelete={vi.fn()}
+          onCopyContainerCommand={onCopyContainerCommand}
+          onBindContainerAndCopyPrompt={onBindContainerAndCopyPrompt}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: '复制容器启动命令' }));
+      fireEvent.click(screen.getByRole('button', { name: '刷新并绑定容器，同时复制提示词' }));
+
+      expect(onCopyContainerCommand).toHaveBeenCalledTimes(1);
+      expect(onBindContainerAndCopyPrompt).toHaveBeenCalledTimes(1);
+      expect(onClick).not.toHaveBeenCalled();
+    },
+  );
+
+  it('keeps successful container quick actions blue and clickable', () => {
+    render(
+      <TaskCard
+        task={createTask()}
+        size="md"
+        onClick={vi.fn()}
+        onContextMenu={vi.fn()}
+        onDelete={vi.fn()}
+        containerActionState={{
+          commandCopied: true,
+          bindPromptCompleted: true,
+          busyAction: null,
+          busyLabel: '',
+        }}
+        onCopyContainerCommand={vi.fn()}
+        onBindContainerAndCopyPrompt={vi.fn()}
+      />,
+    );
+
+    const commandButton = screen.getByRole('button', { name: '容器命令已复制，可再次复制' });
+    const bindButton = screen.getByRole('button', { name: '容器已绑定且提示词已复制，可再次执行' });
+    expect(commandButton).toBeEnabled();
+    expect(bindButton).toBeEnabled();
+    expect(commandButton).toHaveClass('text-blue-600');
+    expect(bindButton).toHaveClass('text-blue-600');
+  });
+
   it('shows AI review warning rounds on the task card', () => {
     render(
       <TaskCard

@@ -15,7 +15,12 @@ import type { ReviewStatus } from '../../../api/task';
 import type { Task, TaskStatus, TaskType } from '../../../store';
 import { getTaskTypePresentation } from '../../../api/config';
 import type { TaskTypeOverviewSummary } from '../../../shared/lib/taskTypeOverview';
-import { type CardSize, STATUS, TaskCard } from './BoardPresentation';
+import {
+  type CardSize,
+  STATUS,
+  TaskCard,
+  type TaskCardContainerActionState,
+} from './BoardPresentation';
 import type { BoardSortOption, BoardTaskGroup } from '../utils/boardTaskView';
 import type { TableProgress } from '../../annotation/tableProgress';
 
@@ -64,6 +69,7 @@ const REVIEW_STATUS_FILTERS: Array<{
 
 export function BoardMainContent({
   tableProgressByTask,
+  containerActionStateByTaskId,
   search,
   sortBy,
   totalTaskCount,
@@ -97,6 +103,8 @@ export function BoardMainContent({
   onClearFilters,
   onToggleGroupCollapse,
   onSelectTask,
+  onCopyContainerCommand,
+  onBindContainerAndCopyPrompt,
   onOpenTaskContextMenu,
   onDeleteTask,
   selectionMode,
@@ -105,6 +113,7 @@ export function BoardMainContent({
   onToggleTaskSelection,
 }: {
   tableProgressByTask?: Record<string, TableProgress>;
+  containerActionStateByTaskId: Record<string, TaskCardContainerActionState>;
   search: string;
   sortBy: BoardSortOption;
   totalTaskCount: number;
@@ -138,6 +147,8 @@ export function BoardMainContent({
   onClearFilters: () => void;
   onToggleGroupCollapse: (groupKey: string) => void;
   onSelectTask: (task: Task) => void;
+  onCopyContainerCommand: (task: Task) => void;
+  onBindContainerAndCopyPrompt: (task: Task) => void;
   onOpenTaskContextMenu: (event: MouseEvent, task: Task) => void;
   onDeleteTask: (task: Task) => void;
   selectionMode: boolean;
@@ -430,6 +441,9 @@ export function BoardMainContent({
                           tableProgress={tableProgressByTask?.[task.id]}
                           size={cardSize}
                           onClick={() => onSelectTask(task)}
+                          containerActionState={containerActionStateByTaskId[task.id]}
+                          onCopyContainerCommand={() => onCopyContainerCommand(task)}
+                          onBindContainerAndCopyPrompt={() => onBindContainerAndCopyPrompt(task)}
                           onContextMenu={(event) => onOpenTaskContextMenu(event, task)}
                           onDelete={() => onDeleteTask(task)}
                           selectionMode={selectionMode}

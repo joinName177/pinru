@@ -43,6 +43,7 @@ import {
   type TaskCardContextMenuState,
 } from './components/BoardLayerStack';
 import { useBoardTaskDetail } from './hooks/useBoardTaskDetail';
+import { useTaskCardContainerActions } from './hooks/useTaskCardContainerActions';
 import { listCases } from '../../api/annotation';
 import { getTableProgress, type TableProgress } from '../annotation/tableProgress';
 
@@ -216,6 +217,13 @@ export default function Board() {
   const taskCardContextMenuRequestIdRef = useRef(0);
   const drawerEscCloseHintTimeoutRef = useRef<number | null>(null);
   const drawerEscLastPressedAtRef = useRef<number | null>(null);
+  const notifyAnnotationChanged = useCallback(() => {
+    setAnnotationRefresh((value) => value + 1);
+  }, []);
+  const containerActions = useTaskCardContainerActions({
+    projectId: activeProject?.id ?? null,
+    onAnnotationChanged: notifyAnnotationChanged,
+  });
   const detail = useBoardTaskDetail({
     activeProject,
     availableTaskTypes,
@@ -925,6 +933,7 @@ export default function Board() {
     <div className="h-full flex flex-col overflow-hidden">
       <BoardMainContent
         tableProgressByTask={tableSummary.projectId === activeProject?.id ? tableSummary.byTask : undefined}
+        containerActionStateByTaskId={containerActions.stateByTaskId}
         search={search}
         sortBy={sortBy}
         totalTaskCount={tasks.length}
@@ -958,6 +967,8 @@ export default function Board() {
         onClearFilters={clearFilters}
         onToggleGroupCollapse={toggleGroupCollapse}
         onSelectTask={detail.setSelected}
+        onCopyContainerCommand={(task) => void containerActions.copyContainerCommand(task)}
+        onBindContainerAndCopyPrompt={(task) => void containerActions.bindContainerAndCopyPrompt(task)}
         onOpenTaskContextMenu={openTaskCardContextMenu}
         onDeleteTask={(task) => {
           setDeleteError('');
@@ -968,6 +979,26 @@ export default function Board() {
         onToggleSelectionMode={toggleSelectionMode}
         onToggleTaskSelection={toggleTaskSelection}
       />
+
+      {containerActions.feedback && (
+        <div
+          role={containerActions.feedback.tone === 'error' ? 'alert' : 'status'}
+          className={`fixed bottom-5 right-5 z-50 flex max-w-sm items-center gap-3 rounded-2xl border px-4 py-3 text-sm font-medium shadow-xl ${
+            containerActions.feedback.tone === 'error'
+              ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/90 dark:text-red-300'
+              : 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/90 dark:text-blue-300'
+          }`}
+        >
+          <span>{containerActions.feedback.message}</span>
+          <button
+            type="button"
+            className="rounded-lg px-1.5 py-0.5 text-xs opacity-70 hover:opacity-100"
+            onClick={containerActions.clearFeedback}
+          >
+            关闭
+          </button>
+        </div>
+      )}
 
       <BoardLayerStack
         taskCardContextMenu={taskCardContextMenu}

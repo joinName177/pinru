@@ -4,7 +4,10 @@ import {
   CircleDashed,
   Clock,
   GitBranch,
+  Loader2,
   PlayCircle,
+  RefreshCw,
+  SquareTerminal,
   Trash2,
 } from 'lucide-react';
 import type { MouseEvent } from 'react';
@@ -17,6 +20,20 @@ import { TableStatusBadge } from '../../annotation/TableStatusBadge';
 import type { TableProgress } from '../../annotation/tableProgress';
 
 export type CardSize = 'sm' | 'four' | 'md' | 'lg';
+
+export type TaskCardContainerActionState = {
+  commandCopied: boolean;
+  bindPromptCompleted: boolean;
+  busyAction: 'command' | 'bind' | null;
+  busyLabel: string;
+};
+
+const EMPTY_CONTAINER_ACTION_STATE: TaskCardContainerActionState = {
+  commandCopied: false,
+  bindPromptCompleted: false,
+  busyAction: null,
+  busyLabel: '',
+};
 
 export const STATUS: Record<
   TaskStatus,
@@ -191,6 +208,71 @@ function TaskAiReviewBadge({
   );
 }
 
+function TaskCardContainerActions({
+  state = EMPTY_CONTAINER_ACTION_STATE,
+  compact = false,
+  onCopyContainerCommand,
+  onBindContainerAndCopyPrompt,
+}: {
+  state?: TaskCardContainerActionState;
+  compact?: boolean;
+  onCopyContainerCommand?: () => void;
+  onBindContainerAndCopyPrompt?: () => void;
+}) {
+  if (!onCopyContainerCommand && !onBindContainerAndCopyPrompt) return null;
+  const busy = state.busyAction !== null;
+  const sizeClass = compact ? 'h-6 w-6' : 'h-7 w-7';
+  const iconClass = compact ? 'h-3 w-3' : 'h-3.5 w-3.5';
+  const defaultClass = 'border-stone-200 bg-white text-stone-400 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-500 dark:hover:border-blue-800 dark:hover:bg-blue-950/40 dark:hover:text-blue-400';
+  const completeClass = 'border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-400 dark:hover:bg-blue-950/60';
+
+  const commandLabel = state.busyAction === 'command'
+    ? state.busyLabel
+    : state.commandCopied
+      ? '容器命令已复制，可再次复制'
+      : '复制容器启动命令';
+  const bindLabel = state.busyAction === 'bind'
+    ? state.busyLabel
+    : state.bindPromptCompleted
+      ? '容器已绑定且提示词已复制，可再次执行'
+      : '刷新并绑定容器，同时复制提示词';
+
+  return (
+    <div className="flex items-center gap-1" aria-label="容器快捷操作">
+      {onCopyContainerCommand && (
+        <button
+          type="button"
+          aria-label={commandLabel}
+          title={commandLabel}
+          disabled={busy}
+          onClick={(event) => {
+            event.stopPropagation();
+            onCopyContainerCommand();
+          }}
+          className={`inline-flex ${sizeClass} items-center justify-center rounded-lg border transition-colors disabled:cursor-wait disabled:opacity-70 ${state.commandCopied ? completeClass : defaultClass}`}
+        >
+          {state.busyAction === 'command' ? <Loader2 className={`${iconClass} animate-spin`} /> : <SquareTerminal className={iconClass} />}
+        </button>
+      )}
+      {onBindContainerAndCopyPrompt && (
+        <button
+          type="button"
+          aria-label={bindLabel}
+          title={bindLabel}
+          disabled={busy}
+          onClick={(event) => {
+            event.stopPropagation();
+            onBindContainerAndCopyPrompt();
+          }}
+          className={`inline-flex ${sizeClass} items-center justify-center rounded-lg border transition-colors disabled:cursor-wait disabled:opacity-70 ${state.bindPromptCompleted ? completeClass : defaultClass}`}
+        >
+          <RefreshCw className={`${iconClass} ${state.busyAction === 'bind' ? 'animate-spin' : ''}`} />
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function TaskCard({
   task,
   tableProgress,
@@ -201,6 +283,9 @@ export function TaskCard({
   selectionMode,
   selected,
   onToggleSelect,
+  containerActionState,
+  onCopyContainerCommand,
+  onBindContainerAndCopyPrompt,
 }: {
   task: Task;
   tableProgress?: TableProgress;
@@ -211,6 +296,9 @@ export function TaskCard({
   selectionMode?: boolean;
   selected?: boolean;
   onToggleSelect?: () => void;
+  containerActionState?: TaskCardContainerActionState;
+  onCopyContainerCommand?: () => void;
+  onBindContainerAndCopyPrompt?: () => void;
 }) {
   const cfg = STATUS[task.status];
   const typePresentation = getTaskTypePresentation(task.taskType);
@@ -290,6 +378,16 @@ export function TaskCard({
           <TaskAiReviewBadge rounds={task.aiReviewRounds} status={task.aiReviewStatus} compact />
           <TableStatusBadge progress={tableProgress} />
         </div>
+        {!selectionMode && (
+          <div className="mt-2 flex justify-end">
+            <TaskCardContainerActions
+              state={containerActionState}
+              compact
+              onCopyContainerCommand={onCopyContainerCommand}
+              onBindContainerAndCopyPrompt={onBindContainerAndCopyPrompt}
+            />
+          </div>
+        )}
         {task.totalModels > 0 && (
           <div className="mt-2.5 flex items-center gap-1.5">
             <div className="flex-1 h-1 bg-stone-100 dark:bg-stone-800 rounded-full overflow-hidden">
@@ -383,8 +481,15 @@ export function TaskCard({
             <Clock className="w-3.5 h-3.5" />
             <span>{new Date(task.createdAt * 1000).toLocaleDateString('zh-CN')}</span>
           </div>
-          {task.totalModels > 0 && (
-            <div className="flex items-center gap-1 font-semibold tabular-nums">
+          <div className="flex items-center gap-2">
+            {!selectionMode && (
+              <TaskCardContainerActions
+                state={containerActionState}
+                onCopyContainerCommand={onCopyContainerCommand}
+                onBindContainerAndCopyPrompt={onBindContainerAndCopyPrompt}
+              />
+            )}
+            {task.totalModels > 0 && <div className="flex items-center gap-1 font-semibold tabular-nums">
               {task.progress === task.totalModels ? (
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
               ) : task.runningModels > 0 ? (
@@ -393,8 +498,8 @@ export function TaskCard({
                 <CircleDashed className="w-3.5 h-3.5" />
               )}
               {task.progress}/{task.totalModels} 执行副本
-            </div>
-          )}
+            </div>}
+          </div>
         </div>
         {task.totalModels > 0 && (
           <div className="mt-3 h-1.5 w-full bg-stone-100 dark:bg-stone-800 rounded-full overflow-hidden">
@@ -478,6 +583,13 @@ export function TaskCard({
           <span className="font-mono truncate max-w-[160px]">{formatTaskDisplayId(task)}</span>
         </div>
         <div className="flex items-center gap-2">
+          {!selectionMode && (
+            <TaskCardContainerActions
+              state={containerActionState}
+              onCopyContainerCommand={onCopyContainerCommand}
+              onBindContainerAndCopyPrompt={onBindContainerAndCopyPrompt}
+            />
+          )}
           {showPromptBadge && (
             <span
               className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${promptGenerationMeta.badgeCls}`}
