@@ -137,6 +137,32 @@ describe('useBoardTaskDetail prompt generation', () => {
     vi.clearAllMocks();
   });
 
+  it('opens a newly selected task on the container tab', async () => {
+    const task = createTask({ id: 'task-1' });
+    mockGetTask.mockResolvedValue(createTaskDetail({ id: task.id }));
+
+    const { result } = renderHook(() =>
+      useBoardTaskDetail({
+        activeProject: null,
+        availableTaskTypes: ['Bug修复'],
+        sourceModelName: 'ORIGIN',
+        tasks: [task],
+        loadTasks: vi.fn().mockResolvedValue(undefined),
+        loadActiveProject: vi.fn().mockResolvedValue(undefined),
+        updateTaskStatusInStore: vi.fn(),
+        updateTaskTypeInStore: vi.fn(),
+      }),
+    );
+
+    act(() => {
+      result.current.setSelected(task);
+    });
+
+    await waitFor(() => {
+      expect(result.current.activeDrawerTab).toBe('container');
+    });
+  });
+
   it('keeps promptGenerating scoped to the task that started generation', async () => {
     const taskA = createTask({ id: 'task-1', projectName: 'alpha' });
     const taskB = createTask({ id: 'task-2', projectName: 'beta' });

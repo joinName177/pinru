@@ -2537,7 +2537,12 @@ export default function TaskDetailDrawer({
                 {(effectiveActiveDrawerTab === 'container' || containerPanelTaskId === selected.id) && (
                   <div key={selected.id} hidden={effectiveActiveDrawerTab !== 'container'} className="h-full overflow-y-auto">
                     {selectedTaskDetail?.projectConfigId ? (
-                      <AnnotationWorkspace projectId={selectedTaskDetail.projectConfigId} taskId={selected.id} />
+                      <AnnotationWorkspace
+                        projectId={selectedTaskDetail.projectConfigId}
+                        taskId={selected.id}
+                        promptText={promptDraft}
+                        onPromptCopy={onPromptCopy}
+                      />
                     ) : (
                       <p className="p-6 text-sm text-stone-500">当前题目尚未关联项目，请先确认题目的项目归属。</p>
                     )}

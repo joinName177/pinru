@@ -96,8 +96,8 @@ function normalizeTaskReadme(
   return readme;
 }
 
-function getDefaultTaskDetailTab(status?: TaskStatus | null): TaskDetailDrawerTab {
-  return status === 'Submitted' || status === 'ExecutionCompleted' ? 'sessions' : 'prompt';
+function getDefaultTaskDetailTab(): TaskDetailDrawerTab {
+  return 'container';
 }
 
 function resolvePromptWritebackStatus(
@@ -219,7 +219,7 @@ export function useBoardTaskDetail({
   const [taskTypeChanging, setTaskTypeChanging] = useState(false);
   const [aiReviewResetting, setAiReviewResetting] = useState(false);
   const [activeDrawerTab, setActiveDrawerTab] =
-    useState<TaskDetailDrawerTab>('prompt');
+    useState<TaskDetailDrawerTab>(getDefaultTaskDetailTab());
   const sessionDraftVersionRef = useRef(0);
   const selectedTaskIdRef = useRef<string | null>(null);
 
@@ -437,7 +437,7 @@ export function useBoardTaskDetail({
     }
 
     let cancelled = false;
-    setActiveDrawerTab(getDefaultTaskDetailTab(selected.status));
+    setActiveDrawerTab(getDefaultTaskDetailTab());
     setDrawerLoading(true);
     setDrawerError('');
     setSessionExtracting(false);

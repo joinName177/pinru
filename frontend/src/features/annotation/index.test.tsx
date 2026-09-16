@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AnnotationCase } from '../../api/annotation';
 import { AnnotationWorkspace } from './index';
@@ -180,7 +180,9 @@ describe('AnnotationWorkspace', () => {
     api.getAnnotationJob.mockResolvedValue({ id: 'table-job', status: 'done', outputPayload: JSON.stringify(makeCase()) });
     render(<AnnotationWorkspace projectId="project-1" taskId="task-1" />);
     const button = await screen.findByRole('button', { name: '采集并准备制表数据' });
-    fireEvent.change(screen.getByLabelText('本机 JSONL 绝对路径'), { target: { value: '/tmp/current.jsonl' } });
+    const tracePath = screen.getByLabelText('本机 JSONL 绝对路径');
+    fireEvent.change(tracePath, { target: { value: '/tmp/current.jsonl' } });
+    await waitFor(() => expect(tracePath).toHaveValue('/tmp/current.jsonl'));
     fireEvent.click(button);
     await waitFor(() => expect(api.captureAndPrepareTable).toHaveBeenCalledWith({ taskId: 'task-1', tracePath: '/tmp/current.jsonl' }));
     expect(await screen.findByText('采集并准备制表数据已完成')).toBeInTheDocument();
@@ -188,15 +190,12 @@ describe('AnnotationWorkspace', () => {
     expect(api.saveCaseSettings).not.toHaveBeenCalled();
   });
 
-  it('offers project-wide export inside task details without limiting it to this task', async () => {
-    api.exportCases.mockResolvedValue({ id: 'export-job', status: 'pending' });
-    api.getAnnotationJob.mockResolvedValue({ id: 'export-job', status: 'done', outputPayload: JSON.stringify({ outputPath: '/exports/submission.xlsx', rows: 1, issues: [] }) });
+  it('keeps export actions out of the task detail container panel', async () => {
     render(<AnnotationWorkspace projectId="project-1" taskId="task-1" />);
-    const button = await screen.findByRole('button', { name: '导出全项目已制表' });
-    await waitFor(() => expect(button).toBeEnabled());
-    fireEvent.click(button);
-    await waitFor(() => expect(api.exportCases).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'project-1', reviewedOnly: true, taskId: undefined })));
-    await screen.findByText(/一键导出已制表完成/);
+    await screen.findByText('容器与轨迹');
+    expect(screen.queryByRole('button', { name: '选择题目导出' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '导出本题 Excel' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '导出全项目已制表' })).not.toBeInTheDocument();
   });
 
   it('exports only checked prepared tasks and resets the selection between projects', async () => {
@@ -209,7 +208,7 @@ describe('AnnotationWorkspace', () => {
     api.listCases.mockResolvedValue([first, second, makeCase({ taskId: 'task-3', taskName: '未制表题', rounds: [] })]);
     api.exportCases.mockResolvedValue({ id: 'selected-export', status: 'pending' });
     api.getAnnotationJob.mockResolvedValue({ id: 'selected-export', status: 'done', outputPayload: JSON.stringify({ outputPath: '/exports/selected.xlsx', rows: 1, issues: [] }) });
-    const { rerender } = render(<AnnotationWorkspace projectId="project-1" taskId="task-1" />);
+    const { rerender } = render(<AnnotationWorkspace projectId="project-1" />);
     const open = await screen.findByRole('button', { name: '选择题目导出' });
     await waitFor(() => expect(open).toBeEnabled());
     fireEvent.click(open);
@@ -222,7 +221,7 @@ describe('AnnotationWorkspace', () => {
     fireEvent.click(screen.getByRole('button', { name: '导出所选题目（1）' }));
     await waitFor(() => expect(api.exportCases).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'project-1', taskIds: ['task-2'], taskId: undefined, reviewedOnly: true })));
     await screen.findByText(/所选题目导出完成/);
-    rerender(<AnnotationWorkspace projectId="project-2" taskId="task-1" />);
+    rerender(<AnnotationWorkspace projectId="project-2" />);
     await waitFor(() => expect(screen.getByRole('button', { name: '选择题目导出' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: '选择题目导出' }));
     expect(screen.getByRole('button', { name: '导出所选题目（0）' })).toBeDisabled();
@@ -235,7 +234,7 @@ describe('AnnotationWorkspace', () => {
     expect(screen.queryByText('低分也保留的任务')).not.toBeInTheDocument();
     expect(screen.queryByText('题目进度')).not.toBeInTheDocument();
     expect(screen.queryByText('批次预检与统一导出')).not.toBeInTheDocument();
-    expect(await screen.findByDisplayValue('repo-two')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: '仓库相对路径' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '采集轨迹' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '采集并准备制表数据' })).toBeInTheDocument();
     expect(api.listTraces).toHaveBeenCalledWith('task-2');
@@ -251,7 +250,7 @@ describe('AnnotationWorkspace', () => {
     render(<AnnotationWorkspace projectId="project-1" taskId="task-1" />);
     await waitFor(() => expect(api.listTraces).toHaveBeenCalledTimes(1));
     api.listTraces.mockResolvedValue([{ path: '/new.jsonl', sessionId: 'new-session', size: 10 }]);
-    fireEvent.click(screen.getByRole('button', { name: '刷新' }));
+    fireEvent.click(screen.getByRole('button', { name: '刷新容器' }));
     expect(await screen.findByRole('option', { name: /new-session/ })).toBeInTheDocument();
   });
 
@@ -309,13 +308,247 @@ describe('AnnotationWorkspace', () => {
     api.getAnnotationContainerApiKey.mockResolvedValue('saved-container-key');
     api.listCases.mockResolvedValue([makeCase({ taskId: 'p1__feat__label-123-9', taskName: 'cyc-03', sourcePath: '/tasks/cyc-03-feature迭代-9' })]);
     render(<AnnotationWorkspace projectId="project-1" taskId="p1__feat__label-123-9" />);
-    const copy = await screen.findByRole('button', { name: '复制容器启动命令' });
+    const copy = await screen.findByRole('button', { name: '复制容器命令' });
     await waitFor(() => expect(copy).toBeEnabled());
     fireEvent.click(copy);
     await waitFor(() => expect(wailsClipboard.setText).toHaveBeenCalledWith(expect.stringContaining('CONTAINER_NAME="cyc03-claude-9"')));
     expect(wailsClipboard.setText).toHaveBeenCalledWith(expect.stringContaining('RUN_DIR="$BASE_DIR/run-9"'));
     expect(wailsClipboard.setText).toHaveBeenCalledWith(expect.stringContaining("apikey='saved-container-key'"));
     expect(await screen.findByText('容器启动命令已复制，请在本地终端执行')).toBeInTheDocument();
+    const completedCopy = screen.getByRole('button', { name: '容器命令已复制' });
+    expect(completedCopy).toBeEnabled();
+    fireEvent.click(completedCopy);
+    await waitFor(() => expect(wailsClipboard.setText).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText('查看命令')).not.toBeInTheDocument();
+    expect(screen.queryByText(/新容器启动后/)).not.toBeInTheDocument();
+  });
+
+  it('shows only the compact container actions in the requested order', async () => {
+    api.listCases.mockResolvedValue([makeCase({ snapshotUrl: 'https://github.com/example/repo/tree/abc123' })]);
+    api.listContainers.mockResolvedValue([{ id: 'container-1', name: 'xh04-claude-1', state: 'running', image: 'claude', workspacePath: '/workspace' }]);
+    render(
+      <AnnotationWorkspace
+        projectId="project-1"
+        taskId="task-1"
+        promptText="实现订单筛选功能"
+        onPromptCopy={vi.fn()}
+      />,
+    );
+
+    const heading = await screen.findByRole('heading', { name: '容器与轨迹' });
+    const headingArea = heading.parentElement?.parentElement;
+    expect(headingArea).not.toBeNull();
+    expect(within(headingArea as HTMLElement).getByRole('button', { name: '复制容器命令' })).toBeInTheDocument();
+    expect(within(headingArea as HTMLElement).queryByRole('button', { name: '刷新' })).not.toBeInTheDocument();
+
+    const projectInfo = screen.getByRole('group', { name: '项目信息' });
+    const projectPath = within(projectInfo).getByText('/source/repo-one');
+    const snapshot = within(projectInfo).getByRole('link', { name: /GitHub 初始环境快照/ });
+    expect(projectPath.compareDocumentPosition(snapshot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    const actions = screen.getByRole('group', { name: '容器快捷操作' });
+    expect(within(actions).getAllByRole('button').map((button) => button.textContent?.trim())).toEqual([
+      '刷新容器',
+      '复制并绑定',
+      '复制提示词',
+    ]);
+    expect(within(actions).getByRole('combobox', { name: '容器' })).toBeInTheDocument();
+    expect(screen.queryByText('快速开始')).not.toBeInTheDocument();
+    expect(screen.queryByText(/第 [123] 步/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '关联已有仓库' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: '仓库相对路径' })).not.toBeInTheDocument();
+  });
+
+  it('matches the exact task container on refresh, binds it, then copies the prompt', async () => {
+    const unbound = makeCase({
+      taskId: 'p1__feat__label-123-11',
+      taskName: 'xh-05',
+      sourcePath: '/tasks/xh-05-bug修复-11',
+      containerId: '',
+      containerName: '',
+      workspacePath: '',
+      repoRelativePath: 'xh-05-bug修复-11',
+    });
+    const bound = makeCase({
+      ...unbound,
+      containerId: 'container-11',
+      containerName: 'xh05-claude-11',
+      workspacePath: '/workspace',
+      revision: 2,
+    });
+    const onPromptCopy = vi.fn().mockResolvedValue(undefined);
+    api.listCases.mockResolvedValue([unbound]);
+    api.bindContainer.mockResolvedValue({ id: 'auto-bind', status: 'pending' });
+    api.getAnnotationJob.mockResolvedValue({ id: 'auto-bind', status: 'done', outputPayload: JSON.stringify(bound) });
+    render(
+      <AnnotationWorkspace
+        projectId="project-1"
+        taskId={unbound.taskId}
+        promptText="修复订单筛选问题"
+        onPromptCopy={onPromptCopy}
+      />,
+    );
+    await waitFor(() => expect(api.listContainers).toHaveBeenCalledTimes(1));
+    api.listContainers.mockResolvedValue([
+      { id: 'container-1', name: 'xh05-claude-1', state: 'running', image: 'claude', workspacePath: '/workspace-1' },
+      { id: 'container-11', name: 'xh05-claude-11', state: 'running', image: 'claude', workspacePath: '/workspace-11' },
+    ]);
+
+    fireEvent.click(screen.getByRole('button', { name: '刷新容器' }));
+
+    await waitFor(() => expect(api.bindContainer).toHaveBeenCalledWith({
+      taskId: unbound.taskId,
+      containerId: 'container-11',
+      repoRelativePath: 'xh-05-bug修复-11',
+      copyRepository: true,
+    }));
+    expect(await screen.findByRole('combobox', { name: '容器' })).toHaveValue('container-11');
+    expect(await screen.findByRole('button', { name: '已绑定' })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: '提示词已复制' })).toBeEnabled();
+    expect(onPromptCopy).toHaveBeenCalledTimes(1);
+    expect(api.bindContainer.mock.invocationCallOrder[0]).toBeLessThan(onPromptCopy.mock.invocationCallOrder[0]);
+  });
+
+  it('does not fuzzy-match a different task number after refreshing containers', async () => {
+    const current = makeCase({
+      taskId: 'p1__feat__label-123-1',
+      taskName: 'xh-05',
+      sourcePath: '/tasks/xh-05-bug修复-1',
+      containerId: '',
+      containerName: '',
+      workspacePath: '',
+    });
+    const onPromptCopy = vi.fn().mockResolvedValue(undefined);
+    api.listCases.mockResolvedValue([current]);
+    render(<AnnotationWorkspace projectId="project-1" taskId={current.taskId} promptText="提示词" onPromptCopy={onPromptCopy} />);
+    await waitFor(() => expect(api.listContainers).toHaveBeenCalledTimes(1));
+    api.listContainers.mockResolvedValue([
+      { id: 'container-11', name: 'xh05-claude-11', state: 'running', image: 'claude', workspacePath: '/workspace-11' },
+    ]);
+
+    fireEvent.click(screen.getByRole('button', { name: '刷新容器' }));
+
+    await waitFor(() => expect(api.listContainers).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole('combobox', { name: '容器' })).toHaveValue('');
+    expect(screen.getByRole('option', { name: /xh05-claude-11/ })).toBeInTheDocument();
+    expect(api.bindContainer).not.toHaveBeenCalled();
+    expect(onPromptCopy).not.toHaveBeenCalled();
+  });
+
+  it('copies the prompt without copying the repository again when the exact container is already bound', async () => {
+    const bound = makeCase({
+      taskId: 'p1__feat__label-123-11',
+      taskName: 'xh-05',
+      sourcePath: '/tasks/xh-05-bug修复-11',
+      containerId: 'container-11',
+      containerName: 'xh05-claude-11',
+      workspacePath: '/workspace-11',
+    });
+    const onPromptCopy = vi.fn().mockResolvedValue(undefined);
+    api.listCases.mockResolvedValue([bound]);
+    api.listContainers.mockResolvedValue([
+      { id: 'container-11', name: 'xh05-claude-11', state: 'running', image: 'claude', workspacePath: '/workspace-11' },
+    ]);
+    render(<AnnotationWorkspace projectId="project-1" taskId={bound.taskId} promptText="提示词" onPromptCopy={onPromptCopy} />);
+    await waitFor(() => expect(api.listContainers).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: '刷新容器' }));
+
+    expect(await screen.findByRole('button', { name: '已绑定' })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: '提示词已复制' })).toBeEnabled();
+    expect(api.bindContainer).not.toHaveBeenCalled();
+    expect(onPromptCopy).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the successful binding state when automatic prompt copy fails', async () => {
+    const unbound = makeCase({
+      taskId: 'p1__feat__label-123-11',
+      taskName: 'xh-05',
+      sourcePath: '/tasks/xh-05-bug修复-11',
+      containerId: '',
+      containerName: '',
+      workspacePath: '',
+    });
+    const bound = makeCase({ ...unbound, containerId: 'container-11', containerName: 'xh05-claude-11', workspacePath: '/workspace', revision: 2 });
+    api.listCases.mockResolvedValue([unbound]);
+    api.bindContainer.mockResolvedValue({ id: 'auto-bind', status: 'pending' });
+    api.getAnnotationJob.mockResolvedValue({ id: 'auto-bind', status: 'done', outputPayload: JSON.stringify(bound) });
+    const onPromptCopy = vi.fn().mockRejectedValue(new Error('剪贴板不可用'));
+    render(<AnnotationWorkspace projectId="project-1" taskId={unbound.taskId} promptText="提示词" onPromptCopy={onPromptCopy} />);
+    await waitFor(() => expect(api.listContainers).toHaveBeenCalledTimes(1));
+    api.listContainers.mockResolvedValue([
+      { id: 'container-11', name: 'xh05-claude-11', state: 'running', image: 'claude', workspacePath: '/workspace-11' },
+    ]);
+
+    fireEvent.click(screen.getByRole('button', { name: '刷新容器' }));
+
+    expect(await screen.findByRole('button', { name: '已绑定' })).toBeEnabled();
+    expect(await screen.findByRole('alert')).toHaveTextContent('绑定成功，但提示词复制失败：剪贴板不可用');
+    expect(screen.getByRole('button', { name: '复制提示词' })).toBeEnabled();
+  });
+
+  it('keeps bind actions clickable after showing their completed state', async () => {
+    const unbound = makeCase({ containerId: '', containerName: '', workspacePath: '', repoRelativePath: 'repo-one' });
+    const bound = makeCase({ containerId: 'container-2', containerName: 'xh04-claude-2', workspacePath: '/workspace', repoRelativePath: 'repo-one', revision: 2 });
+    api.listCases.mockResolvedValue([unbound]);
+    api.listContainers.mockResolvedValue([{ id: 'container-2', name: 'xh04-claude-2', state: 'running', image: 'claude', workspacePath: '/workspace' }]);
+    api.bindContainer.mockResolvedValue({ id: 'bind-job', status: 'pending' });
+    api.getAnnotationJob.mockResolvedValue({ id: 'bind-job', status: 'done', outputPayload: JSON.stringify(bound) });
+
+    render(<AnnotationWorkspace projectId="project-1" taskId="task-1" />);
+    fireEvent.change(await screen.findByRole('combobox', { name: '容器' }), { target: { value: 'container-2' } });
+    fireEvent.click(screen.getByRole('button', { name: '复制并绑定' }));
+
+    const completedBind = await screen.findByRole('button', { name: '已绑定' });
+    expect(completedBind).toBeEnabled();
+    fireEvent.click(completedBind);
+    await waitFor(() => expect(api.bindContainer).toHaveBeenCalledTimes(2));
+  });
+
+  it('enables prompt copying only after a container is selected and keeps the completed button clickable', async () => {
+    const onPromptCopy = vi.fn().mockResolvedValue(undefined);
+    api.listCases.mockResolvedValue([
+      makeCase({ containerId: '', containerName: '', workspacePath: '' }),
+    ]);
+    api.listContainers.mockResolvedValue([
+      { id: 'container-2', name: 'xh04-claude-2', state: 'running', image: 'claude', workspacePath: '/workspace' },
+    ]);
+    render(
+      <AnnotationWorkspace
+        projectId="project-1"
+        taskId="task-1"
+        promptText="实现订单筛选功能"
+        onPromptCopy={onPromptCopy}
+      />,
+    );
+
+    const copyPrompt = await screen.findByRole('button', { name: '复制提示词' });
+    expect(copyPrompt).toBeDisabled();
+    fireEvent.change(screen.getByRole('combobox', { name: '容器' }), {
+      target: { value: 'container-2' },
+    });
+    expect(copyPrompt).toBeEnabled();
+    fireEvent.click(copyPrompt);
+    const completedCopy = await screen.findByRole('button', { name: '提示词已复制' });
+    expect(completedCopy).toBeEnabled();
+    fireEvent.click(completedCopy);
+    await waitFor(() => expect(onPromptCopy).toHaveBeenCalledTimes(2));
+  });
+
+  it('resets quick action completion when the detail switches to another task', async () => {
+    api.listCases.mockResolvedValue([
+      makeCase({ taskId: 'p1__feat__label-123-9', taskName: 'cyc-03', sourcePath: '/tasks/cyc-03-feature迭代-9' }),
+      makeCase({ taskId: 'p1__feat__label-123-10', taskName: 'cyc-03', sourcePath: '/tasks/cyc-03-feature迭代-10' }),
+    ]);
+    const { rerender } = render(<AnnotationWorkspace projectId="project-1" taskId="p1__feat__label-123-9" />);
+    const copyCommand = await screen.findByRole('button', { name: '复制容器命令' });
+    await waitFor(() => expect(copyCommand).toBeEnabled());
+    fireEvent.click(copyCommand);
+    expect(await screen.findByRole('button', { name: '容器命令已复制' })).toBeInTheDocument();
+
+    rerender(<AnnotationWorkspace projectId="project-1" taskId="p1__feat__label-123-10" />);
+
+    expect(await screen.findByRole('button', { name: '复制容器命令' })).toBeInTheDocument();
   });
 
   it('keeps a truthful perfect score but marks it as not collected', async () => {

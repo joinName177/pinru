@@ -53,6 +53,7 @@ import { CrossProjectBatchSelector } from './CrossProjectBatchSelector';
 const INPUT_CLASS = 'w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-800 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:border-stone-700 dark:bg-[#171B22] dark:text-stone-100 dark:focus:border-slate-500 dark:focus:ring-slate-800';
 const PRIMARY_BUTTON = 'inline-flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white';
 const SECONDARY_BUTTON = 'inline-flex items-center justify-center gap-2 rounded-xl border border-stone-200 bg-white px-3.5 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700';
+const COMPLETED_BUTTON = 'inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-3.5 py-2 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-950/60';
 
 const SCORE_DIMENSIONS = ['交付完整性', '指令遵循', '任务规划', '推理能力', '执行能力'];
 
@@ -69,6 +70,8 @@ type AnnotationWorkspaceProps = {
   projectName?: string;
   taskId?: string;
   view?: 'capture' | 'review';
+  promptText?: string;
+  onPromptCopy?: () => void | Promise<void>;
 };
 
 function folderName(path: string) {
@@ -207,7 +210,7 @@ function EvaluationCard({ evaluation, index }: { evaluation: AnnotationEvaluatio
   );
 }
 
-export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'capture' }: AnnotationWorkspaceProps) {
+export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'capture', promptText = '', onPromptCopy }: AnnotationWorkspaceProps) {
   const [cases, setCases] = useState<AnnotationCase[]>([]);
   const [containers, setContainers] = useState<AnnotationContainer[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState('');
@@ -234,6 +237,9 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
   const [showBatchSelection, setShowBatchSelection] = useState(false);
   const [showExportSelection, setShowExportSelection] = useState(false);
   const [exportTaskIds, setExportTaskIds] = useState<string[]>([]);
+  const [startupCommandCopied, setStartupCommandCopied] = useState(false);
+  const [bindingCompleted, setBindingCompleted] = useState(false);
+  const [quickPromptCopied, setQuickPromptCopied] = useState(false);
   const exportableCases = cases.filter((item) => getTableProgress(item).prepared > 0);
   const eligibleExportIds = exportTaskIds.filter((id) => exportableCases.some((item) => item.taskId === id));
   const projectEpoch = useRef(0);
@@ -267,12 +273,13 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
         listContainers(),
         getConfig(CONTAINER_SORT_PREFIXES_CONFIG_KEY),
       ]);
-      if (epoch !== projectEpoch.current || targetProjectId !== activeProjectId.current) return;
+      if (epoch !== projectEpoch.current || targetProjectId !== activeProjectId.current) return null;
       const nextCases = caseResult.status === 'fulfilled' ? caseResult.value : [];
       const nextContainers = containerResult.status === 'fulfilled' ? containerResult.value : [];
       const containerSortPrefixes = prefixResult.status === 'fulfilled' ? prefixResult.value : 'cyc';
+      const sortedContainers = sortContainersByPrefixes(nextContainers, containerSortPrefixes);
       setCases(nextCases);
-      setContainers(sortContainersByPrefixes(nextContainers, containerSortPrefixes));
+      setContainers(sortedContainers);
       setSelectedTaskId((current) => nextCases.some((item) => item.taskId === current) ? current : (nextCases[0]?.taskId ?? ''));
       const errors = [
         caseResult.status === 'rejected' ? `题目加载失败：${errorMessage(caseResult.reason)}` : '',
@@ -280,10 +287,12 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
         prefixResult.status === 'rejected' ? `容器排序设置加载失败：${errorMessage(prefixResult.reason)}` : '',
       ].filter(Boolean);
       setLoadError(errors.join('；'));
+      return { cases: nextCases, containers: sortedContainers };
     } catch (error) {
-      if (epoch !== projectEpoch.current || targetProjectId !== activeProjectId.current) return;
+      if (epoch !== projectEpoch.current || targetProjectId !== activeProjectId.current) return null;
       setLoadError(errorMessage(error));
       setCases([]);
+      return null;
     } finally {
       if (epoch === projectEpoch.current && targetProjectId === activeProjectId.current) setLoading(false);
     }
@@ -302,6 +311,9 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     setExportTaskIds([]);
     setSaving(false);
     setPreflightLoading(false);
+    setStartupCommandCopied(false);
+    setBindingCompleted(false);
+    setQuickPromptCopied(false);
     settingsEpoch.current += 1;
     setSelectedTaskId('');
     void loadProject(projectId);
@@ -330,6 +342,16 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     setCompleted(selectedCase.completed);
     setSelectedTracePath(selectedCase.tracePath || '');
   }, [selectedCase?.taskId, selectedCase?.revision]);
+
+  useEffect(() => {
+    setStartupCommandCopied(false);
+    setBindingCompleted(false);
+    setQuickPromptCopied(false);
+  }, [selectedCase?.taskId]);
+
+  useEffect(() => {
+    setQuickPromptCopied(false);
+  }, [promptText]);
 
   useEffect(() => {
     setNotice('');
@@ -386,16 +408,17 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     updateCaseBusy(taskId, { taskId, label, jobId: '', progress: 0, message: '正在提交后台任务' });
     try {
       const submitted = await submit();
-      if (targetProjectId !== activeProjectId.current) return;
+      if (targetProjectId !== activeProjectId.current) return false;
       updateCaseBusy(taskId, { taskId, label, jobId: submitted.id, progress: submitted.progress ?? 0, message: submitted.progressMessage ?? '等待执行' });
       const finished = await waitForAnnotationJob(submitted.id, (job) => {
         if (targetProjectId !== activeProjectId.current) return;
         updateCaseBusy(taskId, { taskId, label, jobId: submitted.id, progress: job.progress, message: job.progressMessage || '执行中' });
       });
-      if (targetProjectId !== activeProjectId.current) return;
+      if (targetProjectId !== activeProjectId.current) return false;
       const updated = parseJobOutput<AnnotationCase>(finished, `${label}完成但没有返回题目结果`);
       replaceCase(updated);
       setNotice(`${label}已完成`);
+      return true;
     } catch (error) {
       if (targetProjectId === activeProjectId.current) {
         setActionError(errorMessage(error));
@@ -408,10 +431,103 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
           } catch { /* Keep the original job error visible; manual refresh can retry. */ }
         }
       }
+      return false;
     } finally {
       if (targetProjectId === activeProjectId.current) updateCaseBusy(taskId, null);
     }
   }, [replaceCase, updateCaseBusy]);
+
+  const handleCopyStartupCommand = async () => {
+    if (!selectedCase || !startup?.value) return;
+    try {
+      const apiKey = await getAnnotationContainerApiKey();
+      await writeClipboardText(buildContainerCommand(selectedCase, apiKey).command);
+      setStartupCommandCopied(true);
+      setNotice('容器启动命令已复制，请在本地终端执行');
+      setActionError('');
+    } catch (error) {
+      setActionError(errorMessage(error));
+    }
+  };
+
+  const copyCurrentPrompt = async (afterBinding = false) => {
+    if (!promptText.trim() || !onPromptCopy) return false;
+    try {
+      await onPromptCopy();
+      setQuickPromptCopied(true);
+      setNotice('提示词已复制');
+      setActionError('');
+      return true;
+    } catch (error) {
+      const message = errorMessage(error);
+      setActionError(afterBinding ? `绑定成功，但提示词复制失败：${message}` : message);
+      return false;
+    }
+  };
+
+  const bindCaseToContainer = async (targetCase: AnnotationCase, containerId: string) => {
+    const completed = await runCaseJob(
+      targetCase.taskId,
+      '复制并绑定',
+      () => bindContainer({
+        taskId: targetCase.taskId,
+        containerId,
+        repoRelativePath: targetCase.repoRelativePath || folderName(targetCase.sourcePath),
+        copyRepository: true,
+      }),
+    );
+    if (!completed) return false;
+    setBindingCompleted(true);
+    await copyCurrentPrompt(true);
+    return true;
+  };
+
+  const handleBindContainer = async () => {
+    if (!selectedCase) return;
+    await bindCaseToContainer(
+      { ...selectedCase, repoRelativePath: repoRelativePath.trim() },
+      selectedContainerId,
+    );
+  };
+
+  const handleQuickPromptCopy = async () => {
+    await copyCurrentPrompt(false);
+  };
+
+  const handleRefreshContainers = async () => {
+    const refreshed = await loadProject(projectId);
+    if (!refreshed || !taskId) return;
+    const targetCase = refreshed.cases.find((item) => item.taskId === taskId);
+    if (!targetCase) return;
+
+    let expectedName = '';
+    try {
+      expectedName = buildContainerCommand(targetCase).containerName.toLowerCase();
+    } catch {
+      return;
+    }
+    const matches = refreshed.containers.filter((item) => item.name.toLowerCase() === expectedName);
+    if (matches.length !== 1) return;
+
+    const matched = matches[0];
+    setSelectedContainerId(matched.id);
+    setBindingCompleted(false);
+    setQuickPromptCopied(false);
+    if (matched.state !== 'running') {
+      setActionError(`已匹配容器 ${matched.name}，但容器未运行，请启动后重试。`);
+      return;
+    }
+    if (targetCase.containerId === matched.id) {
+      setBindingCompleted(true);
+      await copyCurrentPrompt(true);
+      return;
+    }
+    if (!targetCase.initialSha) {
+      setActionError('已匹配容器，但题目尚未准备初始快照。');
+      return;
+    }
+    await bindCaseToContainer(targetCase, matched.id);
+  };
 
   const handleSaveSettings = async () => {
     if (!selectedCase) return;
@@ -526,18 +642,22 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
               <Container className="h-4 w-4" /> Claude Code Docker
             </div>
             <h1 className="mt-2 text-2xl font-bold text-stone-900 dark:text-stone-50">{taskId ? (view === 'review' ? '五维 AI 复审' : '容器与轨迹') : '容器标注'}</h1>
-            <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
-              {taskId ? '采集并准备制表数据后即可导出，无需继续下一轮；单题和全项目导出均使用设置中的统一目录。' : `${projectName ? `${projectName} · ` : ''}可批量采集并准备制表数据；已有有效评分会直接复用，导出时再生成 Excel。`}
-            </p>
+            {!taskId && <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">{`${projectName ? `${projectName} · ` : ''}可批量采集并准备制表数据；已有有效评分会直接复用，导出时再生成 Excel。`}</p>}
           </div>
           <div className="flex flex-wrap gap-2">
             {!taskId && <button className={SECONDARY_BUTTON} disabled={loading || globalBusy || Object.keys(caseBusy).length > 0} aria-expanded={showBatchSelection} onClick={() => setShowBatchSelection((open) => !open)}>{batchBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}批量采集并准备制表数据</button>}
-            <button className={SECONDARY_BUTTON} disabled={loading || globalBusy} aria-expanded={showExportSelection} onClick={() => setShowExportSelection((open) => !open)}><Download className="h-4 w-4" />选择题目导出</button>
-            <button className={PRIMARY_BUTTON} disabled={loading || globalBusy || Object.keys(caseBusy).length > 0} onClick={() => void handleExport(true, taskId, true)}><Download className="h-4 w-4" />{taskId ? '导出本题 Excel' : '一键导出已制表'}</button>
-            {taskId && <button className={SECONDARY_BUTTON} disabled={loading || globalBusy || Object.keys(caseBusy).length > 0} onClick={() => void handleExport(true, undefined, true)}><Download className="h-4 w-4" />导出全项目已制表</button>}
-          <button className={SECONDARY_BUTTON} onClick={() => void loadProject(projectId)} disabled={loading || Boolean(batchBusy)}>
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> 刷新
-          </button>
+            {!taskId && <button className={SECONDARY_BUTTON} disabled={loading || globalBusy} aria-expanded={showExportSelection} onClick={() => setShowExportSelection((open) => !open)}><Download className="h-4 w-4" />选择题目导出</button>}
+            {!taskId && <button className={PRIMARY_BUTTON} disabled={loading || globalBusy || Object.keys(caseBusy).length > 0} onClick={() => void handleExport(true, undefined, true)}><Download className="h-4 w-4" />一键导出已制表</button>}
+            {taskId && view === 'capture' ? (
+              <button className={startupCommandCopied ? COMPLETED_BUTTON : SECONDARY_BUTTON} disabled={!startup?.value} onClick={() => void handleCopyStartupCommand()}>
+                {startupCommandCopied ? <CheckCircle2 className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                {startupCommandCopied ? '容器命令已复制' : '复制容器命令'}
+              </button>
+            ) : (
+              <button className={SECONDARY_BUTTON} onClick={() => void loadProject(projectId)} disabled={loading || Boolean(batchBusy)}>
+                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />刷新
+              </button>
+            )}
           </div>
         </div>
 
@@ -545,7 +665,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
           <CrossProjectBatchSelector disabled={Boolean(batchBusy)} onSubmit={handleBatchPrepare} />
         )}
 
-        {showExportSelection && (
+        {showExportSelection && !taskId && (
           <section aria-label="选择导出题目" className="mb-5 rounded-2xl border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
             <h2 className="font-semibold text-stone-800 dark:text-stone-100">选择本项目已制表的题目</h2>
             <p className="my-2 text-xs text-stone-500">仅列出已有制表数据的题目；部分制表的题仅导出已保存轮次。所选题目合并为一个 Excel，沿用设置中的统一目录。</p>
@@ -637,9 +757,16 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
               <>
                 <section className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm dark:border-stone-800 dark:bg-stone-900">
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
+                    <div role="group" aria-label="项目信息" className="min-w-0">
                       <h2 className="text-lg font-bold text-stone-900 dark:text-stone-50">{selectedCase.taskName}</h2>
                       <p className="mt-1 break-all text-xs text-stone-400">{selectedCase.sourcePath}</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        {selectedCase.snapshotUrl ? (
+                          <a className="break-all text-xs text-indigo-500" href={selectedCase.snapshotUrl} target="_blank" rel="noreferrer">GitHub 初始环境快照：{selectedCase.snapshotUrl}</a>
+                        ) : (
+                          <button className="text-xs font-semibold text-indigo-500 disabled:text-stone-400" disabled={globalBusy || !selectedCase.initialSha || Boolean(selectedBusy)} onClick={() => void runCaseJob(selectedCase.taskId, '发布初始快照', () => publishSnapshot(selectedCase.taskId))}>发布 GitHub 初始快照</button>
+                        )}
+                      </div>
                     </div>
                     <button
                       className={SECONDARY_BUTTON}
@@ -650,31 +777,35 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                       {selectedCase.initialSha ? '已准备初始快照' : '准备题目'}
                     </button>
                   </div>
-                  <div className="mt-4 rounded-2xl bg-stone-50 p-3 dark:bg-stone-800/50">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-stone-700 dark:text-stone-200">容器启动命令</p>
-                        <p className="mt-1 break-all text-xs text-stone-500">{startup?.value ? `${startup.value.containerName} · ${startup.value.baseDirectory}/${startup.value.runDirectory}` : startup?.error}</p>
-                      </div>
-                      <button className={SECONDARY_BUTTON} disabled={!startup?.value} onClick={() => {
-                        if (!startup?.value) return;
-                        void getAnnotationContainerApiKey()
-                          .then((apiKey) => writeClipboardText(buildContainerCommand(selectedCase, apiKey).command))
-                          .then(() => setNotice('容器启动命令已复制，请在本地终端执行'))
-                          .catch((error) => setActionError(errorMessage(error)));
-                      }}><Clipboard className="h-4 w-4" />复制容器启动命令</button>
-                    </div>
-                    {startup?.value && <>
-                      <p className="mt-2 text-xs text-stone-500">复制时自动带入本机保存的 API Key，预览不显示密钥；未保存时使用终端环境变量或提示输入。目录已存在时会停止。容器启动后再复制并绑定题目。</p>
-                      <details className="mt-2 text-xs text-stone-500"><summary className="cursor-pointer">查看命令</summary><pre className="mt-2 max-h-64 overflow-auto whitespace-pre rounded-xl bg-white p-3 dark:bg-stone-950">{startup.value.command}</pre></details>
-                    </>}
-                  </div>
-                  <div className="mt-3 flex flex-wrap items-center gap-3">
-                    {selectedCase.snapshotUrl ? <a className="break-all text-xs text-indigo-500" href={selectedCase.snapshotUrl} target="_blank" rel="noreferrer">GitHub 初始环境快照：{selectedCase.snapshotUrl}</a> : <>
-                      <button className={SECONDARY_BUTTON} disabled={globalBusy || !selectedCase.initialSha || Boolean(selectedBusy)} onClick={() => void runCaseJob(selectedCase.taskId, '发布初始快照', () => publishSnapshot(selectedCase.taskId))}>发布 GitHub 初始快照</button>
-                      <span className="text-xs text-amber-600">尚未发布；可重试，不影响轨迹审核。</span>
-                    </>}
-                  </div>
+                  {view === 'capture' && <div role="group" aria-label="容器快捷操作" className="mt-4 flex flex-wrap items-center gap-2">
+                    <select aria-label="容器" className={`${INPUT_CLASS} min-w-[260px] flex-1`} value={selectedContainerId} onChange={(event) => {
+                      setSelectedContainerId(event.target.value);
+                      setBindingCompleted(false);
+                      setQuickPromptCopied(false);
+                    }}>
+                      <option value="">选择实际容器</option>
+                      {containers.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.state} · {item.workspacePath || '/workspace'}</option>)}
+                    </select>
+                    <button className={SECONDARY_BUTTON} onClick={() => void handleRefreshContainers()} disabled={loading || globalBusy || Boolean(selectedBusy)}>
+                      <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />刷新容器
+                    </button>
+                    <button
+                      className={bindingCompleted ? COMPLETED_BUTTON : PRIMARY_BUTTON}
+                      disabled={globalBusy || Boolean(selectedBusy) || !selectedContainerId || !repoRelativePath.trim() || !selectedCase.initialSha}
+                      onClick={() => void handleBindContainer()}
+                    >
+                      {selectedBusy?.label === '复制并绑定' ? <Loader2 className="h-4 w-4 animate-spin" /> : bindingCompleted && <CheckCircle2 className="h-4 w-4" />}
+                      {selectedBusy?.label === '复制并绑定' ? '正在复制并绑定' : bindingCompleted ? '已绑定' : '复制并绑定'}
+                    </button>
+                    {taskId && <button
+                      className={quickPromptCopied ? COMPLETED_BUTTON : PRIMARY_BUTTON}
+                      disabled={!selectedContainerId || !promptText.trim() || !onPromptCopy}
+                      onClick={() => void handleQuickPromptCopy()}
+                    >
+                      {quickPromptCopied ? <CheckCircle2 className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                      {quickPromptCopied ? '提示词已复制' : '复制提示词'}
+                    </button>}
+                  </div>}
                   <div className="mt-4 grid gap-3 md:grid-cols-3">
                     <div className="rounded-2xl bg-stone-50 p-3 dark:bg-stone-800/50">
                       <p className="text-[11px] font-semibold text-stone-400">初始 SHA</p>
@@ -688,38 +819,6 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                       <p className="text-[11px] font-semibold text-stone-400">采集版本</p>
                       <p className="mt-1 text-xs text-stone-700 dark:text-stone-300">revision {selectedCase.revision} · {selectedCase.captures.length} 份</p>
                     </div>
-                  </div>
-                </section>
-
-                <section className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm dark:border-stone-800 dark:bg-stone-900">
-                  <h3 className="text-base font-bold text-stone-900 dark:text-stone-50">绑定执行容器</h3>
-                  <div className="mt-3 rounded-2xl border border-blue-200 bg-blue-50 p-3 text-xs leading-5 text-blue-800 dark:border-blue-900/50 dark:bg-blue-950/20 dark:text-blue-200">
-                    新容器启动后 <span className="font-mono">/workspace</span> 必须为空；请在首次输入 Prompt 前完成准备、复制和绑定。关联已有仓库会保留容器内结果，但若首轮前快照缺失，系统无法补建真实初始状态。
-                  </div>
-                  <div className="mt-4 grid gap-3 lg:grid-cols-2">
-                    <label className="block">
-                      <span className="mb-1.5 block text-xs font-semibold text-stone-500">容器</span>
-                      <select className={INPUT_CLASS} value={selectedContainerId} onChange={(event) => setSelectedContainerId(event.target.value)}>
-                        <option value="">选择实际容器</option>
-                        {containers.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.state} · {item.workspacePath || '/workspace'}</option>)}
-                      </select>
-                    </label>
-                    <label className="block">
-                      <span className="mb-1.5 block text-xs font-semibold text-stone-500">仓库相对路径</span>
-                      <input className={INPUT_CLASS} value={repoRelativePath} onChange={(event) => setRepoRelativePath(event.target.value)} placeholder="repository" />
-                    </label>
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <button
-                      className={PRIMARY_BUTTON}
-                      disabled={globalBusy || Boolean(selectedBusy) || !selectedContainerId || !repoRelativePath.trim() || !selectedCase.initialSha}
-                      onClick={() => void runCaseJob(selectedCase.taskId, '复制并绑定', () => bindContainer({ taskId: selectedCase.taskId, containerId: selectedContainerId, repoRelativePath: repoRelativePath.trim(), copyRepository: true }))}
-                    >复制并绑定</button>
-                    <button
-                      className={SECONDARY_BUTTON}
-                      disabled={globalBusy || Boolean(selectedBusy) || !selectedContainerId || !repoRelativePath.trim()}
-                      onClick={() => void runCaseJob(selectedCase.taskId, '关联已有仓库', () => bindContainer({ taskId: selectedCase.taskId, containerId: selectedContainerId, repoRelativePath: repoRelativePath.trim(), copyRepository: false }))}
-                    >关联已有仓库</button>
                   </div>
                 </section>
 
