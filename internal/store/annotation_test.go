@@ -74,6 +74,31 @@ func TestGetAnnotationCaseNormalizesHistoricalNullEvaluationsToJSONArray(t *test
 	}
 }
 
+func TestAnnotationCaseSaveLoadPreservesPairwiseData(t *testing.T) {
+	s := openTestStore(t)
+	defer s.Close()
+	createAnnotationTask(t, s, "task-pairwise")
+	c := annotation.Case{
+		TaskID: "task-pairwise",
+		Mode:   annotation.CaseModePairwiseGSB,
+		Pairwise: &annotation.PairwiseData{
+			Prompt: "实现筛选功能",
+			RunA:   annotation.PairwiseRun{Side: annotation.PairwiseSideA, Branch: "A", SessionID: "session-a"},
+			RunB:   annotation.PairwiseRun{Side: annotation.PairwiseSideB, Branch: "B", SessionID: "session-b"},
+		},
+	}
+	if _, err := s.SaveAnnotationCase(c, 0); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := s.GetAnnotationCase("task-pairwise")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Mode != annotation.CaseModePairwiseGSB || loaded.Pairwise == nil || loaded.Pairwise.RunB.Branch != "B" {
+		t.Fatalf("loaded pairwise case = %#v", loaded)
+	}
+}
+
 func TestAnnotationCaseSaveUsesOptimisticRevision(t *testing.T) {
 	s := openTestStore(t)
 	defer s.Close()

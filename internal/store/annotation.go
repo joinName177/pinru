@@ -122,7 +122,7 @@ func (s *Store) SaveAnnotationCase(input annotation.Case, expectedRevision int) 
 		if err != nil {
 			return nil, err
 		}
-		if len(previous.Rounds) > 0 && previous.InitialSHA != input.InitialSHA {
+		if (len(previous.Rounds) > 0 || pairwiseHasEvidence(previous)) && previous.InitialSHA != input.InitialSHA {
 			return nil, fmt.Errorf("%w: task %s", ErrAnnotationInitialSHAImmutable, input.TaskID)
 		}
 	}
@@ -205,11 +205,16 @@ func decodeAnnotationCase(payload string, revision int, updatedAt int64) (annota
 }
 
 func normalizeAnnotationCaseSlices(annotationCase *annotation.Case) {
-	for index := range annotationCase.Rounds {
-		if annotationCase.Rounds[index].Evaluations == nil {
-			annotationCase.Rounds[index].Evaluations = make([]annotation.Evaluation, 0)
-		}
+	annotation.NormalizeCase(annotationCase)
+}
+
+func pairwiseHasEvidence(c annotation.Case) bool {
+	if c.Pairwise == nil {
+		return false
 	}
+	return c.Pairwise.RunA.SessionID != "" || c.Pairwise.RunB.SessionID != "" ||
+		c.Pairwise.RunA.CaptureID != "" || c.Pairwise.RunB.CaptureID != "" ||
+		c.Pairwise.RunA.DeliverableSHA != "" || c.Pairwise.RunB.DeliverableSHA != ""
 }
 
 func mapAnnotationWriteError(err error) error {
