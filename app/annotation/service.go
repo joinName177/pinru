@@ -25,6 +25,7 @@ type AnnotationService struct {
 	command        func(context.Context, string, string, ...string) ([]byte, error)
 	verifySnapshot func(context.Context, string) error
 	publishInitial func(context.Context, string, string, string, store.GitHubAccount) (string, error)
+	pushPairwise   func(context.Context, string, string, string) error
 }
 
 func New(st *store.Store, cli *appcli.CliService) *AnnotationService {
