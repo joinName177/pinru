@@ -9,6 +9,7 @@ import {
   Loader2,
   RefreshCw,
   Save,
+  Sparkles,
   Square,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -17,6 +18,7 @@ import {
   batchCaptureAndPrepareTable,
   cancelAnnotationJob,
   captureAndPrepareTable,
+  enablePairwise,
   exportCases,
   listCases,
   listContainers,
@@ -49,6 +51,7 @@ import {
 import { evaluationScoreTotal, getTableProgress, latestEvaluation } from './tableProgress';
 import { TableStatusBadge } from './TableStatusBadge';
 import { CrossProjectBatchSelector } from './CrossProjectBatchSelector';
+import { PairwiseWorkspace } from './PairwiseWorkspace';
 
 const INPUT_CLASS = 'w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-800 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:border-stone-700 dark:bg-[#171B22] dark:text-stone-100 dark:focus:border-slate-500 dark:focus:ring-slate-800';
 const PRIMARY_BUTTON = 'inline-flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white';
@@ -240,6 +243,9 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
   const [startupCommandCopied, setStartupCommandCopied] = useState(false);
   const [bindingCompleted, setBindingCompleted] = useState(false);
   const [quickPromptCopied, setQuickPromptCopied] = useState(false);
+  const [pairwiseHarness, setPairwiseHarness] = useState('Codex');
+  const [pairwiseHarnessVersion, setPairwiseHarnessVersion] = useState('');
+  const [pairwiseOS, setPairwiseOS] = useState('MacOS/Linux');
   const exportableCases = cases.filter((item) => getTableProgress(item).prepared > 0);
   const eligibleExportIds = exportTaskIds.filter((id) => exportableCases.some((item) => item.taskId === id));
   const projectEpoch = useRef(0);
@@ -641,7 +647,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
               <Container className="h-4 w-4" /> Claude Code Docker
             </div>
-            <h1 className="mt-2 text-2xl font-bold text-stone-900 dark:text-stone-50">{taskId ? (view === 'review' ? '五维 AI 复审' : '容器与轨迹') : '容器标注'}</h1>
+            <h1 className="mt-2 text-2xl font-bold text-stone-900 dark:text-stone-50">{taskId ? (selectedCase?.mode === 'pairwise_gsb' ? 'Pair-wise GSB' : view === 'review' ? '五维 AI 复审' : '容器与轨迹') : '容器标注'}</h1>
             {!taskId && <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">{`${projectName ? `${projectName} · ` : ''}可批量采集并准备制表数据；已有有效评分会直接复用，导出时再生成 Excel。`}</p>}
           </div>
           <div className="flex flex-wrap gap-2">
@@ -822,6 +828,47 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                   </div>
                 </section>
 
+                {selectedCase.mode !== 'pairwise_gsb' && selectedCase.rounds.length === 0 && selectedCase.captures.length === 0 && (
+                  <section className="border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
+                    <div className="flex flex-wrap items-end gap-3">
+                      <label className="min-w-[180px] flex-1">
+                        <span className="mb-1.5 block text-xs font-semibold text-stone-500">Harness</span>
+                        <input className={INPUT_CLASS} value={pairwiseHarness} onChange={(event) => setPairwiseHarness(event.target.value)} />
+                      </label>
+                      <label className="min-w-[180px] flex-1">
+                        <span className="mb-1.5 block text-xs font-semibold text-stone-500">Harness 版本</span>
+                        <input className={INPUT_CLASS} value={pairwiseHarnessVersion} onChange={(event) => setPairwiseHarnessVersion(event.target.value)} placeholder="例如 1.2.3" />
+                      </label>
+                      <label className="min-w-[180px] flex-1">
+                        <span className="mb-1.5 block text-xs font-semibold text-stone-500">操作系统</span>
+                        <select className={INPUT_CLASS} value={pairwiseOS} onChange={(event) => setPairwiseOS(event.target.value)}>
+                          <option value="MacOS/Linux">MacOS/Linux</option>
+                          <option value="Windows">Windows</option>
+                        </select>
+                      </label>
+                      <button
+                        className={PRIMARY_BUTTON}
+                        disabled={globalBusy || Boolean(selectedBusy) || !selectedCase.initialSha || !pairwiseHarness.trim() || !pairwiseHarnessVersion.trim()}
+                        onClick={() => void runCaseJob(selectedCase.taskId, '启用 Pair-wise GSB', () => enablePairwise({
+                          taskId: selectedCase.taskId,
+                          harness: pairwiseHarness.trim(),
+                          harnessVersion: pairwiseHarnessVersion.trim(),
+                          os: pairwiseOS,
+                          environment: '',
+                        }))}
+                      ><Sparkles className="h-4 w-4" />启用 Pair-wise GSB</button>
+                    </div>
+                  </section>
+                )}
+
+                {selectedCase.mode === 'pairwise_gsb' && selectedCase.pairwise ? (
+                  <PairwiseWorkspace
+                    annotationCase={selectedCase}
+                    disabled={globalBusy || Boolean(selectedBusy)}
+                    runJob={(label, submit) => runCaseJob(selectedCase.taskId, label, submit)}
+                  />
+                ) : <>
+
                 <section className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm dark:border-stone-800 dark:bg-stone-900">
                   <div className="grid gap-3 lg:grid-cols-2 lg:items-end">
                     <label className="min-w-[280px] flex-1">
@@ -941,6 +988,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                     {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}保存题目设置
                   </button>
                 </section>
+                </>}
                 </>}
               </>
             ) : !loading && (

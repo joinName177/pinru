@@ -63,8 +63,61 @@ export interface AnnotationCapture {
   createdAt: number;
 }
 
+export type PairwiseSide = 'A' | 'B';
+export type PairwiseConclusion = 'A_better' | 'same' | 'B_better';
+
+export interface PairwiseRun {
+  side: PairwiseSide;
+  branch: string;
+  sessionId: string;
+  tracePath: string;
+  turnCount: number;
+  captureId: string;
+  captureHash: string;
+  traceHash: string;
+  deliverableSha: string;
+  deliverableUrl: string;
+  videoStatus: 'missing' | 'recording' | 'ready' | 'manual_required' | 'failed' | string;
+  videoPath: string;
+  videoUrl: string;
+  recordingError: string;
+  preparedAt: number;
+  capturedAt: number;
+  committedAt: number;
+}
+
+export interface PairwiseReview {
+  current?: boolean;
+  id: string;
+  status: 'ready' | 'needs_evidence' | string;
+  conclusion: PairwiseConclusion;
+  reason: string;
+  model: string;
+  skillHash: string;
+  sourceHashA: string;
+  sourceHashB: string;
+  reviewPath: string;
+  reviewHash: string;
+  createdAt: number;
+}
+
+export interface PairwiseData {
+  prompt: string;
+  harness: string;
+  harnessVersion: string;
+  os: string;
+  environment: string;
+  runA: PairwiseRun;
+  runB: PairwiseRun;
+  reviews: PairwiseReview[];
+  notes: string;
+  autoRecordEnabled: boolean;
+}
+
 export interface AnnotationCase {
-	preparation?: AnnotationPreparation;
+		preparation?: AnnotationPreparation;
+  mode?: 'legacy' | 'pairwise_gsb';
+  pairwise?: PairwiseData;
   taskId: string;
   projectId: string;
   taskName: string;
@@ -157,6 +210,37 @@ export interface ReviewRequest {
   force: boolean;
 }
 
+export interface EnablePairwiseRequest {
+  taskId: string;
+  harness: string;
+  harnessVersion: string;
+  os: string;
+  environment: string;
+}
+
+export interface PairwiseSideRequest {
+  taskId: string;
+  side: PairwiseSide;
+}
+
+export interface PairwiseCaptureRequest extends PairwiseSideRequest {
+  tracePath: string;
+}
+
+export interface PairwiseCommitRequest extends PairwiseSideRequest {
+  sessionId: string;
+}
+
+export interface PairwiseMaterialsRequest extends PairwiseSideRequest {
+  videoUrl: string;
+  recordingError: string;
+}
+
+export interface PairwiseReviewRequest {
+  taskId: string;
+  force: boolean;
+}
+
 export interface SaveCaseSettingsRequest {
   taskId: string;
   snapshotUrl: string;
@@ -236,6 +320,30 @@ export function captureCase(request: CaptureRequest): Promise<BackgroundJob> {
 
 export function reviewRound(request: ReviewRequest): Promise<BackgroundJob> {
   return submitAnnotationJob('annotation_review', request.taskId, request);
+}
+
+export function enablePairwise(request: EnablePairwiseRequest): Promise<BackgroundJob> {
+  return submitAnnotationJob('annotation_pairwise_enable', request.taskId, request);
+}
+
+export function preparePairwiseSide(request: PairwiseSideRequest): Promise<BackgroundJob> {
+  return submitAnnotationJob('annotation_pairwise_prepare_side', request.taskId, request);
+}
+
+export function capturePairwiseSide(request: PairwiseCaptureRequest): Promise<BackgroundJob> {
+  return submitAnnotationJob('annotation_pairwise_capture', request.taskId, request);
+}
+
+export function commitPairwiseSide(request: PairwiseCommitRequest): Promise<BackgroundJob> {
+  return submitAnnotationJob('annotation_pairwise_commit_side', request.taskId, request);
+}
+
+export function savePairwiseMaterials(request: PairwiseMaterialsRequest): Promise<BackgroundJob> {
+  return submitAnnotationJob('annotation_pairwise_materials', request.taskId, request);
+}
+
+export function reviewPairwise(request: PairwiseReviewRequest): Promise<BackgroundJob> {
+  return submitAnnotationJob('annotation_pairwise_review', request.taskId, request);
 }
 
 export function exportCases(request: ExportAnnotationRequest): Promise<BackgroundJob> {
