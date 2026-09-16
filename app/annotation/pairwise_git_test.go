@@ -34,6 +34,7 @@ func TestPairwiseGitServicePreparesAndCommitsBothSidesFromInitial(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(source, "a.txt"), []byte("A result"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	markPairwiseGitCapture(t, s, domain.PairwiseSideA, "session-a", source)
 	committedA, err := s.CommitPairwiseSide(context.Background(), PairwiseCommitRequest{TaskID: c.TaskID, Side: domain.PairwiseSideA, SessionID: "session-a"})
 	if err != nil {
 		t.Fatal(err)
@@ -55,6 +56,7 @@ func TestPairwiseGitServicePreparesAndCommitsBothSidesFromInitial(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(source, "b.txt"), []byte("B result"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	markPairwiseGitCapture(t, s, domain.PairwiseSideB, "session-b", source)
 	committedB, err := s.CommitPairwiseSide(context.Background(), PairwiseCommitRequest{TaskID: c.TaskID, Side: domain.PairwiseSideB, SessionID: "session-b"})
 	if err != nil {
 		t.Fatal(err)
@@ -67,6 +69,57 @@ func TestPairwiseGitServicePreparesAndCommitsBothSidesFromInitial(t *testing.T) 
 		if err != nil {
 			t.Fatalf("%s does not descend from initial: %s %v", side, got, err)
 		}
+	}
+}
+
+func TestPairwiseGitServiceRejectsUncapturedOrChangedResult(t *testing.T) {
+	s, _, source := annotationFixture(t)
+	c, err := s.EnablePairwise(EnablePairwiseRequest{TaskID: "题目-1", Harness: "Codex", HarnessVersion: "1", OS: "MacOS/Linux"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SnapshotURL = "https://github.com/example/repo/commit/" + c.InitialSHA
+	if _, err := s.store.SaveAnnotationCase(*c, c.Revision); err != nil {
+		t.Fatal(err)
+	}
+	s.pushPairwise = func(context.Context, string, string, string) error { return nil }
+	if _, err := s.PreparePairwiseSide(context.Background(), PairwiseSideRequest{TaskID: c.TaskID, Side: domain.PairwiseSideA}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CommitPairwiseSide(context.Background(), PairwiseCommitRequest{TaskID: c.TaskID, Side: domain.PairwiseSideA, SessionID: "session-a"}); err == nil || !strings.Contains(err.Error(), "采集") {
+		t.Fatalf("uncaptured commit error = %v", err)
+	}
+	markPairwiseGitCapture(t, s, domain.PairwiseSideA, "session-a", source)
+	if err := os.WriteFile(filepath.Join(source, "changed.txt"), []byte("changed after capture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CommitPairwiseSide(context.Background(), PairwiseCommitRequest{TaskID: c.TaskID, Side: domain.PairwiseSideA, SessionID: "session-a"}); err == nil || !strings.Contains(err.Error(), "变化") {
+		t.Fatalf("changed result commit error = %v", err)
+	}
+}
+
+func markPairwiseGitCapture(t *testing.T, s *AnnotationService, side domain.PairwiseSide, sessionID, source string) {
+	t.Helper()
+	c, err := s.loadCase("题目-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := domain.TreeHash(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := pairwiseRun(c.Pairwise, side)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.SessionID = sessionID
+	run.TurnCount = 1
+	run.CaptureID = "capture-" + strings.ToLower(string(side))
+	run.CaptureHash = hash
+	run.TraceHash = "trace-" + strings.ToLower(string(side))
+	c.Captures = append(c.Captures, domain.Capture{ID: run.CaptureID, CodePath: source, Hash: hash, TraceHash: run.TraceHash})
+	if _, err := s.store.SaveAnnotationCase(*c, c.Revision); err != nil {
+		t.Fatal(err)
 	}
 }
 

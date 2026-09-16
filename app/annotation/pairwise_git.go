@@ -73,6 +73,27 @@ func (s *AnnotationService) CommitPairwiseSide(ctx context.Context, req Pairwise
 	if sessionID == "" {
 		return nil, errors.New("SessionID 不能为空")
 	}
+	if run.CaptureID == "" || run.CaptureHash == "" || run.TraceHash == "" || run.TurnCount != 1 || run.SessionID == "" {
+		return nil, errors.New("请先采集该侧完整首轮轨迹和代码证据")
+	}
+	if run.SessionID != sessionID {
+		return nil, errors.New("提交 SessionID 与该侧已采集轨迹不一致")
+	}
+	capture := pairwiseCaptureByID(c, run.CaptureID)
+	if capture == nil || capture.Hash != run.CaptureHash || capture.TraceHash != run.TraceHash {
+		return nil, errors.New("该侧采集证据记录不完整，请重新采集")
+	}
+	frozenHash, err := domain.TreeHash(ctx, capture.CodePath)
+	if err != nil || frozenHash != capture.Hash {
+		return nil, errors.New("该侧已采集代码证据发生变化，请重新采集")
+	}
+	currentHash, err := domain.TreeHash(ctx, c.SourcePath)
+	if err != nil {
+		return nil, err
+	}
+	if currentHash != run.CaptureHash {
+		return nil, errors.New("当前代码在采集后发生变化，请重新采集再提交")
+	}
 	other, _ := pairwiseRun(c.Pairwise, oppositePairwiseSide(req.Side))
 	if other.SessionID != "" && other.SessionID == sessionID {
 		return nil, errors.New("A/B SessionID 必须不同")

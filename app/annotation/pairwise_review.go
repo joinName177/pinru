@@ -31,15 +31,17 @@ func (s *AnnotationService) ReviewPairwise(ctx context.Context, req PairwiseRevi
 	if issues := domain.ValidatePairwiseCase(*c, false); len(issues) > 0 {
 		return nil, errors.New(issues[0])
 	}
-	if current := domain.CurrentPairwiseReview(*c); current != nil && !req.Force {
+	execution, err := s.reviewExecution()
+	if err != nil {
+		return nil, err
+	}
+	if current := domain.CurrentPairwiseReview(*c); current != nil && current.Model == execution.Label && !req.Force {
+		value := true
+		current.Current = &value
 		return c, nil
 	}
 	if s.cli == nil {
 		return nil, errors.New("未配置审核执行器")
-	}
-	execution, err := s.reviewExecution()
-	if err != nil {
-		return nil, err
 	}
 	capA := pairwiseCaptureByID(c, c.Pairwise.RunA.CaptureID)
 	capB := pairwiseCaptureByID(c, c.Pairwise.RunB.CaptureID)
@@ -102,6 +104,8 @@ func (s *AnnotationService) ReviewPairwise(ctx context.Context, req PairwiseRevi
 	c.Pairwise.Reviews = append(c.Pairwise.Reviews, review)
 	saved, err := s.store.SaveAnnotationCase(*c, c.Revision)
 	if err == nil {
+		value := true
+		saved.Pairwise.Reviews[len(saved.Pairwise.Reviews)-1].Current = &value
 		domain.ReportProgress(ctx, 100, "Pair-wise GSB 已保存")
 	}
 	return saved, err

@@ -62,7 +62,7 @@ func TestReviewPairwiseStoresReviewBoundToBothEvidenceSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	review := domain.CurrentPairwiseReview(*result)
-	if review == nil || review.Conclusion != domain.PairwiseConclusionA || review.SourceHashA == review.SourceHashB {
+	if review == nil || review.Current == nil || !*review.Current || review.Conclusion != domain.PairwiseConclusionA || review.SourceHashA == review.SourceHashB {
 		t.Fatalf("review = %#v", review)
 	}
 	if _, err := os.Stat(source); err != nil {

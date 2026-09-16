@@ -103,7 +103,7 @@ export function PairwiseWorkspace({ annotationCase, disabled, runJob, onExport, 
   const pairwise = annotationCase.pairwise;
   if (!pairwise) return null;
   const latestReview = pairwise.reviews.at(-1);
-  const currentReview = [...pairwise.reviews].reverse().find((review) => review.current !== false && review.status === 'ready');
+  const currentReview = [...pairwise.reviews].reverse().find((review) => review.current === true && review.status === 'ready');
   const videosReady = pairwise.runA.videoStatus === 'ready' && pairwise.runB.videoStatus === 'ready';
   const reviewReady = Boolean(pairwise.runA.captureId && pairwise.runB.captureId && pairwise.runA.deliverableSha && pairwise.runB.deliverableSha);
   const formalExportReady = videosReady && Boolean(currentReview);
@@ -139,7 +139,7 @@ export function PairwiseWorkspace({ annotationCase, disabled, runJob, onExport, 
           <div className="mt-4 border-t border-stone-100 pt-4 dark:border-stone-800">
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{({ A_better: 'A 更好', B_better: 'B 更好', same: 'Same' } as const)[latestReview.conclusion]}</span>
-              {latestReview.current === false && <span className="text-xs font-semibold text-amber-600">证据已变化，需重新生成</span>}
+              {latestReview.current !== true && <span className="text-xs font-semibold text-amber-600">证据已变化，需重新生成</span>}
             </div>
             <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-stone-700 dark:text-stone-300">{latestReview.reason}</p>
           </div>
