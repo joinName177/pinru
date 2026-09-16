@@ -320,6 +320,36 @@ func (s *AnnotationService) ExecuteJob(ctx context.Context, kind, payload string
 			return nil, err
 		}
 		return s.bindContainer(ctx, r)
+	case "annotation_pairwise_enable":
+		var r EnablePairwiseRequest
+		if err := json.Unmarshal([]byte(payload), &r); err != nil {
+			return nil, err
+		}
+		return s.EnablePairwise(r)
+	case "annotation_pairwise_prepare_side":
+		var r PairwiseSideRequest
+		if err := json.Unmarshal([]byte(payload), &r); err != nil {
+			return nil, err
+		}
+		return s.PreparePairwiseSide(ctx, r)
+	case "annotation_pairwise_commit_side":
+		var r PairwiseCommitRequest
+		if err := json.Unmarshal([]byte(payload), &r); err != nil {
+			return nil, err
+		}
+		return s.CommitPairwiseSide(ctx, r)
+	case "annotation_pairwise_capture":
+		var r PairwiseCaptureRequest
+		if err := json.Unmarshal([]byte(payload), &r); err != nil {
+			return nil, err
+		}
+		return s.CapturePairwiseSide(ctx, r)
+	case "annotation_pairwise_materials":
+		var r PairwiseMaterialsRequest
+		if err := json.Unmarshal([]byte(payload), &r); err != nil {
+			return nil, err
+		}
+		return s.SavePairwiseMaterials(r)
 	case "annotation_capture", "annotation_capture_table":
 		var r CaptureRequest
 		if err := json.Unmarshal([]byte(payload), &r); err != nil {
