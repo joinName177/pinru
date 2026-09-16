@@ -14,7 +14,7 @@ import (
 	"sync"
 )
 
-//go:embed assets/export_satisfaction.py assets/check_submission.py assets/template.xlsx assets/skill
+//go:embed assets/export_satisfaction.py assets/export_pairwise.py assets/check_submission.py assets/template.xlsx assets/skill
 var bundledAssets embed.FS
 
 var (

@@ -20,10 +20,12 @@ import {
   captureAndPrepareTable,
   enablePairwise,
   exportCases,
+  exportPairwise,
   listCases,
   listContainers,
   listTraces,
   preflight,
+  preflightPairwise,
   prepareCase,
   publishSnapshot,
   reviewRound,
@@ -595,6 +597,46 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     }
   };
 
+  const handlePairwiseExport = async (draft: boolean, exportTaskId: string) => {
+    setActionError('');
+    setExportResult(null);
+    const targetProjectId = activeProjectId.current;
+    const label = draft ? 'Pair-wise 草稿导出' : 'Pair-wise 正式导出';
+    setExportBusy({ taskId: exportTaskId, label, jobId: '', progress: 0, message: '正在提交后台任务' });
+    try {
+      const submitted = await exportPairwise({ projectId: targetProjectId, taskId: exportTaskId, submitter, submittedAt, draft });
+      setExportBusy({ taskId: exportTaskId, label, jobId: submitted.id, progress: submitted.progress ?? 0, message: submitted.progressMessage ?? '等待执行' });
+      const finished = await waitForAnnotationJob(submitted.id, (job) => {
+        setExportBusy({ taskId: exportTaskId, label, jobId: submitted.id, progress: job.progress, message: job.progressMessage || '执行中' });
+      });
+      if (targetProjectId !== activeProjectId.current) return;
+      const result = parseJobOutput<AnnotationExportResult>(finished, '导出完成但没有返回文件信息');
+      setExportResult(result);
+      setNotice(`${label}完成，共 ${result.rows} 条：${result.outputPath}`);
+    } catch (error) {
+      if (targetProjectId === activeProjectId.current) setActionError(errorMessage(error));
+    } finally {
+      if (targetProjectId === activeProjectId.current) setExportBusy(null);
+    }
+  };
+
+  const handlePairwisePreflight = async () => {
+    setActionError('');
+    setPreflightLoading(true);
+    const targetProjectId = activeProjectId.current;
+    try {
+      const nextReport = await preflightPairwise(targetProjectId);
+      if (targetProjectId === activeProjectId.current) {
+        setReport(nextReport);
+        setNotice(nextReport.issues.length ? 'Pair-wise 预检完成，请处理列出的问题或导出草稿' : 'Pair-wise 正式导出材料齐全');
+      }
+    } catch (error) {
+      if (targetProjectId === activeProjectId.current) setActionError(errorMessage(error));
+    } finally {
+      if (targetProjectId === activeProjectId.current) setPreflightLoading(false);
+    }
+  };
+
   const handleBatchPrepare = async (taskIds: string[]) => {
     if (taskIds.length === 0) return;
     const targetProjectId = activeProjectId.current;
@@ -866,6 +908,14 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                     annotationCase={selectedCase}
                     disabled={globalBusy || Boolean(selectedBusy)}
                     runJob={(label, submit) => runCaseJob(selectedCase.taskId, label, submit)}
+                    onExport={(draft) => handlePairwiseExport(draft, selectedCase.taskId)}
+                    onPreflight={handlePairwisePreflight}
+                    preflightReport={report}
+                    exportResult={exportResult}
+                    submitter={submitter}
+                    submittedAt={submittedAt}
+                    onSubmitterChange={setSubmitter}
+                    onSubmittedAtChange={setSubmittedAt}
                   />
                 ) : <>
 

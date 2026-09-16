@@ -400,6 +400,12 @@ func (s *AnnotationService) ExecuteJob(ctx context.Context, kind, payload string
 			return nil, err
 		}
 		return s.export(ctx, r)
+	case "annotation_pairwise_export":
+		var r PairwiseExportRequest
+		if err := json.Unmarshal([]byte(payload), &r); err != nil {
+			return nil, err
+		}
+		return s.exportPairwise(ctx, r)
 	default:
 		return nil, fmt.Errorf("未知标注操作：%s", kind)
 	}

@@ -60,3 +60,11 @@ it('shows provisional review until both videos are ready', () => {
   render(<PairwiseWorkspace annotationCase={pairwiseCase} disabled={false} runJob={vi.fn()} />);
   expect(screen.getByText('当前结论将保持临时状态，正式导出前需补齐 A/B 视频。')).toBeInTheDocument();
 });
+
+it('offers draft and formal pairwise export actions', async () => {
+  const onExport = vi.fn().mockResolvedValue(undefined);
+  render(<PairwiseWorkspace annotationCase={pairwiseCase} disabled={false} runJob={vi.fn()} onExport={onExport} />);
+  fireEvent.click(screen.getByRole('button', { name: '导出 Pair-wise 草稿' }));
+  await waitFor(() => expect(onExport).toHaveBeenCalledWith(true));
+  expect(screen.getByRole('button', { name: '正式导出 Pair-wise' })).toBeDisabled();
+});

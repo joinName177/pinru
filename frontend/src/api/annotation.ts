@@ -257,6 +257,14 @@ export interface ExportAnnotationRequest {
   draft: boolean;
 }
 
+export interface PairwiseExportRequest {
+  taskId?: string;
+  projectId: string;
+  submitter: string;
+  submittedAt: string;
+  draft: boolean;
+}
+
 const JOB_OPTIONS = { maxRetries: 1, timeoutSeconds: 1800 } as const;
 
 function submitAnnotationJob(jobType: string, taskId: string, input: unknown) {
@@ -286,6 +294,10 @@ export function saveCaseSettings(request: SaveCaseSettingsRequest): Promise<Anno
 
 export function preflight(projectId: string): Promise<AnnotationPreflightReport> {
   return callService('AnnotationService', 'Preflight', projectId);
+}
+
+export function preflightPairwise(projectId: string): Promise<AnnotationPreflightReport> {
+  return callService('AnnotationService', 'PreflightPairwise', projectId);
 }
 
 export function prepareCase(taskId: string): Promise<BackgroundJob> {
@@ -348,6 +360,10 @@ export function reviewPairwise(request: PairwiseReviewRequest): Promise<Backgrou
 
 export function exportCases(request: ExportAnnotationRequest): Promise<BackgroundJob> {
   return submitAnnotationJob('annotation_export', '', request);
+}
+
+export function exportPairwise(request: PairwiseExportRequest): Promise<BackgroundJob> {
+  return submitAnnotationJob('annotation_pairwise_export', request.taskId ?? '', request);
 }
 
 export const getAnnotationJob = getJob;

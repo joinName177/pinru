@@ -1,5 +1,5 @@
-import { CheckCircle2, FileSearch, GitBranch, Loader2, Save, Sparkles } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { CheckCircle2, Download, FileSearch, GitBranch, Loader2, Save, Sparkles } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import {
   capturePairwiseSide,
   commitPairwiseSide,
@@ -7,6 +7,8 @@ import {
   reviewPairwise,
   savePairwiseMaterials,
   type AnnotationCase,
+  type AnnotationExportResult,
+  type AnnotationPreflightReport,
   type PairwiseRun,
   type PairwiseSide,
 } from '../../api/annotation';
@@ -22,6 +24,14 @@ type Props = {
   annotationCase: AnnotationCase;
   disabled: boolean;
   runJob: PairwiseRunJob;
+  onExport?: (draft: boolean) => Promise<void>;
+  onPreflight?: () => Promise<void>;
+  preflightReport?: AnnotationPreflightReport | null;
+  exportResult?: AnnotationExportResult | null;
+  submitter?: string;
+  submittedAt?: string;
+  onSubmitterChange?: (value: string) => void;
+  onSubmittedAtChange?: (value: string) => void;
 };
 
 function shortSha(value: string) {
@@ -89,13 +99,14 @@ function RunPanel({ taskId, side, run, disabled, runJob }: {
   );
 }
 
-export function PairwiseWorkspace({ annotationCase, disabled, runJob }: Props) {
+export function PairwiseWorkspace({ annotationCase, disabled, runJob, onExport, onPreflight, preflightReport, exportResult, submitter = '', submittedAt = '', onSubmitterChange, onSubmittedAtChange }: Props) {
   const pairwise = annotationCase.pairwise;
   if (!pairwise) return null;
-  const latestReview = useMemo(() => pairwise.reviews.at(-1), [pairwise.reviews]);
+  const latestReview = pairwise.reviews.at(-1);
   const currentReview = [...pairwise.reviews].reverse().find((review) => review.current !== false && review.status === 'ready');
   const videosReady = pairwise.runA.videoStatus === 'ready' && pairwise.runB.videoStatus === 'ready';
   const reviewReady = Boolean(pairwise.runA.captureId && pairwise.runB.captureId && pairwise.runA.deliverableSha && pairwise.runB.deliverableSha);
+  const formalExportReady = videosReady && Boolean(currentReview);
 
   return (
     <div className="space-y-4">
@@ -134,6 +145,33 @@ export function PairwiseWorkspace({ annotationCase, disabled, runJob }: Props) {
           </div>
         ) : <p className="mt-4 text-sm text-stone-500">A/B 证据和产物 commit 齐全后可生成对比结论。</p>}
       </section>
+
+      {onExport && <section className="border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-base font-bold text-stone-900 dark:text-stone-100">Pair-wise 导出</h3>
+            <p className="mt-1 text-xs text-stone-500">草稿保留待补项；正式导出要求 A/B 视频和当前 GSB 均已就绪。</p>
+          </div>
+          {onPreflight && <button className={SECONDARY} disabled={disabled} onClick={() => void onPreflight()}><FileSearch className="h-4 w-4" />Pair-wise 预检</button>}
+        </div>
+        {preflightReport && <div className={`mt-4 border p-3 text-sm ${preflightReport.issues.length ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200' : 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-200'}`}>
+          <p className="font-semibold">{preflightReport.issues.length ? `仍有 ${preflightReport.issues.length} 项待补` : '正式导出材料齐全'}</p>
+          {preflightReport.issues.length > 0 && <ul className="mt-2 space-y-1 text-xs">{preflightReport.issues.map((issue) => <li key={issue}>• {issue}</li>)}</ul>}
+        </div>}
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <label><span className="mb-1 block text-xs font-semibold text-stone-500">提交人</span><input className={INPUT} value={submitter} onChange={(event) => onSubmitterChange?.(event.target.value)} placeholder="按真实提交身份填写" /></label>
+          <label><span className="mb-1 block text-xs font-semibold text-stone-500">实际提交时间</span><input type="datetime-local" className={INPUT} value={submittedAt} onChange={(event) => onSubmittedAtChange?.(event.target.value)} /></label>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button className={SECONDARY} disabled={disabled} onClick={() => void onExport(true)}><Download className="h-4 w-4" />导出 Pair-wise 草稿</button>
+          <button className={PRIMARY} disabled={disabled || !formalExportReady || !submitter.trim()} onClick={() => void onExport(false)}><Download className="h-4 w-4" />正式导出 Pair-wise</button>
+        </div>
+        {exportResult && <div className="mt-4 border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-200">
+          <p className="font-semibold">已导出 {exportResult.rows} 行</p>
+          <p className="mt-1 break-all">Excel：{exportResult.outputPath}</p>
+          <p className="mt-1 break-all">报告：{exportResult.reportPath}</p>
+        </div>}
+      </section>}
     </div>
   );
 }

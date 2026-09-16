@@ -160,6 +160,9 @@ func CurrentPairwiseReview(c Case) *PairwiseReview {
 	b := PairwiseRunSourceHash(c.Pairwise.RunB)
 	for i := len(c.Pairwise.Reviews) - 1; i >= 0; i-- {
 		r := &c.Pairwise.Reviews[i]
+		if r.Current != nil && !*r.Current {
+			continue
+		}
 		if r.Status == PairwiseReviewReady && r.SourceHashA == a && r.SourceHashB == b {
 			return r
 		}

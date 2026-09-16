@@ -102,6 +102,7 @@ export type WailsServiceContract = {
     Review: ServiceMethod<[request: ReviewRequest], AnnotationCase>;
     SaveCaseSettings: ServiceMethod<[request: SaveCaseSettingsRequest], AnnotationCase>;
     Preflight: ServiceMethod<[projectId: string], AnnotationPreflightReport>;
+    PreflightPairwise: ServiceMethod<[projectId: string], AnnotationPreflightReport>;
     Export: ServiceMethod<[request: ExportAnnotationRequest], AnnotationExportResult>;
   };
   ChatService: {
