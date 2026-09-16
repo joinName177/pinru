@@ -171,9 +171,26 @@ func (s *AnnotationService) ListCases(projectID string) ([]domain.Case, error) {
 		}
 		c.Preparation = preparations[task.ID]
 		markEvaluationFreshness(c, skillHash, reviewExecution.Label, modelErr == nil)
+		markPairwiseReviewFreshness(c, reviewExecution.Label, modelErr == nil)
 		result = append(result, *c)
 	}
 	return result, nil
+}
+
+func markPairwiseReviewFreshness(c *domain.Case, reviewLabel string, requireModel bool) {
+	if c.Pairwise == nil {
+		return
+	}
+	a := domain.PairwiseRunSourceHash(c.Pairwise.RunA)
+	b := domain.PairwiseRunSourceHash(c.Pairwise.RunB)
+	for i := range c.Pairwise.Reviews {
+		review := &c.Pairwise.Reviews[i]
+		current := review.Status == domain.PairwiseReviewReady && review.SourceHashA == a && review.SourceHashB == b
+		if requireModel {
+			current = current && review.Model == reviewLabel
+		}
+		review.Current = &current
+	}
 }
 
 func markEvaluationFreshness(c *domain.Case, skillHash, reviewLabel string, requireModel bool) {
@@ -371,6 +388,12 @@ func (s *AnnotationService) ExecuteJob(ctx context.Context, kind, payload string
 			return nil, err
 		}
 		return s.review(ctx, r)
+	case "annotation_pairwise_review":
+		var r PairwiseReviewRequest
+		if err := json.Unmarshal([]byte(payload), &r); err != nil {
+			return nil, err
+		}
+		return s.ReviewPairwise(ctx, r)
 	case "annotation_export":
 		var r ExportRequest
 		if err := json.Unmarshal([]byte(payload), &r); err != nil {
