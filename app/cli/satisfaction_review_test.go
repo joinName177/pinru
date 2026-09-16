@@ -92,6 +92,32 @@ func TestRunSatisfactionReviewAutomaticallyRechecksScoreTotalAboveTwentyOne(t *t
 	}
 }
 
+func TestRunSatisfactionReviewRewritesPlatformRateLimitDeduction(t *testing.T) {
+	workDir := t.TempDir()
+	first := reviewJSONWithDescription(t, 0, "本轮因 429 RateLimitError 中断，最后只有领域类型和一行导出，所以交付不完整。")
+	second := reviewJSONWithDescription(t, 0, "轮末只有领域类型和一行导出，原提示词要求的完整导出流程仍未实现，现有产物无法完成用户要求的数据交付。")
+	counter := filepath.Join(t.TempDir(), "attempts")
+	binary := writeFakeCodex(t, fakeCodexWritesReviewSequence(t, counter, first, second))
+	service := NewWithResolver(func(string) (string, error) { return binary, nil })
+
+	evaluation, err := service.RunSatisfactionReview(context.Background(), SatisfactionReviewRequest{
+		WorkDir: workDir, SkillDir: filepath.Join(workDir, "skill"), InputPath: filepath.Join(workDir, "input.json"),
+	}, nil)
+	if err != nil {
+		t.Fatalf("RunSatisfactionReview() error = %v", err)
+	}
+	if strings.Contains(evaluation.Descriptions[0], "429") || !strings.Contains(evaluation.Descriptions[0], "完整导出流程仍未实现") {
+		t.Fatalf("corrected delivery description = %q", evaluation.Descriptions[0])
+	}
+	attempts, err := os.ReadFile(counter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(attempts)) != "2" {
+		t.Fatalf("attempt count = %q, want 2", attempts)
+	}
+}
+
 func TestSatisfactionSchemaRestrictsOperatingSystemToExportValues(t *testing.T) {
 	schema := satisfactionSchema()
 	props := schema["properties"].(map[string]any)
@@ -333,6 +359,22 @@ func reviewJSONWithScores(t *testing.T, scores [5]int) string {
 		t.Fatal(err)
 	}
 	document["scores"] = []int{scores[0], scores[1], scores[2], scores[3], scores[4]}
+	raw, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+func reviewJSONWithDescription(t *testing.T, index int, description string) string {
+	t.Helper()
+	var document map[string]any
+	if err := json.Unmarshal([]byte(validReviewJSON(t, 5)), &document); err != nil {
+		t.Fatal(err)
+	}
+	descriptions := document["descriptions"].([]any)
+	descriptions[index] = description
+	document["descriptions"] = descriptions
 	raw, err := json.Marshal(document)
 	if err != nil {
 		t.Fatal(err)

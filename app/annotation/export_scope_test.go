@@ -80,6 +80,30 @@ func TestReviewedExportKeepsTwentyOneAndExcludesTruthfulTwentyTwo(t *testing.T) 
 	}
 }
 
+func TestReviewedExportBlocksLegacyStandaloneRecoveryRoundsUntilRecapture(t *testing.T) {
+	original := domain.Round{
+		PromptID: "p-original", Prompt: "实现订单筛选功能", Status: "complete", EvidenceHash: "h-original",
+		Evaluations: []domain.Evaluation{scoredEvaluation("h-original", [5]int{5, 4, 4, 4, 4})},
+	}
+	continuedOnce := domain.Round{
+		PromptID: "p-continue-1", Prompt: "继续", Status: "complete", EvidenceHash: "h-continue-1",
+		Evaluations: []domain.Evaluation{scoredEvaluation("h-continue-1", [5]int{5, 4, 4, 4, 4})},
+	}
+	continuedTwice := domain.Round{
+		PromptID: "p-continue-2", Prompt: "请继续。", Status: "complete", EvidenceHash: "h-continue-2",
+		Evaluations: []domain.Evaluation{scoredEvaluation("h-continue-2", [5]int{5, 4, 4, 4, 4})},
+	}
+	cases := []domain.Case{{TaskID: "a", Rounds: []domain.Round{original, continuedOnce, continuedTwice}}}
+
+	got, err := selectExportCases(cases, ExportRequest{ReviewedOnly: true})
+	if err == nil || !strings.Contains(err.Error(), "重新采集") {
+		t.Fatalf("selectExportCases() = %#v, %v; want legacy recovery recapture requirement", got, err)
+	}
+	if len(cases[0].Rounds) != 3 {
+		t.Fatal("export selection changed persisted legacy rounds")
+	}
+}
+
 func TestExportDirectoryUsesGlobalConfig(t *testing.T) {
 	s, _, _ := annotationFixture(t)
 	configured := filepath.Join(t.TempDir(), "shared exports")

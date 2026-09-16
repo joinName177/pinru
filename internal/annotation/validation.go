@@ -10,19 +10,25 @@ import (
 )
 
 var (
-	fullSHA              = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
-	fivePointDeduction   = regexp.MustCompile(`扣\s*(?:1|一)\s*分`)
-	negatedDeduction     = regexp.MustCompile(`(?:没有|并未|未|无需|不)\s*扣\s*(?:1|一)\s*分`)
-	markdownListPrefix   = regexp.MustCompile(`^\s*(?:#{1,6}\s+|[-+*]\s+|\d+[.)、]\s+)`)
-	aiWritingPrefix      = regexp.MustCompile(`(?i)^\s*(?:作为一个\s*ai|作为\s*ai|以下是|基于以上分析|我将从以下几个方面)[，,:：\s]*`)
-	spaceBeforeChinese   = regexp.MustCompile(`[ \t]+([，。！？；：])`)
-	spaceAfterChinese    = regexp.MustCompile(`([，。！？；：])[ \t]+`)
-	scoreConclusion      = regexp.MustCompile(`(?:因此|故)给\s*(?:[1-5]|一|二|三|四|五)\s*分`)
-	perfectClaimPatterns = []string{"无任何问题", "没有任何问题", "无任何不足", "没有任何不足", "全部完美", "完全无误", "满分表现"}
-	descriptionLabels    = []string{"触发节点：", "触发节点:", "实际行为：", "实际行为:", "业务影响：", "业务影响:", "证据：", "证据:"}
-	stockConclusions     = []string{"综上所述", "总体而言", "总的来说"}
-	aiWritingPrefixes    = []string{"作为一个ai", "作为ai", "以下是", "基于以上分析", "我将从以下几个方面"}
-	unfinishedEndings    = []string{"同时还需要", "并且", "以及", "而且", "但是", "例如", "比如", "包括", "从而"}
+	fullSHA                     = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
+	fivePointDeduction          = regexp.MustCompile(`扣\s*(?:1|一)\s*分`)
+	negatedDeduction            = regexp.MustCompile(`(?:没有|并未|未|无需|不)\s*扣\s*(?:1|一)\s*分`)
+	markdownListPrefix          = regexp.MustCompile(`^\s*(?:#{1,6}\s+|[-+*]\s+|\d+[.)、]\s+)`)
+	aiWritingPrefix             = regexp.MustCompile(`(?i)^\s*(?:作为一个\s*ai|作为\s*ai|以下是|基于以上分析|我将从以下几个方面)[，,:：\s]*`)
+	spaceBeforeChinese          = regexp.MustCompile(`[ \t]+([，。！？；：])`)
+	spaceAfterChinese           = regexp.MustCompile(`([，。！？；：])[ \t]+`)
+	scoreConclusion             = regexp.MustCompile(`(?:因此|故)给\s*(?:[1-5]|一|二|三|四|五)\s*分`)
+	perfectClaimPatterns        = []string{"无任何问题", "没有任何问题", "无任何不足", "没有任何不足", "全部完美", "完全无误", "满分表现"}
+	descriptionLabels           = []string{"触发节点：", "触发节点:", "实际行为：", "实际行为:", "业务影响：", "业务影响:", "证据：", "证据:"}
+	stockConclusions            = []string{"综上所述", "总体而言", "总的来说"}
+	aiWritingPrefixes           = []string{"作为一个ai", "作为ai", "以下是", "基于以上分析", "我将从以下几个方面"}
+	unfinishedEndings           = []string{"同时还需要", "并且", "以及", "而且", "但是", "例如", "比如", "包括", "从而"}
+	platformInterruptionMarkers = []string{
+		"ratelimiterror", "rate limit", "rate_limit", "too many requests",
+		"平台限流", "供应商限流", "服务限流", "接口限流", "api限流",
+		"429限流", "429错误", "429报错", "429中断", "状态码429", "返回429",
+		"504超时", "504错误", "504报错", "504中断", "状态码504", "返回504", "gateway timeout",
+	}
 )
 
 var allowedTaskTypes = map[string]struct{}{
@@ -74,6 +80,42 @@ func IsCollectableEvaluation(e Evaluation) bool {
 	}
 	total, complete := EvaluationScoreTotal(e)
 	return complete && total <= MaxCollectableScoreTotal
+}
+
+// PlatformInterruptionDeduction returns the first scoring field that mentions a
+// provider/platform interruption. Interruption facts may remain in Evidence or
+// Limitations, but not in dimension descriptions or model issues, where they can
+// be mistaken for scoring evidence; the final model-controlled end state must
+// carry that judgment.
+func PlatformInterruptionDeduction(e Evaluation) string {
+	for index, score := range e.Scores {
+		if score == nil {
+			continue
+		}
+		text := e.Descriptions[index] + " " + e.DescriptionChecks[index].Judgment + " " + e.DescriptionChecks[index].Location + " " + e.DescriptionChecks[index].Behavior + " " + e.DescriptionChecks[index].Consequence
+		if marker := platformInterruptionMarker(text); marker != "" {
+			return fmt.Sprintf("第%d维扣分依据包含平台中断 %q；请只依据全部恢复执行结束后的实际产物和模型可控行为", index+1, marker)
+		}
+	}
+	for index, issue := range e.Issues {
+		if issue.Kind == "evidence" {
+			continue
+		}
+		if marker := platformInterruptionMarker(issue.Description + " " + issue.Evidence); marker != "" {
+			return fmt.Sprintf("第%d条问题把平台中断 %q 作为模型问题依据；请移入 evidence 或 limitations", index+1, marker)
+		}
+	}
+	return ""
+}
+
+func platformInterruptionMarker(value string) string {
+	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), " ", ""))
+	for _, marker := range platformInterruptionMarkers {
+		if strings.Contains(normalized, strings.ReplaceAll(strings.ToLower(marker), " ", "")) {
+			return marker
+		}
+	}
+	return ""
 }
 
 // NormalizeEvaluationLanguage repairs presentation-only formatting before
@@ -303,6 +345,9 @@ func ValidateEvaluation(round Round, evaluation Evaluation) error {
 	if total, complete := EvaluationScoreTotal(evaluation); complete && total > MaxCollectableScoreTotal {
 		return fmt.Errorf("evaluation score total %d exceeds %d", total, MaxCollectableScoreTotal)
 	}
+	if reason := PlatformInterruptionDeduction(evaluation); reason != "" {
+		return fmt.Errorf("evaluation attributes a deduction to an external interruption: %s", reason)
+	}
 
 	hasBug := false
 	for index, issue := range evaluation.Issues {
@@ -516,6 +561,9 @@ func Preflight(cases []Case) Report {
 		validRounds := 0
 		readyRounds := 0
 		for _, round := range annotationCase.Rounds {
+			if IsPureRecoveryRound(round) {
+				continue
+			}
 			if round.Status == "excluded" {
 				if strings.TrimSpace(round.Reason) == "" {
 					addIssue("excluded round %q has no reason", round.PromptID)

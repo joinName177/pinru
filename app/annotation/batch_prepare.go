@@ -51,7 +51,7 @@ func latestReadyEvaluation(round domain.Round) *domain.Evaluation {
 func readyRoundCount(c domain.Case) int {
 	count := 0
 	for _, round := range c.Rounds {
-		if round.Status == "excluded" {
+		if round.Status == "excluded" || domain.IsPureRecoveryRound(round) {
 			continue
 		}
 		if latestReadyEvaluation(round) != nil {
@@ -64,6 +64,12 @@ func readyRoundCount(c domain.Case) int {
 func fullyPreparedWithoutRepair(c domain.Case) bool {
 	total := 0
 	for _, round := range c.Rounds {
+		if domain.IsPureRecoveryRound(round) {
+			// Legacy parsers persisted resume commands as independent rounds. The
+			// original round must be recaptured so its evidence reaches the final
+			// resumed state before it can be considered prepared.
+			return false
+		}
 		if round.Status == "excluded" {
 			continue
 		}
@@ -134,6 +140,10 @@ func (s *AnnotationService) batchInput(ctx context.Context, c domain.Case) (stri
 	// trace so a newly completed repair round can be discovered.
 	needsLiveCapture := false
 	for _, round := range c.Rounds {
+		if domain.IsPureRecoveryRound(round) {
+			needsLiveCapture = true
+			continue
+		}
 		if e := latestReadyEvaluation(round); e != nil && strings.TrimSpace(e.NextPrompt) != "" {
 			needsLiveCapture = true
 		}

@@ -250,6 +250,21 @@ func TestValidateEvaluationAcceptsNaturalDescriptionsWithTechnicalReferences(t *
 	}
 }
 
+func TestPlatformInterruptionDeductionDoesNotTreatNumericFileNameAsRateLimit(t *testing.T) {
+	evaluation := validEvaluation("round-hash")
+	four := 4
+	evaluation.Scores[0] = &four
+	evaluation.Descriptions[0] = "交付仍有遗漏，src/429_handler.go 只实现了错误类型，原提示词要求的导出入口尚未接入。"
+	if reason := PlatformInterruptionDeduction(evaluation); reason != "" {
+		t.Fatalf("numeric file name was treated as a platform interruption: %s", reason)
+	}
+
+	evaluation.Descriptions[0] = "本轮因 429 RateLimitError 中断，所以交付不完整。"
+	if reason := PlatformInterruptionDeduction(evaluation); reason == "" {
+		t.Fatal("rate-limit deduction was accepted")
+	}
+}
+
 func TestValidateEvaluationDoesNotRejectNaturalCausalWording(t *testing.T) {
 	round := Round{PromptID: "p-1", EvidenceHash: "round-hash"}
 	evaluation := validEvaluation("round-hash")
@@ -350,6 +365,25 @@ func TestPreflightCountsMinimumScoredReadyRoundsAndBlocksIncompleteMaterial(t *t
 	report = Preflight(cases)
 	if report.Ready != 0 || len(report.Issues) < 2 {
 		t.Fatalf("blocked Preflight() = %#v", report)
+	}
+}
+
+func TestPreflightIgnoresLegacyStandaloneRecoveryRounds(t *testing.T) {
+	sha := strings.Repeat("a", 40)
+	evaluation := validEvaluation("trace-hash")
+	cases := []Case{{
+		TaskID: "task-1", Completed: true, InitialSHA: sha,
+		SnapshotURL: "https://github.com/acme/repo/commit/" + sha,
+		Rounds: []Round{
+			{PromptID: "p-1", SessionID: "s-1", Prompt: "实现订单筛选功能", Order: 1, Status: "complete", EvidenceHash: "trace-hash", Evaluations: []Evaluation{evaluation}},
+			{PromptID: "p-continue-1", SessionID: "s-1", Prompt: "继续", Order: 2, Status: "complete"},
+			{PromptID: "p-continue-2", SessionID: "s-1", Prompt: "请继续。", Order: 3, Status: "complete"},
+		},
+	}}
+
+	report := Preflight(cases)
+	if report.Rounds != 1 || report.Ready != 1 || len(report.Issues) != 0 {
+		t.Fatalf("Preflight() = %#v, want only the original prompt round", report)
 	}
 }
 

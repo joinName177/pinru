@@ -116,14 +116,16 @@ func buildSatisfactionPrompt(req SatisfactionReviewRequest) string {
 先读 %s/references/integration-review-profile.md，再读 %s。优先读取材料中的 evidenceIndexPath（evidence-index.json）和 roundTracePath（round-trace.jsonl）；只有索引不足时才打开相关源码、完整轨迹或运行补充验证。
 只评价指定轮次，原始 Prompt 是验收范围。逐项输出 requirementChecks，再独立判断五维分数。已有轨迹明确记录相关验证通过且代码证据一致时，不重复安装依赖或重跑同一测试。
 五项有分数时只能填写3、4或5，合计不得超过21。先按证据完成初评；若合计超过21，必须在输出前重新检查轨迹中的需求理解、约束核对、步骤安排、判断修正、工具调用、失败恢复和验证覆盖，从真实可定位的过程不足中校准分数及依据。不得返回超过21的结果，不得把任何维度降到3以下，也不得机械减分、虚构问题或改写证据。
+若同一原始 Prompt 后出现一次或多次纯“继续”“请继续”等恢复指令，必须把这些指令之后的模型执行全部视为原始 Prompt 的同一证据链，并按最后一次恢复执行结束后的最终产物评分。429、RateLimitError、504、网络断开或供应商限流属于平台环境事件，只能记录在 evidence 或 limitations，不能写入非满分描述、descriptionChecks 或 bug/process issue 充当扣分依据。最终确有未完成内容时，只写原 Prompt 要求但在轮末仍缺失的具体功能、文件、测试或交付物，以及该缺失造成的实际结果；不得把未完成归因于平台中断。
 非满分 descriptions 必须包含真实位置、实际行为、本维度负面判断和客观后果。descriptionChecks 恰有五项；满分项填空对象，非满分项填写 judgment、location、behavior、consequence，四段文字逐字出现在对应 description 正文。
 五格都用完整、通顺的自然中文，禁止“以下是”“作为 AI”等前言、机械总结、模板标签、用箭头串联自然语言、Emoji、反引号和未写完的句子。逐项比较后重写内容重复、文字重复比例过高或语义高度相似而只替换维度名和少量同义词的描述。文件名、路径、函数名、命令、参数和报错属于必要技术引用，必须原样保留为普通文本，不能为了调整文风而删除或改名。命令、代码和原始报错中的 ASCII 箭头（如 ->、=>）是必要技术信息，必须原样保留。
 功能完成可以有过程扣分。只有确认的需求遗漏、回归或未解决 Bug 才生成以“修复”开头的提示词；低分、过程问题和证据不足本身不生成修复提示词。修复提示词也必须是完整通顺的自然中文，不使用AI式前言、模板标签、装饰符号或机械总结，并保留定位问题所需的文件名、函数名和命令。只在 verification 副本中补充验证，禁止修改 source 项目。枚举字段只输出 schema 允许值，不追加解释。`, req.SkillDir, req.InputPath)
 }
 
 func buildSatisfactionCorrectionPrompt(req SatisfactionReviewRequest, previous []byte, reason string) string {
-	return fmt.Sprintf(`上一版审核结果不符合评分硬规则：%s。请重新读取 %s/references/integration-review-profile.md、%s、evidence-index.json 和 round-trace.jsonl，并重新返回完整 schema JSON。
+	return fmt.Sprintf(`上一版审核结果不符合审核硬规则：%s。请重新读取 %s/references/integration-review-profile.md、%s、evidence-index.json 和 round-trace.jsonl，并重新返回完整 schema JSON。
 有分数的五个维度只能为3、4或5，五项齐全时总分不得超过21。请从轨迹和代码中复核真实、可定位的过程不足，校准相应分数、descriptions 与 descriptionChecks；每个非5分项仍须包含判断、位置、行为和客观后果。禁止机械减分、虚构问题或把评价助手自身环境问题归给被测模型。分数调整不等于代码存在Bug，只有确认的未完成需求、回归或轮末缺陷才生成以“修复”开头的 nextPrompt。只返回修正后的完整 JSON。
+429、RateLimitError、504、网络断开和供应商限流只属于 evidence 或 limitations。先把所有纯恢复指令之后的执行并回原始 Prompt，再按最终产物评分；非满分描述、descriptionChecks 和 bug/process issue 只能引用最终仍存在的具体缺失或模型可控行为，不能引用平台中断。
 
 上一版结果仅供定位需复核的字段：
 %s`, reason, req.SkillDir, req.InputPath, string(previous))
@@ -212,8 +214,8 @@ func (s *CliService) RunSatisfactionReview(ctx context.Context, req Satisfaction
 	defer logFile.Close()
 	writer := &satisfactionLogWriter{file: logFile, onLine: onLine}
 	prompt := buildSatisfactionPrompt(req)
-	const maxScoreReviewAttempts = 3
-	for attempt := 1; attempt <= maxScoreReviewAttempts; attempt++ {
+	const maxReviewAttempts = 3
+	for attempt := 1; attempt <= maxReviewAttempts; attempt++ {
 		outPath := filepath.Join(req.WorkDir, fmt.Sprintf("evaluation-attempt-%d.json", attempt))
 		args := []string{"exec", "-", "-C", req.WorkDir, "--sandbox", "workspace-write", "-c", `approval_policy="never"`, "--skip-git-repo-check", "--output-schema", schemaPath, "-o", outPath, "--ephemeral", "--json"}
 		if strings.TrimSpace(req.Model) != "" {
@@ -240,18 +242,18 @@ func (s *CliService) RunSatisfactionReview(ctx context.Context, req Satisfaction
 		if err != nil {
 			return nil, err
 		}
-		reason := satisfactionScoreViolation(evaluation)
+		reason := satisfactionReviewViolation(evaluation)
 		if reason == "" {
 			if err := os.WriteFile(filepath.Join(req.WorkDir, "evaluation.json"), bytes.TrimSpace(raw), 0600); err != nil {
 				return nil, err
 			}
 			return evaluation, nil
 		}
-		if attempt == maxScoreReviewAttempts {
-			return nil, fmt.Errorf("审核模型连续%d次未按证据完成21分以内的评分复核", maxScoreReviewAttempts)
+		if attempt == maxReviewAttempts {
+			return nil, fmt.Errorf("审核模型连续%d次未按证据满足评分与归因规则", maxReviewAttempts)
 		}
 		if onLine != nil {
-			onLine("评分超出3至5分或总分21分上限，正在基于证据自动复核")
+			onLine("审核结果违反分数或归因规则，正在基于完整证据自动复核")
 		}
 		prompt = buildSatisfactionCorrectionPrompt(req, bytes.TrimSpace(raw), reason)
 	}
@@ -314,6 +316,13 @@ func satisfactionScoreViolation(evaluation *domain.Evaluation) string {
 		return fmt.Sprintf("五维总分为%d，超过%d", total, domain.MaxCollectableScoreTotal)
 	}
 	return ""
+}
+
+func satisfactionReviewViolation(evaluation *domain.Evaluation) string {
+	if reason := satisfactionScoreViolation(evaluation); reason != "" {
+		return reason
+	}
+	return domain.PlatformInterruptionDeduction(*evaluation)
 }
 
 func unwrapJSONCodeFence(raw []byte) ([]byte, error) {

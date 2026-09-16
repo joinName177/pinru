@@ -162,6 +162,13 @@ func isContinuationPrompt(prompt string, attachments []string) bool {
 	}
 }
 
+// IsPureRecoveryRound reports whether a legacy persisted round contains only a
+// command to resume the preceding task. Such rows belong to the original
+// prompt's evidence chain and must never be reviewed or exported separately.
+func IsPureRecoveryRound(round Round) bool {
+	return isContinuationPrompt(round.Prompt, round.Attachments)
+}
+
 func decodeTraceLines(data []byte) ([]parsedTraceLine, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	// Claude tool results can be large; keep a bounded but practical line size.

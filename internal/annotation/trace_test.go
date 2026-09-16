@@ -61,6 +61,37 @@ func TestParseTraceMergesStandaloneContinueIntoPreviousPromptChain(t *testing.T)
 	}
 }
 
+func TestParseTraceMergesEveryStandaloneContinueIntoOriginalPromptChain(t *testing.T) {
+	trace := strings.Join([]string{
+		`{"type":"user","uuid":"u-1","promptId":"p-1","sessionId":"s-1","message":{"role":"user","content":"实现订单筛选功能"}}`,
+		`{"type":"assistant","sessionId":"s-1","message":{"role":"assistant","content":[{"type":"tool_use","name":"Edit"}],"stop_reason":"tool_use"}}`,
+		`{"type":"assistant","sessionId":"s-1","message":{"role":"assistant","content":[{"type":"text","text":"429 RateLimitError"}],"stop_reason":"error"}}`,
+		`{"type":"system","subtype":"turn_duration","sessionId":"s-1"}`,
+		`{"type":"user","uuid":"u-2","promptId":"p-continue-1","sessionId":"s-1","message":{"role":"user","content":"继续"}}`,
+		`{"type":"assistant","sessionId":"s-1","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash"}],"stop_reason":"tool_use"}}`,
+		`{"type":"assistant","sessionId":"s-1","message":{"role":"assistant","content":[{"type":"text","text":"429 RateLimitError"}],"stop_reason":"error"}}`,
+		`{"type":"system","subtype":"turn_duration","sessionId":"s-1"}`,
+		`{"type":"user","uuid":"u-3","promptId":"p-continue-2","sessionId":"s-1","message":{"role":"user","content":"请继续"}}`,
+		`{"type":"assistant","sessionId":"s-1","message":{"role":"assistant","content":[{"type":"text","text":"已完成并验证。"}],"stop_reason":"end_turn"}}`,
+		`{"type":"system","subtype":"turn_duration","sessionId":"s-1"}`,
+	}, "\n")
+
+	rounds, err := ParseTrace([]byte(trace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rounds) != 1 {
+		t.Fatalf("len(rounds) = %d, want one original prompt round: %#v", len(rounds), rounds)
+	}
+	round := rounds[0]
+	if round.Prompt != "实现订单筛选功能" || round.PromptID != "p-1" {
+		t.Fatalf("recovery commands replaced the original prompt identity: %#v", round)
+	}
+	if round.Status != "complete" || round.SourceStart != 1 || round.SourceEnd != 11 {
+		t.Fatalf("merged recovery chain boundary/status = %#v", round)
+	}
+}
+
 func TestParseTraceKeepsSubstantivePromptBeginningWithContinueAsNewRound(t *testing.T) {
 	trace := strings.Join([]string{
 		`{"type":"user","promptId":"p-1","sessionId":"s","message":{"role":"user","content":"实现订单筛选功能"}}`,

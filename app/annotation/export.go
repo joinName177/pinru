@@ -319,6 +319,11 @@ func selectExportCases(cases []domain.Case, req ExportRequest) ([]domain.Case, e
 			continue
 		}
 		found = true
+		for _, round := range c.Rounds {
+			if domain.IsPureRecoveryRound(round) {
+				return nil, fmt.Errorf("题目 %s 仍有旧版拆分的恢复指令，请先重新采集并准备制表数据后再导出", c.TaskName)
+			}
+		}
 		rounds := make([]domain.Round, 0, len(c.Rounds))
 		overLimit := 0
 		for _, r := range c.Rounds {

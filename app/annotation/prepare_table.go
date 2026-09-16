@@ -42,7 +42,7 @@ func (s *AnnotationService) prepareCapturedRounds(ctx context.Context, c *domain
 	var err error
 	var rounds []domain.Round
 	for _, r := range c.Rounds {
-		if r.Status == "complete" {
+		if r.Status == "complete" && !domain.IsPureRecoveryRound(r) {
 			rounds = append(rounds, r)
 		}
 	}
