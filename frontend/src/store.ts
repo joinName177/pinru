@@ -111,14 +111,12 @@ function getPersistedAiReviewStatus(modelRuns: ModelRunFromDB[]): ReviewStatus {
   return 'none';
 }
 
-function hasCurrentPairwiseGsbReview(annotationCase: AnnotationCase | undefined): boolean {
+function hasPairwiseGsbReview(annotationCase: AnnotationCase | undefined): boolean {
   if (annotationCase?.mode !== 'pairwise_gsb') {
     return false;
   }
 
-  return annotationCase.pairwise?.reviews?.some(
-    (review) => review.current === true && review.status === 'ready',
-  ) ?? false;
+  return (annotationCase.pairwise?.reviews?.length ?? 0) > 0;
 }
 
 function hasModelRunGsbScore(modelRuns: ModelRunFromDB[]): boolean {
@@ -149,7 +147,7 @@ function mapDbTaskToTask(
     executionRounds: getPersistedExecutionRounds(dbTask, modelRuns),
     aiReviewRounds: getPersistedAiReviewRounds(modelRuns),
     aiReviewStatus: getPersistedAiReviewStatus(modelRuns),
-    hasGeneratedGsb: hasCurrentPairwiseGsbReview(annotationCase) || hasModelRunGsbScore(modelRuns),
+    hasGeneratedGsb: hasPairwiseGsbReview(annotationCase) || hasModelRunGsbScore(modelRuns),
     progress: 0,
     totalModels: 0,
     runningModels: 0,

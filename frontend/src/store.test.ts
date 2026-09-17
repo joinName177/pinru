@@ -176,7 +176,7 @@ describe('useAppStore.loadTasks', () => {
     ]);
   });
 
-  it('marks task cards after a current pairwise GSB review is ready', async () => {
+  it('marks task cards after any pairwise GSB review is generated', async () => {
     getActiveProjectIdMock.mockResolvedValue('project-1');
     getProjectsMock.mockResolvedValue([
       {
@@ -235,7 +235,7 @@ describe('useAppStore.loadTasks', () => {
       {
         taskId: 'task-stale',
         mode: 'pairwise_gsb',
-        pairwise: { reviews: [{ id: 'review-2', current: false, status: 'ready' }] },
+        pairwise: { reviews: [{ id: 'review-2', current: false, status: 'needs_evidence' }] },
       },
     ]);
 
@@ -246,7 +246,7 @@ describe('useAppStore.loadTasks', () => {
     expect(listCasesMock).toHaveBeenCalledWith('project-1');
     expect(useAppStore.getState().tasks).toEqual([
       expect.objectContaining({ id: 'task-gsb', hasGeneratedGsb: true }),
-      expect.objectContaining({ id: 'task-stale', hasGeneratedGsb: false }),
+      expect.objectContaining({ id: 'task-stale', hasGeneratedGsb: true }),
     ]);
   });
 });
