@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -245,6 +246,14 @@ func (s *AnnotationService) stopPairwiseProject(ctx context.Context, containerID
 	return err
 }
 
+func (s *AnnotationService) pairwiseProjectURL(ctx context.Context, containerID string) (string, error) {
+	ipRaw, err := s.command(ctx, "", "docker", "inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", containerID)
+	if err != nil || strings.TrimSpace(string(ipRaw)) == "" {
+		return "", errors.New("无法读取容器访问地址")
+	}
+	return fmt.Sprintf("http://%s:%d", strings.TrimSpace(string(ipRaw)), pairwiseProjectProxyPort), nil
+}
+
 func (s *AnnotationService) StopPairwiseProject(req PairwiseSideRequest) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -259,4 +268,53 @@ func (s *AnnotationService) StopPairwiseProject(req PairwiseSideRequest) error {
 	}
 	pidFile, _ := pairwiseProjectFiles(req.TaskID, req.Side)
 	return s.stopPairwiseProject(ctx, run.ContainerID, pidFile)
+}
+
+func (s *AnnotationService) RecordPairwiseVideo(ctx context.Context, req PairwiseSideRequest) (*domain.Case, error) {
+	if runtime.GOOS != "darwin" {
+		return nil, errors.New("自动录屏当前仅支持 macOS")
+	}
+	c, err := s.loadCase(req.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	if err := requirePairwiseCase(c); err != nil {
+		return nil, err
+	}
+	run, err := pairwiseRun(c.Pairwise, req.Side)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(run.DeliverableSHA) == "" {
+		return nil, errors.New("请先采集并提交该侧最终产物")
+	}
+	dir := s.pairwiseVideoDir
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("创建录屏目录失败：%w", err)
+	}
+	output := filepath.Join(dir, strings.ToLower(string(req.Side))+"-"+time.Now().Format("20060102-150405.000")+".mov")
+	projectURL, err := s.pairwiseProjectURL(ctx, run.ContainerID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.command(ctx, "", "/usr/bin/open", projectURL); err != nil {
+		message := "自动打开项目页面失败：" + err.Error()
+		_, _ = s.SavePairwiseMaterials(PairwiseMaterialsRequest{TaskID: req.TaskID, Side: req.Side, RecordingError: message})
+		return nil, errors.New(message)
+	}
+	domain.ReportProgress(ctx, 10, "项目已打开，3 秒后开始录制，请完成一次目标功能操作")
+	_, recordErr := s.command(ctx, "", "/usr/sbin/screencapture", "-v", "-V30", "-T3", "-D1", "-k", "-x", output)
+	if recordErr != nil {
+		_ = os.Remove(output)
+		message := "自动录屏失败：" + recordErr.Error()
+		_, _ = s.SavePairwiseMaterials(PairwiseMaterialsRequest{TaskID: req.TaskID, Side: req.Side, RecordingError: message})
+		return nil, errors.New(message)
+	}
+	domain.ReportProgress(ctx, 90, "录制完成，正在回填本机视频路径")
+	updated, err := s.SavePairwiseMaterials(PairwiseMaterialsRequest{TaskID: req.TaskID, Side: req.Side, VideoPath: output})
+	if err != nil {
+		return nil, err
+	}
+	domain.ReportProgress(ctx, 100, "视频路径已回填")
+	return updated, nil
 }

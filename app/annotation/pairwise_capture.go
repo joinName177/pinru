@@ -359,6 +359,9 @@ func (s *AnnotationService) CapturePairwiseSide(ctx context.Context, req Pairwis
 	run.CaptureID = id
 	run.CaptureHash = captureHash
 	run.TraceHash = traceHash
+	run.RecordingGuide = nil
+	run.RecordingGuideHash = ""
+	run.RecordingGuideGeneratedAt = 0
 	run.CapturedAt = now
 	c.Captures = append(c.Captures, domain.Capture{
 		ID: id, Dir: dir, TracePath: filepath.Join(traceRoot, filepath.FromSlash(main)),

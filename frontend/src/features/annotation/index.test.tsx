@@ -362,7 +362,8 @@ describe('AnnotationWorkspace', () => {
       taskId: unbound.taskId, side: 'A', containerId: 'container-a', repoRelativePath: 'xh-05-feature-11', copyRepository: true,
     }));
     expect(await within(sideA).findByRole('button', { name: '已绑定 A' })).toBeEnabled();
-    expect(await within(sideA).findByRole('button', { name: '提示词已复制' })).toBeEnabled();
+    expect(await within(sideA).findByText('提示词已复制')).toBeInTheDocument();
+    expect(within(sideA).queryByRole('button', { name: '复制同一提示词' })).not.toBeInTheDocument();
     expect(wailsClipboard.setText).toHaveBeenCalledWith('实现加法');
   });
 

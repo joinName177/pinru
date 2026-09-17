@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	domain "github.com/blueship581/pinru/internal/annotation"
 )
 
 func TestDetectPairwiseProjectLaunchUsesDeclaredPNPMDevScript(t *testing.T) {
@@ -59,5 +61,55 @@ func TestValidatePairwiseProjectRevisionRequiresExpectedBranchAndCommit(t *testi
 	}
 	if err := validatePairwiseProjectRevision(context.Background(), repo, "B", sha); err == nil || !strings.Contains(err.Error(), "B") {
 		t.Fatalf("wrong branch error = %v", err)
+	}
+}
+
+func TestRecordPairwiseVideoStoresAbsolutePathAndMarksVideoReady(t *testing.T) {
+	s, _, _ := annotationFixture(t)
+	s.pairwiseVideoDir = filepath.Join(t.TempDir(), "pairwise-videos")
+	c, err := s.EnablePairwise(EnablePairwiseRequest{TaskID: "题目-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Pairwise.RunA.DeliverableSHA = strings.Repeat("a", 40)
+	c.Pairwise.RunA.ContainerID = "container-a"
+	if _, err := s.store.SaveAnnotationCase(*c, c.Revision); err != nil {
+		t.Fatal(err)
+	}
+	var recordedArgs []string
+	var commands []string
+	s.command = func(_ context.Context, _ string, name string, args ...string) ([]byte, error) {
+		commands = append(commands, name+" "+strings.Join(args, " "))
+		switch name {
+		case "docker":
+			return []byte("172.18.0.8\n"), nil
+		case "/usr/bin/open":
+			return nil, nil
+		case "/usr/sbin/screencapture":
+			recordedArgs = append([]string(nil), args...)
+			output := args[len(args)-1]
+			return nil, os.WriteFile(output, []byte("quicktime-video"), 0o600)
+		default:
+			t.Fatalf("command = %s", name)
+			return nil, nil
+		}
+	}
+	updated, err := s.RecordPairwiseVideo(context.Background(), PairwiseSideRequest{TaskID: c.TaskID, Side: domain.PairwiseSideA})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := updated.Pairwise.RunA
+	if run.VideoStatus != domain.PairwiseVideoReady || !filepath.IsAbs(run.VideoPath) {
+		t.Fatalf("video state = %#v", run)
+	}
+	if !strings.HasPrefix(run.VideoPath, s.pairwiseVideoDir+string(filepath.Separator)) {
+		t.Fatalf("video path = %s", run.VideoPath)
+	}
+	joined := strings.Join(recordedArgs, " ")
+	if !strings.Contains(joined, "-v -V30 -T3 -D1 -k -x") {
+		t.Fatalf("screencapture args = %q", joined)
+	}
+	if len(commands) != 3 || commands[1] != "/usr/bin/open http://172.18.0.8:4173" || !strings.HasPrefix(commands[2], "/usr/sbin/screencapture ") {
+		t.Fatalf("commands = %#v", commands)
 	}
 }

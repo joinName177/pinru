@@ -543,7 +543,7 @@ func (s *JobService) executeJob(id string, req SubmitJobRequest) {
 	case "ai_review":
 		execResult, execErr = s.executeAiReview(ctx, id, req)
 	case "annotation_publish", "annotation_prepare", "annotation_bind", "annotation_capture", "annotation_capture_table", "annotation_batch_capture_table", "annotation_resume", "annotation_review", "annotation_export",
-		"annotation_pairwise_enable", "annotation_pairwise_prepare_side", "annotation_pairwise_bind", "annotation_pairwise_commit_side", "annotation_pairwise_capture", "annotation_pairwise_materials", "annotation_pairwise_settings", "annotation_pairwise_review", "annotation_pairwise_batch_review", "annotation_pairwise_export":
+		"annotation_pairwise_enable", "annotation_pairwise_prepare_side", "annotation_pairwise_bind", "annotation_pairwise_commit_side", "annotation_pairwise_capture", "annotation_pairwise_recording_guide", "annotation_pairwise_record_video", "annotation_pairwise_materials", "annotation_pairwise_settings", "annotation_pairwise_review", "annotation_pairwise_batch_review", "annotation_pairwise_export":
 		if s.annotationHandler == nil {
 			execErr = errors.New("容器标注服务尚未注册")
 		} else {

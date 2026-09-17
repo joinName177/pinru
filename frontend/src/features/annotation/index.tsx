@@ -23,6 +23,7 @@ import {
   enablePairwise,
   exportCases,
   exportPairwise,
+  generatePairwiseRecordingGuide,
   listCases,
   listContainers,
   listTraces,
@@ -572,6 +573,20 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     }
   };
 
+  const handleGeneratePairwiseRecordingGuide = async (side: 'A' | 'B') => {
+    if (!selectedCase) return false;
+    return runCaseJob(selectedCase.taskId, `生成 ${side} 录制指引`, () => generatePairwiseRecordingGuide({ taskId: selectedCase.taskId, side }));
+  };
+
+  const handleCopyPairwiseRecordingGuide = async (side: 'A' | 'B') => {
+    const run = side === 'A' ? selectedCase?.pairwise?.runA : selectedCase?.pairwise?.runB;
+    const steps = run?.recordingGuide ?? [];
+    if (!steps.length) return;
+    await writeClipboardText(steps.map((step, index) => `${index + 1}. ${step}`).join('\n'));
+    setNotice(`${side} 录制指引已复制`);
+    setActionError('');
+  };
+
   const copyCurrentPrompt = async (afterBinding = false) => {
     if (!promptText.trim() || !onPromptCopy) return false;
     try {
@@ -1046,9 +1061,10 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                     onCopyContainerCommand={handleCopyPairwiseStartupCommand}
                     onBindContainer={handleBindPairwiseContainer}
                     onRefreshContainers={handleRefreshPairwiseContainers}
-                    onCopyPrompt={(side) => copyPairwisePrompt(side, false)}
                     onStartProject={handleStartPairwiseProject}
                     onStopProject={handleStopPairwiseProject}
+                    onGenerateRecordingGuide={handleGeneratePairwiseRecordingGuide}
+                    onCopyRecordingGuide={handleCopyPairwiseRecordingGuide}
                     promptCopied={pairwisePromptCopied}
                     onExport={(draft) => handlePairwiseExport(draft, selectedCase.taskId)}
                     onPreflight={handlePairwisePreflight}

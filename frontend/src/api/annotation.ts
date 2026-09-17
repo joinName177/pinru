@@ -85,6 +85,9 @@ export interface PairwiseRun {
   videoPath: string;
   videoUrl: string;
   recordingError: string;
+  recordingGuide?: string[];
+  recordingGuideHash?: string;
+  recordingGuideGeneratedAt?: number;
   preparedAt: number;
   capturedAt: number;
   committedAt: number;
@@ -408,6 +411,14 @@ export function stopPairwiseProject(request: PairwiseSideRequest): Promise<void>
 
 export function capturePairwiseSide(request: PairwiseCaptureRequest): Promise<BackgroundJob> {
   return submitAnnotationJob('annotation_pairwise_capture', request.taskId, request);
+}
+
+export function recordPairwiseVideo(request: PairwiseSideRequest): Promise<BackgroundJob> {
+  return submitAnnotationJob('annotation_pairwise_record_video', request.taskId, request);
+}
+
+export function generatePairwiseRecordingGuide(request: PairwiseSideRequest): Promise<BackgroundJob> {
+  return submitAnnotationJob('annotation_pairwise_recording_guide', request.taskId, request);
 }
 
 export function commitPairwiseSide(request: PairwiseCommitRequest): Promise<BackgroundJob> {

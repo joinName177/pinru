@@ -48,10 +48,9 @@ it('renders independent A and B evidence states', () => {
   expect(within(sideB).getByRole('button', { name: '提交 B 产物' })).toBeDisabled();
 });
 
-it('keeps refresh, binding, and prompt actions available with completed states', async () => {
+it('keeps refresh and binding actions while showing automatic prompt-copy state', async () => {
   const onRefreshContainers = vi.fn().mockResolvedValue(undefined);
   const onBindContainer = vi.fn().mockResolvedValue(true);
-  const onCopyPrompt = vi.fn().mockResolvedValue(true);
   render(<PairwiseWorkspace
     annotationCase={pairwiseCase}
     containers={[{ id: 'container-a', name: 'pair-claude-1-a', state: 'running', image: 'claude', workspacePath: '/workspace-a' }]}
@@ -59,20 +58,19 @@ it('keeps refresh, binding, and prompt actions available with completed states',
     runJob={vi.fn()}
     onRefreshContainers={onRefreshContainers}
     onBindContainer={onBindContainer}
-    onCopyPrompt={onCopyPrompt}
     promptCopied={{ A: true, B: false }}
   />);
   const sideA = screen.getByRole('region', { name: '运行 A' });
   const buttons = within(sideA).getAllByRole('button').map((button) => button.textContent?.trim());
   expect(buttons.indexOf('刷新容器')).toBeLessThan(buttons.indexOf('已绑定 A'));
   expect(within(sideA).getByRole('button', { name: '已绑定 A' })).toBeEnabled();
-  expect(within(sideA).getByRole('button', { name: '提示词已复制' })).toBeEnabled();
+  expect(within(sideA).getByText('提示词已复制')).toBeInTheDocument();
+  expect(within(sideA).queryByRole('button', { name: '提示词已复制' })).not.toBeInTheDocument();
+  expect(within(sideA).queryByRole('button', { name: '复制同一提示词' })).not.toBeInTheDocument();
   fireEvent.click(within(sideA).getByRole('button', { name: '刷新容器' }));
   fireEvent.click(within(sideA).getByRole('button', { name: '已绑定 A' }));
-  fireEvent.click(within(sideA).getByRole('button', { name: '提示词已复制' }));
   await waitFor(() => expect(onRefreshContainers).toHaveBeenCalledWith('A'));
   expect(onBindContainer).toHaveBeenCalledWith('A', 'container-a');
-  expect(onCopyPrompt).toHaveBeenCalledWith('A');
 });
 
 it('submits side-specific capture and video actions', async () => {
@@ -95,10 +93,33 @@ it('starts and stops the committed project for each side', async () => {
   const sideA = screen.getByRole('region', { name: '运行 A' });
   fireEvent.click(within(sideA).getByRole('button', { name: '启动项目 A' }));
   await waitFor(() => expect(onStartProject).toHaveBeenCalledWith('A'));
+  expect(within(sideA).getByText('项目运行中')).toBeInTheDocument();
   expect(within(sideA).getByRole('link', { name: '打开 A 项目' })).toHaveAttribute('href', 'http://192.168.1.2:4173');
   fireEvent.click(within(sideA).getByRole('button', { name: '停止项目 A' }));
   await waitFor(() => expect(onStopProject).toHaveBeenCalledWith('A'));
   await waitFor(() => expect(within(sideA).queryByRole('link', { name: '打开 A 项目' })).not.toBeInTheDocument());
+});
+
+it('does not expose automatic recording buttons', () => {
+  render(<PairwiseWorkspace annotationCase={pairwiseCase} disabled={false} runJob={vi.fn()} />);
+  const sideA = screen.getByRole('region', { name: '运行 A' });
+  const sideB = screen.getByRole('region', { name: '运行 B' });
+  expect(within(sideA).queryByRole('button', { name: '录制 A 视频' })).not.toBeInTheDocument();
+  expect(within(sideB).queryByRole('button', { name: '录制 B 视频' })).not.toBeInTheDocument();
+});
+
+it('shows a side-specific recording guide and can regenerate it', async () => {
+  const onGenerateRecordingGuide = vi.fn().mockResolvedValue(true);
+  const withGuide = structuredClone(pairwiseCase);
+  withGuide.pairwise!.runA.recordingGuide = ['打开项目首页', '点击皱眉榜', '打开第一条记录查看详情'];
+  render(<PairwiseWorkspace annotationCase={withGuide} disabled={false} runJob={vi.fn()} onGenerateRecordingGuide={onGenerateRecordingGuide} />);
+  const sideA = screen.getByRole('region', { name: '运行 A' });
+  expect(within(sideA).getByText('点击皱眉榜')).toBeInTheDocument();
+  expect(within(sideA).getByText('轨迹已采集')).toBeInTheDocument();
+  expect(within(sideA).getByText('产物已提交')).toBeInTheDocument();
+  expect(within(sideA).getByText('指引已生成')).toBeInTheDocument();
+  fireEvent.click(within(sideA).getByRole('button', { name: '重新生成 A 录制指引' }));
+  await waitFor(() => expect(onGenerateRecordingGuide).toHaveBeenCalledWith('A'));
 });
 
 it('shows provisional review until both videos are ready', () => {

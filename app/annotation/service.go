@@ -21,6 +21,7 @@ type AnnotationService struct {
 	store                *store.Store
 	cli                  *appcli.CliService
 	root                 string
+	pairwiseVideoDir     string
 	locks                sync.Map
 	command              func(context.Context, string, string, ...string) ([]byte, error)
 	verifySnapshot       func(context.Context, string) error
@@ -30,7 +31,15 @@ type AnnotationService struct {
 }
 
 func New(st *store.Store, cli *appcli.CliService) *AnnotationService {
-	return &AnnotationService{store: st, cli: cli, root: filepath.Join(filepath.Dir(st.DBPath()), "annotation"), command: runCommand, verifySnapshot: verifyRemoteSnapshot, publishInitial: publishInitial}
+	return &AnnotationService{
+		store:            st,
+		cli:              cli,
+		root:             filepath.Join(filepath.Dir(st.DBPath()), "annotation"),
+		pairwiseVideoDir: "/Users/cool/work/self-project/pairwise-videos",
+		command:          runCommand,
+		verifySnapshot:   verifyRemoteSnapshot,
+		publishInitial:   publishInitial,
+	}
 }
 
 type PrepareRequest struct {
@@ -369,6 +378,18 @@ func (s *AnnotationService) ExecuteJob(ctx context.Context, kind, payload string
 			return nil, err
 		}
 		return s.CaptureAndCommitPairwiseSide(ctx, r)
+	case "annotation_pairwise_record_video":
+		var r PairwiseSideRequest
+		if err := json.Unmarshal([]byte(payload), &r); err != nil {
+			return nil, err
+		}
+		return s.RecordPairwiseVideo(ctx, r)
+	case "annotation_pairwise_recording_guide":
+		var r PairwiseSideRequest
+		if err := json.Unmarshal([]byte(payload), &r); err != nil {
+			return nil, err
+		}
+		return s.GeneratePairwiseRecordingGuide(ctx, r)
 	case "annotation_pairwise_materials":
 		var r PairwiseMaterialsRequest
 		if err := json.Unmarshal([]byte(payload), &r); err != nil {

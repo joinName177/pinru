@@ -44,27 +44,30 @@ const (
 )
 
 type PairwiseRun struct {
-	Side             PairwiseSide `json:"side"`
-	Branch           string       `json:"branch"`
-	ContainerID      string       `json:"containerId"`
-	ContainerName    string       `json:"containerName"`
-	WorkspacePath    string       `json:"workspacePath"`
-	RepoRelativePath string       `json:"repoRelativePath"`
-	SessionID        string       `json:"sessionId"`
-	TracePath        string       `json:"tracePath"`
-	TurnCount        int          `json:"turnCount"`
-	CaptureID        string       `json:"captureId"`
-	CaptureHash      string       `json:"captureHash"`
-	TraceHash        string       `json:"traceHash"`
-	DeliverableSHA   string       `json:"deliverableSha"`
-	DeliverableURL   string       `json:"deliverableUrl"`
-	VideoStatus      string       `json:"videoStatus"`
-	VideoPath        string       `json:"videoPath"`
-	VideoURL         string       `json:"videoUrl"`
-	RecordingError   string       `json:"recordingError"`
-	PreparedAt       int64        `json:"preparedAt"`
-	CapturedAt       int64        `json:"capturedAt"`
-	CommittedAt      int64        `json:"committedAt"`
+	Side                      PairwiseSide `json:"side"`
+	Branch                    string       `json:"branch"`
+	ContainerID               string       `json:"containerId"`
+	ContainerName             string       `json:"containerName"`
+	WorkspacePath             string       `json:"workspacePath"`
+	RepoRelativePath          string       `json:"repoRelativePath"`
+	SessionID                 string       `json:"sessionId"`
+	TracePath                 string       `json:"tracePath"`
+	TurnCount                 int          `json:"turnCount"`
+	CaptureID                 string       `json:"captureId"`
+	CaptureHash               string       `json:"captureHash"`
+	TraceHash                 string       `json:"traceHash"`
+	DeliverableSHA            string       `json:"deliverableSha"`
+	DeliverableURL            string       `json:"deliverableUrl"`
+	VideoStatus               string       `json:"videoStatus"`
+	VideoPath                 string       `json:"videoPath"`
+	VideoURL                  string       `json:"videoUrl"`
+	RecordingError            string       `json:"recordingError"`
+	RecordingGuide            []string     `json:"recordingGuide"`
+	RecordingGuideHash        string       `json:"recordingGuideHash"`
+	RecordingGuideGeneratedAt int64        `json:"recordingGuideGeneratedAt"`
+	PreparedAt                int64        `json:"preparedAt"`
+	CapturedAt                int64        `json:"capturedAt"`
+	CommittedAt               int64        `json:"committedAt"`
 }
 
 type PairwiseReview struct {
