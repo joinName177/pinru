@@ -80,6 +80,7 @@ it('submits side-specific capture and video actions', async () => {
   expect(within(sideB).queryByLabelText('B 轨迹路径')).not.toBeInTheDocument();
   fireEvent.click(within(sideB).getByRole('button', { name: '采集 B' }));
   await waitFor(() => expect(api.capturePairwiseSide).toHaveBeenCalledWith({ taskId: 'task-1', side: 'B' }));
+  expect(runJob).toHaveBeenCalledTimes(1);
 
   fireEvent.change(within(sideB).getByLabelText('B 视频链接'), { target: { value: 'https://example.com/b.mp4' } });
   fireEvent.click(within(sideB).getByRole('button', { name: '保存 B 视频' }));
@@ -108,18 +109,17 @@ it('does not expose automatic recording buttons', () => {
   expect(within(sideB).queryByRole('button', { name: '录制 B 视频' })).not.toBeInTheDocument();
 });
 
-it('shows a side-specific recording guide and can regenerate it', async () => {
-  const onGenerateRecordingGuide = vi.fn().mockResolvedValue(true);
+it('does not expose recording guide generation or copied guide content', () => {
   const withGuide = structuredClone(pairwiseCase);
   withGuide.pairwise!.runA.recordingGuide = ['打开项目首页', '点击皱眉榜', '打开第一条记录查看详情'];
-  render(<PairwiseWorkspace annotationCase={withGuide} disabled={false} runJob={vi.fn()} onGenerateRecordingGuide={onGenerateRecordingGuide} />);
+  render(<PairwiseWorkspace annotationCase={withGuide} disabled={false} runJob={vi.fn()} />);
   const sideA = screen.getByRole('region', { name: '运行 A' });
-  expect(within(sideA).getByText('点击皱眉榜')).toBeInTheDocument();
   expect(within(sideA).getByText('轨迹已采集')).toBeInTheDocument();
   expect(within(sideA).getByText('产物已提交')).toBeInTheDocument();
-  expect(within(sideA).getByText('指引已生成')).toBeInTheDocument();
-  fireEvent.click(within(sideA).getByRole('button', { name: '重新生成 A 录制指引' }));
-  await waitFor(() => expect(onGenerateRecordingGuide).toHaveBeenCalledWith('A'));
+  expect(within(sideA).queryByText('30 秒操作链路')).not.toBeInTheDocument();
+  expect(within(sideA).queryByText('点击皱眉榜')).not.toBeInTheDocument();
+  expect(within(sideA).queryByRole('button', { name: /录制指引/ })).not.toBeInTheDocument();
+  expect(within(sideA).queryByRole('button', { name: '复制指引' })).not.toBeInTheDocument();
 });
 
 it('shows provisional review until both videos are ready', () => {

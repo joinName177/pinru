@@ -417,10 +417,6 @@ export function recordPairwiseVideo(request: PairwiseSideRequest): Promise<Backg
   return submitAnnotationJob('annotation_pairwise_record_video', request.taskId, request);
 }
 
-export function generatePairwiseRecordingGuide(request: PairwiseSideRequest): Promise<BackgroundJob> {
-  return submitAnnotationJob('annotation_pairwise_recording_guide', request.taskId, request);
-}
-
 export function commitPairwiseSide(request: PairwiseCommitRequest): Promise<BackgroundJob> {
   return submitAnnotationJob('annotation_pairwise_commit_side', request.taskId, request);
 }

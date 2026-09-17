@@ -1,4 +1,4 @@
-import { CheckCircle2, Clipboard, Container, Download, ExternalLink, FileSearch, GitBranch, ListChecks, Loader2, Play, RefreshCw, Save, Sparkles, Square } from 'lucide-react';
+import { CheckCircle2, Clipboard, Container, Download, ExternalLink, FileSearch, GitBranch, Loader2, Play, RefreshCw, Save, Sparkles, Square } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
   capturePairwiseSide,
@@ -32,8 +32,6 @@ type Props = {
   onRefreshContainers?: (side: PairwiseSide) => Promise<void>;
   onStartProject?: (side: PairwiseSide) => Promise<PairwiseProjectState | null>;
   onStopProject?: (side: PairwiseSide) => Promise<boolean>;
-  onGenerateRecordingGuide?: (side: PairwiseSide) => Promise<boolean>;
-  onCopyRecordingGuide?: (side: PairwiseSide) => Promise<void>;
   promptCopied?: Record<PairwiseSide, boolean>;
   onExport?: (draft: boolean) => Promise<void>;
   onPreflight?: () => Promise<void>;
@@ -45,7 +43,7 @@ function shortSha(value: string) {
   return value ? value.slice(0, 10) : '尚未提交';
 }
 
-function RunPanel({ taskId, side, run, containers, disabled, runJob, onCopyContainerCommand, onBindContainer, onRefreshContainers, onStartProject, onStopProject, onGenerateRecordingGuide, onCopyRecordingGuide, promptCopied }: {
+function RunPanel({ taskId, side, run, containers, disabled, runJob, onCopyContainerCommand, onBindContainer, onRefreshContainers, onStartProject, onStopProject, promptCopied }: {
   taskId: string;
   side: PairwiseSide;
   run: PairwiseRun;
@@ -57,22 +55,18 @@ function RunPanel({ taskId, side, run, containers, disabled, runJob, onCopyConta
   onRefreshContainers?: (side: PairwiseSide) => Promise<void>;
   onStartProject?: (side: PairwiseSide) => Promise<PairwiseProjectState | null>;
   onStopProject?: (side: PairwiseSide) => Promise<boolean>;
-  onGenerateRecordingGuide?: (side: PairwiseSide) => Promise<boolean>;
-  onCopyRecordingGuide?: (side: PairwiseSide) => Promise<void>;
   promptCopied: boolean;
 }) {
   const [videoSource, setVideoSource] = useState(run.videoPath || run.videoUrl || '');
   const [containerId, setContainerId] = useState(run.containerId || '');
   const [refreshing, setRefreshing] = useState(false);
   const [projectBusy, setProjectBusy] = useState(false);
-  const [guideBusy, setGuideBusy] = useState(false);
   const [projectURL, setProjectURL] = useState('');
   useEffect(() => setVideoSource(run.videoPath || run.videoUrl || ''), [run.videoPath, run.videoUrl]);
   useEffect(() => setContainerId(run.containerId || ''), [run.containerId]);
   const readyVideo = run.videoStatus === 'ready';
   const boundSelected = Boolean(containerId && containerId === run.containerId);
   const showBound = boundSelected;
-  const recordingGuide = run.recordingGuide ?? [];
 
   return (
     <section role="region" aria-label={`运行 ${side}`} className="border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
@@ -113,40 +107,15 @@ function RunPanel({ taskId, side, run, containers, disabled, runJob, onCopyConta
         </div>
         <div className="flex flex-wrap gap-2">
           <button className={PRIMARY} disabled={disabled || !run.containerId} onClick={() => void (async () => {
-            const completed = await runJob(`采集 ${side}`, () => capturePairwiseSide({ taskId, side }));
-            if (completed) await onGenerateRecordingGuide?.(side);
+            await runJob(`采集 ${side}`, () => capturePairwiseSide({ taskId, side }));
           })()}>
             <FileSearch className="h-4 w-4" />采集 {side}
           </button>
           <button className={run.deliverableSha ? COMPLETED : SECONDARY} disabled={disabled || !run.sessionId} onClick={() => void (async () => {
-            const completed = await runJob(`提交 ${side} 产物`, () => commitPairwiseSide({ taskId, side, sessionId: run.sessionId }));
-            if (completed) await onGenerateRecordingGuide?.(side);
+            await runJob(`提交 ${side} 产物`, () => commitPairwiseSide({ taskId, side, sessionId: run.sessionId }));
           })()}>
             {run.deliverableSha ? <CheckCircle2 className="h-4 w-4" /> : <GitBranch className="h-4 w-4" />}{run.deliverableSha ? `已提交 ${side}` : `提交 ${side} 产物`}
           </button>
-        </div>
-
-        <div className="border-t border-stone-100 pt-3 dark:border-stone-800">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-sm font-semibold text-stone-800 dark:text-stone-200">
-              <ListChecks className="h-4 w-4" />30 秒操作链路
-              {recordingGuide.length > 0 && <span className="inline-flex h-7 items-center gap-1 rounded-full bg-emerald-50 px-2.5 text-xs text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" />指引已生成</span>}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {recordingGuide.length > 0 && <button className={SECONDARY} disabled={disabled} onClick={() => void onCopyRecordingGuide?.(side)}><Clipboard className="h-4 w-4" />复制指引</button>}
-              <button aria-label={`${recordingGuide.length ? '重新生成' : '生成'} ${side} 录制指引`} className={SECONDARY} disabled={disabled || guideBusy || !run.deliverableSha || !onGenerateRecordingGuide} onClick={() => {
-                setGuideBusy(true);
-                void Promise.resolve(onGenerateRecordingGuide?.(side) ?? false).finally(() => setGuideBusy(false));
-              }}>
-                {guideBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}{guideBusy ? '生成中' : recordingGuide.length ? '重新生成' : '生成指引'}
-              </button>
-            </div>
-          </div>
-          {recordingGuide.length > 0 ? (
-            <ol className="mt-3 space-y-2 text-sm text-stone-700 dark:text-stone-300">
-              {recordingGuide.map((step, index) => <li key={`${index}-${step}`} className="grid grid-cols-[1.5rem_1fr] gap-2"><span className="font-mono text-xs font-bold text-sky-700 dark:text-sky-300">{index + 1}.</span><span>{step}</span></li>)}
-            </ol>
-          ) : <p className="mt-2 text-xs text-stone-500">提交该侧产物后自动生成，可按步骤完成录屏操作。</p>}
         </div>
 
         <div className="flex flex-wrap items-center gap-2 border-t border-stone-100 pt-3 dark:border-stone-800">
@@ -189,7 +158,7 @@ function RunPanel({ taskId, side, run, containers, disabled, runJob, onCopyConta
   );
 }
 
-export function PairwiseWorkspace({ annotationCase, containers = [], disabled, runJob, onCopyContainerCommand, onBindContainer, onRefreshContainers, onStartProject, onStopProject, onGenerateRecordingGuide, onCopyRecordingGuide, promptCopied = { A: false, B: false }, onExport, onPreflight, preflightReport, exportResult }: Props) {
+export function PairwiseWorkspace({ annotationCase, containers = [], disabled, runJob, onCopyContainerCommand, onBindContainer, onRefreshContainers, onStartProject, onStopProject, promptCopied = { A: false, B: false }, onExport, onPreflight, preflightReport, exportResult }: Props) {
   const pairwise = annotationCase.pairwise;
   if (!pairwise) return null;
   const latestReview = pairwise.reviews.at(-1);
@@ -200,8 +169,8 @@ export function PairwiseWorkspace({ annotationCase, containers = [], disabled, r
   return (
     <div className="space-y-4">
       <div className="grid gap-4 xl:grid-cols-2">
-        <RunPanel taskId={annotationCase.taskId} side="A" run={pairwise.runA} containers={containers} disabled={disabled} runJob={runJob} onCopyContainerCommand={onCopyContainerCommand} onBindContainer={onBindContainer} onRefreshContainers={onRefreshContainers} onStartProject={onStartProject} onStopProject={onStopProject} onGenerateRecordingGuide={onGenerateRecordingGuide} onCopyRecordingGuide={onCopyRecordingGuide} promptCopied={promptCopied.A} />
-        <RunPanel taskId={annotationCase.taskId} side="B" run={pairwise.runB} containers={containers} disabled={disabled} runJob={runJob} onCopyContainerCommand={onCopyContainerCommand} onBindContainer={onBindContainer} onRefreshContainers={onRefreshContainers} onStartProject={onStartProject} onStopProject={onStopProject} onGenerateRecordingGuide={onGenerateRecordingGuide} onCopyRecordingGuide={onCopyRecordingGuide} promptCopied={promptCopied.B} />
+        <RunPanel taskId={annotationCase.taskId} side="A" run={pairwise.runA} containers={containers} disabled={disabled} runJob={runJob} onCopyContainerCommand={onCopyContainerCommand} onBindContainer={onBindContainer} onRefreshContainers={onRefreshContainers} onStartProject={onStartProject} onStopProject={onStopProject} promptCopied={promptCopied.A} />
+        <RunPanel taskId={annotationCase.taskId} side="B" run={pairwise.runB} containers={containers} disabled={disabled} runJob={runJob} onCopyContainerCommand={onCopyContainerCommand} onBindContainer={onBindContainer} onRefreshContainers={onRefreshContainers} onStartProject={onStartProject} onStopProject={onStopProject} promptCopied={promptCopied.B} />
       </div>
 
       <section className="border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
