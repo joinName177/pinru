@@ -106,7 +106,7 @@ func (s *AnnotationService) BatchReviewPairwise(ctx context.Context, req Pairwis
 					report(index, 100, c.TaskName+"："+item.Message)
 					continue
 				}
-				if current := domain.CurrentPairwiseReview(c); current != nil && current.Model == execution.Label && !req.Force {
+				if current := domain.CurrentPairwiseReview(c); current != nil && current.Model == execution.Label && current.SkillHash == pairwiseReviewSkillHash() && !req.Force {
 					item.Status, item.Message = "reused", "已复用与当前 A/B 证据一致的 GSB"
 					result.Items[index] = item
 					report(index, 100, c.TaskName+"："+item.Message)

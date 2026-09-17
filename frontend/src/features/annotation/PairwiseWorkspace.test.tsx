@@ -48,9 +48,10 @@ it('renders independent A and B evidence states', () => {
   expect(within(sideB).getByRole('button', { name: '提交 B 产物' })).toBeDisabled();
 });
 
-it('keeps refresh and binding actions while showing automatic prompt-copy state', async () => {
+it('offers one shared refresh and one shared prompt copy action', async () => {
   const onRefreshContainers = vi.fn().mockResolvedValue(undefined);
   const onBindContainer = vi.fn().mockResolvedValue(true);
+  const onCopyPrompt = vi.fn().mockResolvedValue(undefined);
   render(<PairwiseWorkspace
     annotationCase={pairwiseCase}
     containers={[{ id: 'container-a', name: 'pair-claude-1-a', state: 'running', image: 'claude', workspacePath: '/workspace-a' }]}
@@ -58,19 +59,16 @@ it('keeps refresh and binding actions while showing automatic prompt-copy state'
     runJob={vi.fn()}
     onRefreshContainers={onRefreshContainers}
     onBindContainer={onBindContainer}
-    promptCopied={{ A: true, B: false }}
+    onCopyPrompt={onCopyPrompt}
+    promptCopied={false}
   />);
   const sideA = screen.getByRole('region', { name: '运行 A' });
-  const buttons = within(sideA).getAllByRole('button').map((button) => button.textContent?.trim());
-  expect(buttons.indexOf('刷新容器')).toBeLessThan(buttons.indexOf('已绑定 A'));
-  expect(within(sideA).getByRole('button', { name: '已绑定 A' })).toBeEnabled();
-  expect(within(sideA).getByText('提示词已复制')).toBeInTheDocument();
-  expect(within(sideA).queryByRole('button', { name: '提示词已复制' })).not.toBeInTheDocument();
-  expect(within(sideA).queryByRole('button', { name: '复制同一提示词' })).not.toBeInTheDocument();
-  fireEvent.click(within(sideA).getByRole('button', { name: '刷新容器' }));
-  fireEvent.click(within(sideA).getByRole('button', { name: '已绑定 A' }));
-  await waitFor(() => expect(onRefreshContainers).toHaveBeenCalledWith('A'));
-  expect(onBindContainer).toHaveBeenCalledWith('A', 'container-a');
+  expect(within(sideA).queryByRole('button', { name: '刷新容器' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '刷新并绑定 A/B' }));
+  await waitFor(() => expect(onRefreshContainers).toHaveBeenCalledTimes(1));
+  fireEvent.click(screen.getByRole('button', { name: '复制提示词' }));
+  await waitFor(() => expect(onCopyPrompt).toHaveBeenCalledTimes(1));
+  expect(onBindContainer).not.toHaveBeenCalled();
 });
 
 it('submits side-specific capture and video actions', async () => {
@@ -87,18 +85,16 @@ it('submits side-specific capture and video actions', async () => {
   await waitFor(() => expect(api.savePairwiseMaterials).toHaveBeenCalledWith({ taskId: 'task-1', side: 'B', videoUrl: 'https://example.com/b.mp4', videoPath: '', recordingError: '' }));
 });
 
-it('starts and stops the committed project for each side', async () => {
-  const onStartProject = vi.fn().mockResolvedValue({ side: 'A', running: true, url: 'http://192.168.1.2:4173', command: 'pnpm dev' });
-  const onStopProject = vi.fn().mockResolvedValue(true);
-  render(<PairwiseWorkspace annotationCase={pairwiseCase} disabled={false} runJob={vi.fn()} onStartProject={onStartProject} onStopProject={onStopProject} />);
+it('copies a manual startup command without presenting automatic runtime controls', async () => {
+  const onStartProject = vi.fn().mockResolvedValue({ side: 'A', running: false, url: 'http://192.168.1.2:4821', command: "docker exec -it 'container-a' sh -lc 'pnpm dev'" });
+  render(<PairwiseWorkspace annotationCase={pairwiseCase} disabled={false} runJob={vi.fn()} onStartProject={onStartProject} />);
   const sideA = screen.getByRole('region', { name: '运行 A' });
-  fireEvent.click(within(sideA).getByRole('button', { name: '启动项目 A' }));
+  fireEvent.click(within(sideA).getByRole('button', { name: '复制启动命令 A' }));
   await waitFor(() => expect(onStartProject).toHaveBeenCalledWith('A'));
-  expect(within(sideA).getByText('项目运行中')).toBeInTheDocument();
-  expect(within(sideA).getByRole('link', { name: '打开 A 项目' })).toHaveAttribute('href', 'http://192.168.1.2:4173');
-  fireEvent.click(within(sideA).getByRole('button', { name: '停止项目 A' }));
-  await waitFor(() => expect(onStopProject).toHaveBeenCalledWith('A'));
-  await waitFor(() => expect(within(sideA).queryByRole('link', { name: '打开 A 项目' })).not.toBeInTheDocument());
+  expect(within(sideA).getByText('启动命令已复制')).toBeInTheDocument();
+  expect(within(sideA).getByRole('link', { name: '打开 A 项目' })).toHaveAttribute('href', 'http://192.168.1.2:4821');
+  expect(within(sideA).queryByRole('button', { name: '停止项目 A' })).not.toBeInTheDocument();
+  expect(within(sideA).queryByText('项目运行中')).not.toBeInTheDocument();
 });
 
 it('does not expose automatic recording buttons', () => {
@@ -122,23 +118,27 @@ it('does not expose recording guide generation or copied guide content', () => {
   expect(within(sideA).queryByRole('button', { name: '复制指引' })).not.toBeInTheDocument();
 });
 
-it('shows provisional review until both videos are ready', () => {
+it('does not make GSB review provisional when videos are missing', () => {
   render(<PairwiseWorkspace annotationCase={pairwiseCase} disabled={false} runJob={vi.fn()} />);
-  expect(screen.getByText('当前结论将保持临时状态，正式导出前需补齐 A/B 视频。')).toBeInTheDocument();
+  expect(screen.queryByText(/临时状态/)).not.toBeInTheDocument();
 });
 
-it('does not show separately editable submission metadata', () => {
-  render(<PairwiseWorkspace annotationCase={pairwiseCase} disabled={false} runJob={vi.fn()} />);
+it('saves one of the three environment reproducibility levels', async () => {
+  const runJob = vi.fn(async (_label: string, submit: () => Promise<unknown>) => { await submit(); return true; });
+  render(<PairwiseWorkspace annotationCase={pairwiseCase} disabled={false} runJob={runJob} />);
   expect(screen.queryByLabelText('语言/框架')).not.toBeInTheDocument();
-  expect(screen.queryByLabelText('环境可复现等级')).not.toBeInTheDocument();
   expect(screen.queryByLabelText('有效性')).not.toBeInTheDocument();
   expect(screen.queryByText('Harness')).not.toBeInTheDocument();
+  const environment = screen.getByLabelText('环境可复现等级');
+  expect(Array.from(environment.querySelectorAll('option')).map((option) => option.textContent)).toEqual([
+    '已容器化，可一键起环境', '无外部依赖', '有外部依赖，未容器化',
+  ]);
+  fireEvent.change(environment, { target: { value: '无外部依赖' } });
+  await waitFor(() => expect(api.savePairwiseSettings).toHaveBeenCalledWith(expect.objectContaining({ taskId: 'task-1', environment: '无外部依赖' })));
 });
 
-it('offers draft and formal pairwise export actions', async () => {
-  const onExport = vi.fn().mockResolvedValue(undefined);
-  render(<PairwiseWorkspace annotationCase={pairwiseCase} disabled={false} runJob={vi.fn()} onExport={onExport} />);
-  fireEvent.click(screen.getByRole('button', { name: '导出 Pair-wise 草稿' }));
-  await waitFor(() => expect(onExport).toHaveBeenCalledWith(true));
-  expect(screen.getByRole('button', { name: '正式导出 Pair-wise' })).toBeDisabled();
+it('keeps review and export actions out of the task detail', () => {
+  render(<PairwiseWorkspace annotationCase={pairwiseCase} disabled={false} runJob={vi.fn()} />);
+  expect(screen.queryByRole('button', { name: '生成 GSB' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /导出/ })).not.toBeInTheDocument();
 });

@@ -19,6 +19,7 @@ const (
 	defaultPairwiseHarness        = "Claude Code"
 	defaultPairwiseHarnessVersion = "2.1.197"
 	defaultPairwiseOS             = "MacOS/Linux"
+	defaultPairwiseEnvironment    = "已容器化，可一键起环境"
 )
 
 type EnablePairwiseRequest struct {
@@ -154,6 +155,10 @@ func populatePairwiseMetadata(c *domain.Case) bool {
 	}
 	if strings.TrimSpace(c.Pairwise.OS) == "" {
 		c.Pairwise.OS = defaultPairwiseOS
+		changed = true
+	}
+	if strings.TrimSpace(c.Pairwise.Environment) == "" {
+		c.Pairwise.Environment = defaultPairwiseEnvironment
 		changed = true
 	}
 	if strings.TrimSpace(c.Pairwise.Validity) == "" {
@@ -406,6 +411,7 @@ func (s *AnnotationService) SavePairwiseMaterials(req PairwiseMaterialsRequest) 
 	if err != nil {
 		return nil, err
 	}
+	currentReview := domain.CurrentPairwiseReview(*c)
 	videoURL := strings.TrimSpace(req.VideoURL)
 	videoPath := strings.TrimSpace(req.VideoPath)
 	if videoURL != "" {
@@ -429,5 +435,9 @@ func (s *AnnotationService) SavePairwiseMaterials(req PairwiseMaterialsRequest) 
 	run.VideoURL = videoURL
 	run.VideoPath = videoPath
 	run.RecordingError = strings.TrimSpace(req.RecordingError)
+	if currentReview != nil {
+		currentReview.SourceHashA = domain.PairwiseRunSourceHash(c.Pairwise.RunA)
+		currentReview.SourceHashB = domain.PairwiseRunSourceHash(c.Pairwise.RunB)
+	}
 	return s.store.SaveAnnotationCase(*c, c.Revision)
 }

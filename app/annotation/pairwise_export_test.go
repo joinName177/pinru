@@ -90,17 +90,18 @@ func TestPairwiseFormalExportBlocksRemoteABMismatch(t *testing.T) {
 	}
 }
 
-func TestPairwisePreflightReportsMissingSideMaterials(t *testing.T) {
+func TestPairwisePreflightAllowsMissingVideosButRequiresReview(t *testing.T) {
 	s, _ := pairwiseExportCase(t, false)
 	report, err := s.PreflightPairwise("batch")
 	if err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(report.Issues, "；")
-	for _, want := range []string{"A 运行视频尚未就绪", "B 运行视频尚未就绪", "GSB"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("issues %q do not contain %q", joined, want)
-		}
+	if strings.Contains(joined, "视频") {
+		t.Fatalf("issues %q should not require videos", joined)
+	}
+	if !strings.Contains(joined, "GSB") {
+		t.Fatalf("issues %q do not contain GSB", joined)
 	}
 	if report.Tasks != 1 || report.Ready != 0 {
 		t.Fatalf("report = %#v", report)
@@ -139,5 +140,40 @@ func TestPairwiseExportWritesOnePairPerRow(t *testing.T) {
 		if !strings.Contains(workbook.String(), want) {
 			t.Errorf("workbook does not contain %q", want)
 		}
+	}
+}
+
+func TestPairwiseExportAllowsReviewedCaseWithoutVideos(t *testing.T) {
+	s, c := pairwiseExportCase(t, true)
+	c.Pairwise.RunA.VideoStatus = domain.PairwiseVideoMissing
+	c.Pairwise.RunA.VideoURL = ""
+	c.Pairwise.RunB.VideoStatus = domain.PairwiseVideoMissing
+	c.Pairwise.RunB.VideoURL = ""
+	review := &c.Pairwise.Reviews[len(c.Pairwise.Reviews)-1]
+	review.SourceHashA = domain.PairwiseRunSourceHash(c.Pairwise.RunA)
+	review.SourceHashB = domain.PairwiseRunSourceHash(c.Pairwise.RunB)
+	if _, err := s.store.SaveAnnotationCase(*c, c.Revision); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := s.ExportPairwise(PairwiseExportRequest{ProjectID: "batch", Submitter: "标注员"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Rows != 1 {
+		t.Fatalf("rows = %d", result.Rows)
+	}
+}
+
+func TestPairwiseExportSkipsReviewWithoutReason(t *testing.T) {
+	s, c := pairwiseExportCase(t, true)
+	c.Pairwise.Reviews[len(c.Pairwise.Reviews)-1].Reason = ""
+	if _, err := s.store.SaveAnnotationCase(*c, c.Revision); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := s.ExportPairwise(PairwiseExportRequest{ProjectID: "batch"})
+	if err == nil || !strings.Contains(err.Error(), "没有已完成 GSB 审核且理由完整的题目") {
+		t.Fatalf("error = %v", err)
 	}
 }

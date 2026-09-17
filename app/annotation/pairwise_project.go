@@ -2,22 +2,28 @@ package annotation
 
 import (
 	"context"
+	cryptorand "crypto/rand"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
-	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
 	domain "github.com/blueship581/pinru/internal/annotation"
 )
 
-const pairwiseProjectProxyPort = 4173
+const (
+	pairwiseProjectProxyPortMin = 1024
+	pairwiseProjectProxyPortMax = 9999
+)
 
 var vitePortPattern = regexp.MustCompile(`(?m)\bport\s*:\s*([0-9]{2,5})`)
 
@@ -139,23 +145,55 @@ func pairwiseProjectFiles(taskID string, side domain.PairwiseSide) (string, stri
 	return base + ".pid", base + ".log"
 }
 
-func pairwiseProjectStopScript(pidFile string) string {
+func pairwiseProjectPortFile(taskID string, side domain.PairwiseSide) string {
+	base := "/tmp/pinru-project-" + stableKey(taskID) + "-" + strings.ToLower(string(side))
+	return base + ".port"
+}
+
+func randomPairwiseProjectProxyPort(reader io.Reader) (int, error) {
+	var raw [2]byte
+	if _, err := io.ReadFull(reader, raw[:]); err != nil {
+		return 0, err
+	}
+	span := pairwiseProjectProxyPortMax - pairwiseProjectProxyPortMin + 1
+	return pairwiseProjectProxyPortMin + int(binary.BigEndian.Uint16(raw[:]))%span, nil
+}
+
+func randomPairwiseProjectAvailablePort(reader io.Reader, available func(int) bool) (int, error) {
+	for attempt := 0; attempt < 32; attempt++ {
+		port, err := randomPairwiseProjectProxyPort(reader)
+		if err != nil {
+			return 0, err
+		}
+		if available(port) {
+			return port, nil
+		}
+	}
+	return 0, errors.New("未找到可用的四位数项目端口")
+}
+
+func parsePairwiseProjectProxyPort(value string) (int, error) {
+	port, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || port < pairwiseProjectProxyPortMin || port > pairwiseProjectProxyPortMax {
+		return 0, errors.New("项目代理端口无效，请重新启动项目")
+	}
+	return port, nil
+}
+
+func pairwiseProjectStopScript(pidFile, portFile string) string {
 	return "if [ -f " + shellQuote(pidFile) + " ]; then " +
 		"while IFS= read -r pid; do case \"$pid\" in ''|*[!0-9]*) continue;; esac; " +
 		"pkill -TERM -s \"$pid\" 2>/dev/null || kill -TERM -- -\"$pid\" 2>/dev/null || kill -TERM \"$pid\" 2>/dev/null || true; done < " + shellQuote(pidFile) + "; " +
-		"rm -f " + shellQuote(pidFile) + "; fi"
+		"fi; rm -f " + shellQuote(pidFile) + " " + shellQuote(portFile)
 }
 
-func pairwiseProjectContainerCommand(command string) string {
-	const binDir = "/tmp/pinru-project-bin"
-	switch command {
-	case "corepack pnpm run dev":
-		return "mkdir -p " + binDir + "; printf '#!/bin/sh\\nexec corepack pnpm \"$@\"\\n' >" + binDir + "/pnpm; chmod 700 " + binDir + "/pnpm; export PATH=" + binDir + ":$PATH; exec corepack pnpm run dev"
-	case "corepack yarn dev":
-		return "mkdir -p " + binDir + "; printf '#!/bin/sh\\nexec corepack yarn \"$@\"\\n' >" + binDir + "/yarn; chmod 700 " + binDir + "/yarn; export PATH=" + binDir + ":$PATH; exec corepack yarn dev"
-	default:
-		return "exec " + command
+func pairwiseProjectManualCommand(containerID, containerRepo string, launch pairwiseProjectLaunch, port int) string {
+	args := fmt.Sprintf(" -- --host 0.0.0.0 --port %d --strictPort", port)
+	if launch.Host != "::1" {
+		args = fmt.Sprintf(" -- -H 0.0.0.0 -p %d", port)
 	}
+	command := "exec " + launch.Command + args
+	return "docker exec -it -w " + shellQuote(containerRepo) + " " + shellQuote(containerID) + " sh -lc " + shellQuote(command)
 }
 
 func (s *AnnotationService) pairwiseProjectTarget(ctx context.Context, req PairwiseSideRequest, validateRevision bool) (*domain.PairwiseRun, string, error) {
@@ -189,7 +227,7 @@ func (s *AnnotationService) pairwiseProjectTarget(ctx context.Context, req Pairw
 }
 
 func (s *AnnotationService) StartPairwiseProject(req PairwiseSideRequest) (*PairwiseProjectState, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	unlock, err := s.lockTask(req.TaskID)
 	if err != nil {
@@ -205,53 +243,42 @@ func (s *AnnotationService) StartPairwiseProject(req PairwiseSideRequest) (*Pair
 		return nil, err
 	}
 	containerRepo := filepath.ToSlash(filepath.Join("/workspace", run.RepoRelativePath))
-	pidFile, logFile := pairwiseProjectFiles(req.TaskID, req.Side)
-	proxyCode := fmt.Sprintf(`const n=require("net");n.createServer(c=>{const u=n.connect(%d,%q);c.pipe(u);u.pipe(c);c.on("error",()=>u.destroy());u.on("error",()=>c.destroy())}).listen(%d,"0.0.0.0")`, launch.Port, launch.Host, pairwiseProjectProxyPort)
-	containerCommand := pairwiseProjectContainerCommand(launch.Command)
-	startScript := "if [ -f " + shellQuote(pidFile) + "] && while IFS= read -r pid; do kill -0 \"$pid\" 2>/dev/null && exit 0; done < " + shellQuote(pidFile) + "; then :; fi; " +
-		"rm -f " + shellQuote(pidFile) + " " + shellQuote(logFile) + "; cd " + shellQuote(containerRepo) + " || exit 1; " +
-		"setsid sh -lc " + shellQuote(containerCommand) + " >" + shellQuote(logFile) + " 2>&1 </dev/null & app_pid=$!; " +
-		"setsid node -e " + shellQuote(proxyCode) + " >>" + shellQuote(logFile) + " 2>&1 </dev/null & proxy_pid=$!; " +
-		"printf '%s\\n%s\\n' \"$app_pid\" \"$proxy_pid\" >" + shellQuote(pidFile)
-	if _, err := s.command(ctx, "", "docker", "exec", run.ContainerID, "sh", "-lc", startScript); err != nil {
-		return nil, err
+	proxyPort, err := randomPairwiseProjectAvailablePort(cryptorand.Reader, func(port int) bool {
+		const probe = `const n=require("net"),s=n.createServer();s.once("error",()=>process.exit(1));s.listen(Number(process.argv[1]),"0.0.0.0",()=>s.close(()=>process.exit(0)))`
+		_, probeErr := s.command(ctx, "", "docker", "exec", run.ContainerID, "node", "-e", probe, strconv.Itoa(port))
+		return probeErr == nil
+	})
+	if err != nil {
+		return nil, errors.New("无法生成项目代理端口")
 	}
 	ipRaw, err := s.command(ctx, "", "docker", "inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", run.ContainerID)
 	if err != nil || strings.TrimSpace(string(ipRaw)) == "" {
-		_ = s.stopPairwiseProject(ctx, run.ContainerID, pidFile)
 		return nil, errors.New("无法读取容器访问地址")
 	}
-	url := fmt.Sprintf("http://%s:%d", strings.TrimSpace(string(ipRaw)), pairwiseProjectProxyPort)
-	client := &http.Client{Timeout: time.Second}
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		response, requestErr := client.Get(url)
-		if requestErr == nil {
-			_ = response.Body.Close()
-			return &PairwiseProjectState{Side: req.Side, Running: true, URL: url, Command: launch.Command}, nil
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	logs, _ := s.command(ctx, "", "docker", "exec", run.ContainerID, "sh", "-lc", "tail -n 20 "+shellQuote(logFile)+" 2>/dev/null || true")
-	_ = s.stopPairwiseProject(ctx, run.ContainerID, pidFile)
-	message := strings.TrimSpace(string(logs))
-	if message == "" {
-		message = "未检测到网页服务"
-	}
-	return nil, fmt.Errorf("项目启动失败：%s", message)
+	url := fmt.Sprintf("http://%s:%d", strings.TrimSpace(string(ipRaw)), proxyPort)
+	command := pairwiseProjectManualCommand(run.ContainerID, containerRepo, launch, proxyPort)
+	return &PairwiseProjectState{Side: req.Side, Running: false, URL: url, Command: command}, nil
 }
 
-func (s *AnnotationService) stopPairwiseProject(ctx context.Context, containerID, pidFile string) error {
-	_, err := s.command(ctx, "", "docker", "exec", containerID, "sh", "-lc", pairwiseProjectStopScript(pidFile))
+func (s *AnnotationService) stopPairwiseProject(ctx context.Context, containerID, pidFile, portFile string) error {
+	_, err := s.command(ctx, "", "docker", "exec", containerID, "sh", "-lc", pairwiseProjectStopScript(pidFile, portFile))
 	return err
 }
 
-func (s *AnnotationService) pairwiseProjectURL(ctx context.Context, containerID string) (string, error) {
+func (s *AnnotationService) pairwiseProjectURL(ctx context.Context, containerID, portFile string) (string, error) {
+	portRaw, err := s.command(ctx, "", "docker", "exec", containerID, "sh", "-lc", "cat "+shellQuote(portFile)+" 2>/dev/null")
+	if err != nil {
+		return "", errors.New("项目尚未启动，请先启动项目")
+	}
+	port, err := parsePairwiseProjectProxyPort(string(portRaw))
+	if err != nil {
+		return "", err
+	}
 	ipRaw, err := s.command(ctx, "", "docker", "inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", containerID)
 	if err != nil || strings.TrimSpace(string(ipRaw)) == "" {
 		return "", errors.New("无法读取容器访问地址")
 	}
-	return fmt.Sprintf("http://%s:%d", strings.TrimSpace(string(ipRaw)), pairwiseProjectProxyPort), nil
+	return fmt.Sprintf("http://%s:%d", strings.TrimSpace(string(ipRaw)), port), nil
 }
 
 func (s *AnnotationService) StopPairwiseProject(req PairwiseSideRequest) error {
@@ -267,7 +294,8 @@ func (s *AnnotationService) StopPairwiseProject(req PairwiseSideRequest) error {
 		return err
 	}
 	pidFile, _ := pairwiseProjectFiles(req.TaskID, req.Side)
-	return s.stopPairwiseProject(ctx, run.ContainerID, pidFile)
+	portFile := pairwiseProjectPortFile(req.TaskID, req.Side)
+	return s.stopPairwiseProject(ctx, run.ContainerID, pidFile, portFile)
 }
 
 func (s *AnnotationService) RecordPairwiseVideo(ctx context.Context, req PairwiseSideRequest) (*domain.Case, error) {
@@ -293,7 +321,7 @@ func (s *AnnotationService) RecordPairwiseVideo(ctx context.Context, req Pairwis
 		return nil, fmt.Errorf("创建录屏目录失败：%w", err)
 	}
 	output := filepath.Join(dir, strings.ToLower(string(req.Side))+"-"+time.Now().Format("20060102-150405.000")+".mov")
-	projectURL, err := s.pairwiseProjectURL(ctx, run.ContainerID)
+	projectURL, err := s.pairwiseProjectURL(ctx, run.ContainerID, pairwiseProjectPortFile(req.TaskID, req.Side))
 	if err != nil {
 		return nil, err
 	}

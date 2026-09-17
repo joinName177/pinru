@@ -1,14 +1,12 @@
-import { CheckCircle2, Clipboard, Container, Download, ExternalLink, FileSearch, GitBranch, Loader2, Play, RefreshCw, Save, Sparkles, Square } from 'lucide-react';
+import { CheckCircle2, Clipboard, Container, ExternalLink, FileSearch, GitBranch, Loader2, RefreshCw, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
   capturePairwiseSide,
   commitPairwiseSide,
-  reviewPairwise,
   savePairwiseMaterials,
+  savePairwiseSettings,
   type AnnotationCase,
   type AnnotationContainer,
-  type AnnotationExportResult,
-  type AnnotationPreflightReport,
   type PairwiseRun,
   type PairwiseProjectState,
   type PairwiseSide,
@@ -29,39 +27,31 @@ type Props = {
   runJob: PairwiseRunJob;
   onCopyContainerCommand?: (side: PairwiseSide) => Promise<void>;
   onBindContainer?: (side: PairwiseSide, containerId: string) => Promise<boolean>;
-  onRefreshContainers?: (side: PairwiseSide) => Promise<void>;
+  onRefreshContainers?: () => Promise<void>;
+  onCopyPrompt?: () => Promise<unknown>;
   onStartProject?: (side: PairwiseSide) => Promise<PairwiseProjectState | null>;
-  onStopProject?: (side: PairwiseSide) => Promise<boolean>;
-  promptCopied?: Record<PairwiseSide, boolean>;
-  onExport?: (draft: boolean) => Promise<void>;
-  onPreflight?: () => Promise<void>;
-  preflightReport?: AnnotationPreflightReport | null;
-  exportResult?: AnnotationExportResult | null;
+  promptCopied?: boolean;
 };
 
 function shortSha(value: string) {
   return value ? value.slice(0, 10) : '尚未提交';
 }
 
-function RunPanel({ taskId, side, run, containers, disabled, runJob, onCopyContainerCommand, onBindContainer, onRefreshContainers, onStartProject, onStopProject, promptCopied }: {
+function RunPanel({ taskId, side, run, containers, disabled, runJob, onBindContainer, onStartProject }: {
   taskId: string;
   side: PairwiseSide;
   run: PairwiseRun;
   containers: AnnotationContainer[];
   disabled: boolean;
   runJob: PairwiseRunJob;
-  onCopyContainerCommand?: (side: PairwiseSide) => Promise<void>;
   onBindContainer?: (side: PairwiseSide, containerId: string) => Promise<boolean>;
-  onRefreshContainers?: (side: PairwiseSide) => Promise<void>;
   onStartProject?: (side: PairwiseSide) => Promise<PairwiseProjectState | null>;
-  onStopProject?: (side: PairwiseSide) => Promise<boolean>;
-  promptCopied: boolean;
 }) {
   const [videoSource, setVideoSource] = useState(run.videoPath || run.videoUrl || '');
   const [containerId, setContainerId] = useState(run.containerId || '');
-  const [refreshing, setRefreshing] = useState(false);
   const [projectBusy, setProjectBusy] = useState(false);
   const [projectURL, setProjectURL] = useState('');
+  const [projectCommandCopied, setProjectCommandCopied] = useState(false);
   useEffect(() => setVideoSource(run.videoPath || run.videoUrl || ''), [run.videoPath, run.videoUrl]);
   useEffect(() => setContainerId(run.containerId || ''), [run.containerId]);
   const readyVideo = run.videoStatus === 'ready';
@@ -77,23 +67,19 @@ function RunPanel({ taskId, side, run, containers, disabled, runJob, onCopyConta
         </div>
       </div>
 
-      <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto_auto]">
-        <select aria-label={`${side} 容器`} className={INPUT} value={containerId} onChange={(event) => setContainerId(event.target.value)}>
-          <option value="">选择 {side} 独立容器</option>
-          {containers.map((container) => <option key={container.id} value={container.id}>{container.name} · {container.state}</option>)}
-        </select>
-        <button className={SECONDARY} disabled={disabled || refreshing} onClick={() => {
-          setRefreshing(true);
-          void Promise.resolve(onRefreshContainers?.(side)).finally(() => setRefreshing(false));
-        }}>{refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}刷新容器</button>
-        <button className={showBound ? COMPLETED : SECONDARY} disabled={disabled || !containerId} onClick={() => void onBindContainer?.(side, containerId)}>{showBound ? <CheckCircle2 className="h-4 w-4" /> : <Container className="h-4 w-4" />}{showBound ? `已绑定 ${side}` : `绑定 ${side}`}</button>
-      </div>
-      <div className="mt-2 flex flex-wrap gap-2">
-        <button className={SECONDARY} disabled={disabled} onClick={() => void onCopyContainerCommand?.(side)}><Clipboard className="h-4 w-4" />复制 {side} 启动命令</button>
-        <span className={`inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-sm font-semibold ${promptCopied ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300' : 'border-stone-200 bg-stone-50 text-stone-500 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-400'}`}>
-          {promptCopied && <CheckCircle2 className="h-4 w-4" />}{promptCopied ? '提示词已复制' : '绑定后自动复制提示词'}
-        </span>
-      </div>
+      {showBound ? (
+        <div className="mt-3 flex h-9 items-center gap-2 text-sm font-semibold text-emerald-700 dark:text-emerald-300">
+          <CheckCircle2 className="h-4 w-4" />已绑定 {run.containerName || `${side} 容器`}
+        </div>
+      ) : (
+        <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
+          <select aria-label={`${side} 容器`} className={INPUT} value={containerId} onChange={(event) => setContainerId(event.target.value)}>
+            <option value="">自动匹配失败，请手动选择 {side} 容器</option>
+            {containers.map((container) => <option key={container.id} value={container.id}>{container.name} · {container.state}</option>)}
+          </select>
+          <button className={SECONDARY} disabled={disabled || !containerId} onClick={() => void onBindContainer?.(side, containerId)}><Container className="h-4 w-4" />绑定 {side}</button>
+        </div>
+      )}
 
       <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
         <div><dt className="text-stone-400">SessionID</dt><dd className="mt-1 break-all font-mono text-stone-700 dark:text-stone-300">{run.sessionId || '尚未采集'}</dd></div>
@@ -119,21 +105,16 @@ function RunPanel({ taskId, side, run, containers, disabled, runJob, onCopyConta
         </div>
 
         <div className="flex flex-wrap items-center gap-2 border-t border-stone-100 pt-3 dark:border-stone-800">
-          <button aria-label={`启动项目 ${side}`} className={projectURL ? COMPLETED : PRIMARY} disabled={disabled || projectBusy || !run.deliverableSha || !onStartProject} onClick={() => {
+          <button aria-label={`复制启动命令 ${side}`} className={projectCommandCopied ? COMPLETED : PRIMARY} disabled={disabled || projectBusy || !run.deliverableSha || !onStartProject} onClick={() => {
             setProjectBusy(true);
             void Promise.resolve(onStartProject?.(side) ?? null).then((state) => {
-              if (state?.running) setProjectURL(state.url);
+              if (state?.command) {
+                setProjectCommandCopied(true);
+                setProjectURL(state.url);
+              }
             }).finally(() => setProjectBusy(false));
           }}>
-            {projectBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : projectURL ? <CheckCircle2 className="h-4 w-4" /> : <Play className="h-4 w-4" />}{projectURL ? '项目运行中' : '启动项目'}
-          </button>
-          <button aria-label={`停止项目 ${side}`} className={SECONDARY} disabled={disabled || projectBusy || !run.containerId || !onStopProject} onClick={() => {
-            setProjectBusy(true);
-            void Promise.resolve(onStopProject?.(side) ?? false).then((stopped) => {
-              if (stopped) setProjectURL('');
-            }).finally(() => setProjectBusy(false));
-          }}>
-            <Square className="h-4 w-4" />停止项目
+            {projectBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : projectCommandCopied ? <CheckCircle2 className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}{projectCommandCopied ? '启动命令已复制' : '复制启动命令'}
           </button>
           {projectURL && <a aria-label={`打开 ${side} 项目`} className="inline-flex h-9 items-center gap-1 text-sm font-semibold text-sky-700 hover:underline dark:text-sky-300" href={projectURL} target="_blank" rel="noreferrer"><ExternalLink className="h-4 w-4" />打开项目</a>}
         </div>
@@ -158,19 +139,42 @@ function RunPanel({ taskId, side, run, containers, disabled, runJob, onCopyConta
   );
 }
 
-export function PairwiseWorkspace({ annotationCase, containers = [], disabled, runJob, onCopyContainerCommand, onBindContainer, onRefreshContainers, onStartProject, onStopProject, promptCopied = { A: false, B: false }, onExport, onPreflight, preflightReport, exportResult }: Props) {
+export function PairwiseWorkspace({ annotationCase, containers = [], disabled, runJob, onCopyContainerCommand, onBindContainer, onRefreshContainers, onCopyPrompt, onStartProject, promptCopied = false }: Props) {
   const pairwise = annotationCase.pairwise;
   if (!pairwise) return null;
   const latestReview = pairwise.reviews.at(-1);
-  const currentReview = [...pairwise.reviews].reverse().find((review) => review.current === true && review.status === 'ready');
-  const videosReady = pairwise.runA.videoStatus === 'ready' && pairwise.runB.videoStatus === 'ready';
-  const reviewReady = Boolean(pairwise.runA.captureId && pairwise.runB.captureId && pairwise.runA.deliverableSha && pairwise.runB.deliverableSha);
-  const formalExportReady = videosReady && Boolean(currentReview);
+  const [refreshing, setRefreshing] = useState(false);
   return (
     <div className="space-y-4">
+      <section aria-label="GSB 快捷操作" className="border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
+        <div className="flex flex-wrap items-end gap-2">
+          <button className={SECONDARY} disabled={disabled} onClick={() => void onCopyContainerCommand?.('A')}><Clipboard className="h-4 w-4" />复制 A 容器命令</button>
+          <button className={SECONDARY} disabled={disabled} onClick={() => void onCopyContainerCommand?.('B')}><Clipboard className="h-4 w-4" />复制 B 容器命令</button>
+          <button className={PRIMARY} disabled={disabled || refreshing} onClick={() => {
+            setRefreshing(true);
+            void Promise.resolve(onRefreshContainers?.()).finally(() => setRefreshing(false));
+          }}>{refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}刷新并绑定 A/B</button>
+          <button className={promptCopied ? COMPLETED : SECONDARY} disabled={disabled || !onCopyPrompt} onClick={() => void onCopyPrompt?.()}>{promptCopied ? <CheckCircle2 className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}{promptCopied ? '提示词已复制' : '复制提示词'}</button>
+          <label className="min-w-[240px] flex-1 sm:max-w-sm">
+            <span className="mb-1 block text-xs font-semibold text-stone-500">环境可复现等级</span>
+            <select aria-label="环境可复现等级" className={INPUT} value={pairwise.environment || '已容器化，可一键起环境'} onChange={(event) => void runJob('保存环境可复现等级', () => savePairwiseSettings({
+              taskId: annotationCase.taskId,
+              language: pairwise.language,
+              environment: event.target.value,
+              validity: pairwise.validity,
+              notes: pairwise.notes,
+            }))}>
+              <option value="已容器化，可一键起环境">已容器化，可一键起环境</option>
+              <option value="无外部依赖">无外部依赖</option>
+              <option value="有外部依赖，未容器化">有外部依赖，未容器化</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
       <div className="grid gap-4 xl:grid-cols-2">
-        <RunPanel taskId={annotationCase.taskId} side="A" run={pairwise.runA} containers={containers} disabled={disabled} runJob={runJob} onCopyContainerCommand={onCopyContainerCommand} onBindContainer={onBindContainer} onRefreshContainers={onRefreshContainers} onStartProject={onStartProject} onStopProject={onStopProject} promptCopied={promptCopied.A} />
-        <RunPanel taskId={annotationCase.taskId} side="B" run={pairwise.runB} containers={containers} disabled={disabled} runJob={runJob} onCopyContainerCommand={onCopyContainerCommand} onBindContainer={onBindContainer} onRefreshContainers={onRefreshContainers} onStartProject={onStartProject} onStopProject={onStopProject} promptCopied={promptCopied.B} />
+        <RunPanel taskId={annotationCase.taskId} side="A" run={pairwise.runA} containers={containers} disabled={disabled} runJob={runJob} onBindContainer={onBindContainer} onStartProject={onStartProject} />
+        <RunPanel taskId={annotationCase.taskId} side="B" run={pairwise.runB} containers={containers} disabled={disabled} runJob={runJob} onBindContainer={onBindContainer} onStartProject={onStartProject} />
       </div>
 
       <section className="border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
@@ -179,11 +183,7 @@ export function PairwiseWorkspace({ annotationCase, containers = [], disabled, r
             <h3 className="text-base font-bold text-stone-900 dark:text-stone-100">GSB 对比结果</h3>
             <p className="mt-1 text-xs text-stone-500">AI 综合两侧轨迹、代码产物和已提供材料生成。</p>
           </div>
-          <button className={PRIMARY} disabled={disabled || !reviewReady} onClick={() => void runJob(currentReview ? '重新生成 GSB' : '生成 GSB', () => reviewPairwise({ taskId: annotationCase.taskId, force: Boolean(currentReview) }))}>
-            {disabled ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}{currentReview ? '重新生成 GSB' : '生成 GSB'}
-          </button>
         </div>
-        {!videosReady && <p className="mt-3 text-sm text-amber-700 dark:text-amber-300">当前结论将保持临时状态，正式导出前需补齐 A/B 视频。</p>}
         {latestReview ? (
           <div className="mt-4 border-t border-stone-100 pt-4 dark:border-stone-800">
             <div className="flex flex-wrap items-center gap-2">
@@ -192,31 +192,8 @@ export function PairwiseWorkspace({ annotationCase, containers = [], disabled, r
             </div>
             <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-stone-700 dark:text-stone-300">{latestReview.reason}</p>
           </div>
-        ) : <p className="mt-4 text-sm text-stone-500">A/B 证据和产物 commit 齐全后可生成对比结论。</p>}
+        ) : <p className="mt-4 text-sm text-stone-500">尚未审核，可返回项目列表通过“批量审核 GSB”选择本题。</p>}
       </section>
-
-      {onExport && <section className="border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h3 className="text-base font-bold text-stone-900 dark:text-stone-100">Pair-wise 导出</h3>
-            <p className="mt-1 text-xs text-stone-500">草稿保留待补项；正式导出要求 A/B 视频和当前 GSB 均已就绪。</p>
-          </div>
-          {onPreflight && <button className={SECONDARY} disabled={disabled} onClick={() => void onPreflight()}><FileSearch className="h-4 w-4" />Pair-wise 预检</button>}
-        </div>
-        {preflightReport && <div className={`mt-4 border p-3 text-sm ${preflightReport.issues.length ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200' : 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-200'}`}>
-          <p className="font-semibold">{preflightReport.issues.length ? `仍有 ${preflightReport.issues.length} 项待补` : '正式导出材料齐全'}</p>
-          {preflightReport.issues.length > 0 && <ul className="mt-2 space-y-1 text-xs">{preflightReport.issues.map((issue) => <li key={issue}>• {issue}</li>)}</ul>}
-        </div>}
-        <div className="mt-3 flex flex-wrap gap-2">
-          <button className={SECONDARY} disabled={disabled} onClick={() => void onExport(true)}><Download className="h-4 w-4" />导出 Pair-wise 草稿</button>
-          <button className={PRIMARY} disabled={disabled || !formalExportReady} onClick={() => void onExport(false)}><Download className="h-4 w-4" />正式导出 Pair-wise</button>
-        </div>
-        {exportResult && <div className="mt-4 border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-200">
-          <p className="font-semibold">已导出 {exportResult.rows} 行</p>
-          <p className="mt-1 break-all">Excel：{exportResult.outputPath}</p>
-          <p className="mt-1 break-all">报告：{exportResult.reportPath}</p>
-        </div>}
-      </section>}
     </div>
   );
 }

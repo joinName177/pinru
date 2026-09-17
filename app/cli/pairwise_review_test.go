@@ -40,6 +40,79 @@ func TestDecodePairwiseReviewRequiresPortalLengthAndDetailedSameReason(t *testin
 	}
 }
 
+func TestDecodePairwiseReviewRejectsMetricInventoryWithoutARealTradeoff(t *testing.T) {
+	reason := "A 执行 npm test 的退出码为 0，共有 48 条断言通过，产物哈希为 8f45d1a09bc73125，第 126 行也完成修改；B 使用 3.2.1 版本构建，记录了 1920×1080 像素和 16 个轮廓坐标。两边基本等价，优缺点相互抵消。"
+	raw := []byte(`{"status":"ready","conclusion":"same","reason":` + quotePairwiseJSON(reason) + `}`)
+	if result, err := decodePairwiseReview(raw); err == nil {
+		t.Fatalf("accepted metric inventory without a decision basis: %#v", result)
+	}
+}
+
+func TestDecodePairwiseReviewRejectsMarkdownOrChecklistFormatting(t *testing.T) {
+	reason := "- A：在页面实现了筛选功能并运行测试。\n- B：也实现了筛选功能，但没有覆盖空数据。\n- 结论：这道题更看重异常场景下是否仍能正常使用，所以选择 A。"
+	raw := []byte(`{"status":"ready","conclusion":"A_better","reason":` + quotePairwiseJSON(reason) + `}`)
+	if result, err := decodePairwiseReview(raw); err == nil {
+		t.Fatalf("accepted checklist-form review: %#v", result)
+	}
+}
+
+func TestDecodePairwiseReviewAcceptsNaturalComparisonWithDecisionBasis(t *testing.T) {
+	reason := "A 很快找到了筛选失效的原因，修改后页面在空数据和重复提交时都能正常反馈，最后也实际走完了用户操作；B 的主体功能可以使用，但只验证了常规流程，空数据时仍会留下一块没有说明的空白区域。这道题更看重用户遇到异常输入时能不能继续操作，因此 A 更可靠。"
+	result, err := decodePairwiseReview([]byte(`{"status":"ready","conclusion":"A_better","reason":` + quotePairwiseJSON(reason) + `}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Reason != reason {
+		t.Fatalf("reason = %q", result.Reason)
+	}
+}
+
+func TestDecodePairwiseReviewRejectsInactionWithoutTriggerNode(t *testing.T) {
+	reason := "A 真正把复制与分享拆成两条路径：复制按钮只写剪贴板，分享按钮才走系统分享，并按真实结果更新提示，还补了回归测试且构建通过。B 全程停在读代码和空想阶段，没有改动任何文件，交付仍是有缺陷的原实现，复制按钮照旧弹出分享面板。本题更看重按钮行为与提示是否一致，因此 A 明显更好。"
+	raw := []byte(`{"status":"ready","conclusion":"A_better","reason":` + quotePairwiseJSON(reason) + `}`)
+	if result, err := decodePairwiseReview(raw); err == nil {
+		t.Fatalf("accepted inaction criticism without a trigger node: %#v", result)
+	}
+}
+
+func TestDecodePairwiseReviewAcceptsInactionWithTriggerNode(t *testing.T) {
+	reason := "A 在 ClipboardShareAdapter 和 CyberCardView 中拆开复制与分享：复制按钮只写剪贴板，分享按钮按真实结果反馈，取消不再误报成功；补充的回归测试以及构建均通过。B 读完上述文件并定位到复制按钮误用 shareSlip 后，在拆分两条调用路径这一步反复重读，没有执行修改；还从 /workspace 运行 npm run build，因找不到 package.json 失败，提交仍保留原缺陷。本题最看重按钮行为与提示是否一致，因此 A 明显更好。"
+	result, err := decodePairwiseReview([]byte(`{"status":"ready","conclusion":"A_better","reason":` + quotePairwiseJSON(reason) + `}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Reason != reason {
+		t.Fatalf("reason = %q", result.Reason)
+	}
+}
+
+func TestBuildPairwiseReviewPromptRequiresTriggerNodeForInaction(t *testing.T) {
+	prompt := buildPairwiseReviewPrompt("/tmp/evidence.json", "", "")
+	if !strings.Contains(prompt, "触发节点") || !strings.Contains(prompt, "只读未改") {
+		t.Fatalf("prompt does not require a trigger node for inaction: %s", prompt)
+	}
+}
+
+func TestDecodePairwiseReviewRejectsReasonOverThreeHundredTwentyCharacters(t *testing.T) {
+	prefix := "A 完成了核心功能并实际运行了页面，B 也完成实现但异常流程仍会中断用户操作，这道题更看重实际使用是否可靠，因此 A 更值得选择。"
+	reason := prefix + strings.Repeat("补", 321-len([]rune(prefix)))
+	if got := len([]rune(reason)); got != 321 {
+		t.Fatalf("test reason length = %d", got)
+	}
+	raw := []byte(`{"status":"ready","conclusion":"A_better","reason":` + quotePairwiseJSON(reason) + `}`)
+	if result, err := decodePairwiseReview(raw); err == nil {
+		t.Fatalf("accepted 321-character review: %#v", result)
+	}
+}
+
+func TestPairwiseReviewSchemaLimitsReasonToThreeHundredTwentyCharacters(t *testing.T) {
+	properties := pairwiseReviewSchema()["properties"].(map[string]any)
+	reason := properties["reason"].(map[string]any)
+	if reason["maxLength"] != 320 {
+		t.Fatalf("reason maxLength = %#v", reason["maxLength"])
+	}
+}
+
 func quotePairwiseJSON(value string) string {
 	value = strings.ReplaceAll(value, `\`, `\\`)
 	value = strings.ReplaceAll(value, `"`, `\"`)

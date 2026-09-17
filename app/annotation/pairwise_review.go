@@ -18,6 +18,12 @@ type PairwiseReviewRequest struct {
 	Force  bool   `json:"force"`
 }
 
+const pairwiseReviewSkillVersion = "pairwise-gsb-v6-20260918"
+
+func pairwiseReviewSkillHash() string {
+	return stableKey(pairwiseReviewSkillVersion)
+}
+
 func (s *AnnotationService) ReviewPairwise(ctx context.Context, req PairwiseReviewRequest) (*domain.Case, error) {
 	unlock, err := s.lockTask(req.TaskID)
 	if err != nil {
@@ -41,7 +47,7 @@ func (s *AnnotationService) ReviewPairwise(ctx context.Context, req PairwiseRevi
 	if err != nil {
 		return nil, err
 	}
-	if current := domain.CurrentPairwiseReview(*c); current != nil && current.Model == execution.Label && !req.Force {
+	if current := domain.CurrentPairwiseReview(*c); current != nil && current.Model == execution.Label && current.SkillHash == pairwiseReviewSkillHash() && !req.Force {
 		value := true
 		current.Current = &value
 		return c, nil
@@ -98,7 +104,7 @@ func (s *AnnotationService) ReviewPairwise(ctx context.Context, req PairwiseRevi
 	}
 	review := domain.PairwiseReview{
 		ID: id, Status: result.Status, Conclusion: result.Conclusion, Reason: result.Reason,
-		Model: execution.Label, SkillHash: stableKey("pairwise-gsb-v2-20260917"),
+		Model: execution.Label, SkillHash: pairwiseReviewSkillHash(),
 		SourceHashA: domain.PairwiseRunSourceHash(c.Pairwise.RunA),
 		SourceHashB: domain.PairwiseRunSourceHash(c.Pairwise.RunB),
 		ReviewPath:  work, CreatedAt: time.Now().Unix(),

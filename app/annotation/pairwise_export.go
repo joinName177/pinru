@@ -19,7 +19,6 @@ type PairwiseExportRequest struct {
 	ProjectID   string `json:"projectId"`
 	Submitter   string `json:"submitter"`
 	SubmittedAt string `json:"submittedAt"`
-	Draft       bool   `json:"draft"`
 }
 
 func (s *AnnotationService) PreflightPairwise(projectID string) (domain.Report, error) {
@@ -87,6 +86,7 @@ func (s *AnnotationService) exportPairwise(ctx context.Context, req PairwiseExpo
 		return nil, err
 	}
 	cases := make([]domain.Case, 0, len(all))
+	skipped := make([]string, 0)
 	found := req.TaskID == ""
 	for _, c := range all {
 		if c.Mode != domain.CaseModePairwiseGSB || (req.TaskID != "" && c.TaskID != req.TaskID) {
@@ -94,15 +94,26 @@ func (s *AnnotationService) exportPairwise(ctx context.Context, req PairwiseExpo
 		}
 		found = true
 		copy := c
+		populatePairwiseMetadata(&copy)
+		current := domain.CurrentPairwiseReview(copy)
+		if current == nil || strings.TrimSpace(current.Reason) == "" {
+			skipped = append(skipped, copy.TaskName+"：尚无当前有效的 GSB 结论和理由")
+			continue
+		}
+		if issues := domain.ValidatePairwiseCase(copy, false); len(issues) > 0 {
+			skipped = append(skipped, copy.TaskName+"："+strings.Join(issues, "；"))
+			continue
+		}
+		if err := s.pairwiseRemoteVerifier()(ctx, copy); err != nil {
+			skipped = append(skipped, copy.TaskName+"："+err.Error())
+			continue
+		}
 		pairwise := domain.NewPairwiseData("")
-		if c.Pairwise != nil {
-			value := *c.Pairwise
+		if copy.Pairwise != nil {
+			value := *copy.Pairwise
 			pairwise = &value
 		}
-		pairwise.Reviews = []domain.PairwiseReview{}
-		if current := domain.CurrentPairwiseReview(c); current != nil {
-			pairwise.Reviews = append(pairwise.Reviews, *current)
-		}
+		pairwise.Reviews = []domain.PairwiseReview{*current}
 		copy.Pairwise = pairwise
 		cases = append(cases, copy)
 	}
@@ -110,12 +121,13 @@ func (s *AnnotationService) exportPairwise(ctx context.Context, req PairwiseExpo
 		return nil, errors.New("题目不属于当前项目或尚未启用 Pair-wise GSB")
 	}
 	if len(cases) == 0 {
-		return nil, errors.New("当前范围没有 Pair-wise GSB 题目")
+		message := "当前范围没有已完成 GSB 审核且理由完整的题目"
+		if len(skipped) > 0 {
+			message += "：" + strings.Join(skipped, "；")
+		}
+		return nil, errors.New(message)
 	}
-	report := s.preflightPairwise(ctx, cases)
-	if !req.Draft && len(report.Issues) > 0 {
-		return nil, fmt.Errorf("Pair-wise 正式导出仍有 %d 项待处理：%s", len(report.Issues), strings.Join(report.Issues, "；"))
-	}
+	report := domain.Report{Tasks: len(cases), Rounds: len(cases), Ready: len(cases), Issues: skipped}
 
 	project, err := s.store.GetProject(req.ProjectID)
 	if err != nil {
@@ -152,9 +164,6 @@ func (s *AnnotationService) exportPairwise(ctx context.Context, req PairwiseExpo
 		return nil, err
 	}
 	args := []string{filepath.Join(assets, "export_pairwise.py"), "--input", inputPath, "--output", dir}
-	if req.Draft {
-		args = append(args, "--draft")
-	}
 	out, err := s.command(ctx, dir, "python3", args...)
 	if err != nil {
 		return nil, err

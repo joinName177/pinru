@@ -317,7 +317,6 @@ export interface PairwiseExportRequest {
   projectId: string;
   submitter: string;
   submittedAt: string;
-  draft: boolean;
 }
 
 const JOB_OPTIONS = { maxRetries: 1, timeoutSeconds: 1800 } as const;

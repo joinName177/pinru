@@ -58,9 +58,10 @@ func TestValidatePairwiseCaseRequiresPortalFields(t *testing.T) {
 	assertPairwiseIssueContains(t, issues, "困难或地狱")
 }
 
-func TestValidatePairwiseFormalRequiresVideosAndCurrentReview(t *testing.T) {
+func TestValidatePairwiseFormalRequiresCurrentReviewButAllowsMissingVideos(t *testing.T) {
 	c := completePairwiseCase()
 	c.Pairwise.RunA.VideoStatus = PairwiseVideoMissing
+	c.Pairwise.RunA.VideoURL = ""
 	c.Pairwise.Reviews = nil
 
 	draftIssues := ValidatePairwiseCase(c, false)
@@ -68,7 +69,9 @@ func TestValidatePairwiseFormalRequiresVideosAndCurrentReview(t *testing.T) {
 		t.Fatalf("draft issues = %#v, should not require final materials", draftIssues)
 	}
 	formalIssues := ValidatePairwiseCase(c, true)
-	assertPairwiseIssueContains(t, formalIssues, "视频")
+	if containsPairwiseIssue(formalIssues, "视频") {
+		t.Fatalf("formal issues = %#v, should allow missing videos", formalIssues)
+	}
 	assertPairwiseIssueContains(t, formalIssues, "GSB")
 }
 
@@ -80,6 +83,28 @@ func TestCurrentPairwiseReviewRequiresMatchingSourceHashes(t *testing.T) {
 	c.Pairwise.RunB.CaptureHash = "changed"
 	if review := CurrentPairwiseReview(c); review != nil {
 		t.Fatalf("stale review = %#v, want nil", review)
+	}
+}
+
+func TestCurrentPairwiseReviewIgnoresVideoChanges(t *testing.T) {
+	c := completePairwiseCase()
+	c.Pairwise.RunA.VideoStatus = PairwiseVideoManualRequired
+	c.Pairwise.RunA.VideoURL = ""
+	c.Pairwise.RunA.VideoPath = ""
+	c.Pairwise.RunB.VideoURL = "https://example.com/replaced-b.mp4"
+
+	if review := CurrentPairwiseReview(c); review == nil {
+		t.Fatal("video-only changes should not invalidate the current review")
+	}
+}
+
+func TestCurrentPairwiseReviewAcceptsLegacyVideoAwareHashes(t *testing.T) {
+	c := completePairwiseCase()
+	c.Pairwise.Reviews[0].SourceHashA = legacyPairwiseRunSourceHash(c.Pairwise.RunA)
+	c.Pairwise.Reviews[0].SourceHashB = legacyPairwiseRunSourceHash(c.Pairwise.RunB)
+
+	if review := CurrentPairwiseReview(c); review == nil {
+		t.Fatal("legacy review hashes should remain current after upgrade")
 	}
 }
 

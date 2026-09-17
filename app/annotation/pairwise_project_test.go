@@ -1,6 +1,7 @@
 package annotation
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -10,6 +11,36 @@ import (
 
 	domain "github.com/blueship581/pinru/internal/annotation"
 )
+
+func TestRandomPairwiseProjectProxyPortStaysFourDigits(t *testing.T) {
+	low, err := randomPairwiseProjectProxyPort(bytes.NewReader([]byte{0, 0}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	high, err := randomPairwiseProjectProxyPort(bytes.NewReader([]byte{255, 255}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, port := range []int{low, high} {
+		if port < 1024 || port > 9999 {
+			t.Fatalf("port = %d", port)
+		}
+	}
+	if low == high {
+		t.Fatalf("ports did not vary: %d", low)
+	}
+}
+
+func TestParsePairwiseProjectProxyPortRejectsValuesOutsideFourDigitRange(t *testing.T) {
+	if port, err := parsePairwiseProjectProxyPort("4821\n"); err != nil || port != 4821 {
+		t.Fatalf("valid port = %d, %v", port, err)
+	}
+	for _, value := range []string{"", "999", "10000", "not-a-port"} {
+		if _, err := parsePairwiseProjectProxyPort(value); err == nil {
+			t.Fatalf("accepted proxy port %q", value)
+		}
+	}
+}
 
 func TestDetectPairwiseProjectLaunchUsesDeclaredPNPMDevScript(t *testing.T) {
 	repo := t.TempDir()
@@ -28,9 +59,49 @@ func TestDetectPairwiseProjectLaunchUsesDeclaredPNPMDevScript(t *testing.T) {
 	}
 }
 
-func TestPairwiseProjectContainerCommandMakesPNPMAvailableToNestedScripts(t *testing.T) {
-	command := pairwiseProjectContainerCommand("corepack pnpm run dev")
-	if !strings.Contains(command, "/tmp/pinru-project-bin/pnpm") || !strings.Contains(command, "export PATH=/tmp/pinru-project-bin:$PATH") {
+func TestPairwiseProjectManualCommandRunsForegroundInBoundContainer(t *testing.T) {
+	command := pairwiseProjectManualCommand(
+		"container-a",
+		"/workspace/project-a",
+		pairwiseProjectLaunch{Command: "npm run dev", Port: 5173, Host: "::1"},
+		4821,
+	)
+	want := "docker exec -it -w '/workspace/project-a' 'container-a' sh -lc 'exec npm run dev -- --host 0.0.0.0 --port 4821 --strictPort'"
+	if command != want {
+		t.Fatalf("command = %s\nwant    = %s", command, want)
+	}
+	for _, forbidden := range []string{"node -e", "proxy_pid", "setsid", "trap cleanup", "pinru-project"} {
+		if strings.Contains(command, forbidden) {
+			t.Fatalf("manual command contains %q: %s", forbidden, command)
+		}
+	}
+	if output, err := exec.Command("sh", "-n", "-c", command).CombinedOutput(); err != nil {
+		t.Fatalf("manual command is not valid shell: %v: %s", err, output)
+	}
+}
+
+func TestRandomPairwiseProjectAvailablePortSkipsOccupiedPort(t *testing.T) {
+	checked := []int{}
+	port, err := randomPairwiseProjectAvailablePort(bytes.NewReader([]byte{0, 0, 255, 255}), func(candidate int) bool {
+		checked = append(checked, candidate)
+		return len(checked) == 2
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(checked) != 2 || port != checked[1] || checked[0] == checked[1] {
+		t.Fatalf("port = %d, checked = %#v", port, checked)
+	}
+}
+
+func TestPairwiseProjectManualCommandUsesNextFlags(t *testing.T) {
+	command := pairwiseProjectManualCommand(
+		"container-b",
+		"/workspace/project-b",
+		pairwiseProjectLaunch{Command: "corepack pnpm run dev", Port: 3000, Host: "127.0.0.1"},
+		7351,
+	)
+	if !strings.Contains(command, "corepack pnpm run dev -- -H 0.0.0.0 -p 7351") {
 		t.Fatalf("command = %s", command)
 	}
 }
@@ -82,6 +153,9 @@ func TestRecordPairwiseVideoStoresAbsolutePathAndMarksVideoReady(t *testing.T) {
 		commands = append(commands, name+" "+strings.Join(args, " "))
 		switch name {
 		case "docker":
+			if strings.Contains(strings.Join(args, " "), "cat ") {
+				return []byte("4821\n"), nil
+			}
 			return []byte("172.18.0.8\n"), nil
 		case "/usr/bin/open":
 			return nil, nil
@@ -109,7 +183,7 @@ func TestRecordPairwiseVideoStoresAbsolutePathAndMarksVideoReady(t *testing.T) {
 	if !strings.Contains(joined, "-v -V30 -T3 -D1 -k -x") {
 		t.Fatalf("screencapture args = %q", joined)
 	}
-	if len(commands) != 3 || commands[1] != "/usr/bin/open http://172.18.0.8:4173" || !strings.HasPrefix(commands[2], "/usr/sbin/screencapture ") {
+	if len(commands) != 4 || commands[2] != "/usr/bin/open http://172.18.0.8:4821" || !strings.HasPrefix(commands[3], "/usr/sbin/screencapture ") {
 		t.Fatalf("commands = %#v", commands)
 	}
 }

@@ -65,6 +65,9 @@ func TestReviewPairwiseStoresReviewBoundToBothEvidenceSources(t *testing.T) {
 	if review == nil || review.Current == nil || !*review.Current || review.Conclusion != domain.PairwiseConclusionA || review.SourceHashA == review.SourceHashB {
 		t.Fatalf("review = %#v", review)
 	}
+	if review.SkillHash != pairwiseReviewSkillHash() {
+		t.Fatalf("skill hash = %q", review.SkillHash)
+	}
 	if _, err := os.Stat(source); err != nil {
 		t.Fatal(err)
 	}
@@ -137,5 +140,21 @@ func TestBatchReviewPairwiseReviewsThenReusesCurrentResult(t *testing.T) {
 	}
 	if second.Reviewed != 0 || second.Reused != 1 || second.Failed != 0 {
 		t.Fatalf("second = %#v", second)
+	}
+	stale, err := s.loadCase(c.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := domain.CurrentPairwiseReview(*stale)
+	current.SkillHash = stableKey("pairwise-gsb-v3-20260917")
+	if _, err := s.store.SaveAnnotationCase(*stale, stale.Revision); err != nil {
+		t.Fatal(err)
+	}
+	third, err := s.BatchReviewPairwise(context.Background(), PairwiseBatchReviewRequest{ProjectID: "batch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.Reviewed != 1 || third.Reused != 0 || third.Failed != 0 {
+		t.Fatalf("stale skill review = %#v", third)
 	}
 }

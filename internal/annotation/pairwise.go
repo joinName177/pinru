@@ -161,24 +161,37 @@ func NewPairwiseData(prompt string) *PairwiseData {
 func PairwiseRunSourceHash(run PairwiseRun) string {
 	value := strings.Join([]string{
 		run.CaptureID, run.CaptureHash, run.TraceHash, strings.ToLower(run.DeliverableSHA),
+		run.DeliverableURL,
+	}, "\x00")
+	h := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(h[:16])
+}
+
+func legacyPairwiseRunSourceHash(run PairwiseRun) string {
+	value := strings.Join([]string{
+		run.CaptureID, run.CaptureHash, run.TraceHash, strings.ToLower(run.DeliverableSHA),
 		run.DeliverableURL, run.VideoStatus, run.VideoPath, run.VideoURL,
 	}, "\x00")
 	h := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(h[:16])
 }
 
+func PairwiseReviewMatchesRunSources(review PairwiseReview, runA, runB PairwiseRun) bool {
+	current := review.SourceHashA == PairwiseRunSourceHash(runA) && review.SourceHashB == PairwiseRunSourceHash(runB)
+	legacy := review.SourceHashA == legacyPairwiseRunSourceHash(runA) && review.SourceHashB == legacyPairwiseRunSourceHash(runB)
+	return current || legacy
+}
+
 func CurrentPairwiseReview(c Case) *PairwiseReview {
 	if c.Pairwise == nil {
 		return nil
 	}
-	a := PairwiseRunSourceHash(c.Pairwise.RunA)
-	b := PairwiseRunSourceHash(c.Pairwise.RunB)
 	for i := len(c.Pairwise.Reviews) - 1; i >= 0; i-- {
 		r := &c.Pairwise.Reviews[i]
 		if r.Current != nil && !*r.Current {
 			continue
 		}
-		if r.Status == PairwiseReviewReady && r.SourceHashA == a && r.SourceHashB == b {
+		if r.Status == PairwiseReviewReady && PairwiseReviewMatchesRunSources(*r, c.Pairwise.RunA, c.Pairwise.RunB) {
 			return r
 		}
 	}
@@ -215,6 +228,9 @@ func ValidatePairwiseCase(c Case, formal bool) []string {
 	if strings.TrimSpace(p.OS) == "" {
 		issues = append(issues, "操作系统未填写")
 	}
+	if _, ok := allowedEnvironments[p.Environment]; !ok {
+		issues = append(issues, "环境可复现等级未填写或无效")
+	}
 	validities := map[string]bool{
 		PairwiseValidityValid: true, PairwiseValidityEngineeringFailure: true,
 		PairwiseValidityEnvironmentReset: true, PairwiseValidityOther: true,
@@ -242,9 +258,6 @@ func ValidatePairwiseCase(c Case, formal bool) []string {
 			issues = append(issues, label+" 产物快照不完整")
 		} else if runRepository, runSHA, ok := pairwiseCommitIdentity(run.DeliverableURL); !ok || runRepository != repository || !strings.EqualFold(runSHA, run.DeliverableSHA) {
 			issues = append(issues, label+" 产物快照必须与初始快照属于同一 GitHub 仓库且 SHA 一致")
-		}
-		if formal && (run.VideoStatus != PairwiseVideoReady || (strings.TrimSpace(run.VideoURL) == "" && strings.TrimSpace(run.VideoPath) == "")) {
-			issues = append(issues, label+" 运行视频尚未就绪")
 		}
 	}
 	validatePairwiseRun("A", PairwiseSideA, p.RunA)

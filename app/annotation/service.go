@@ -192,11 +192,9 @@ func markPairwiseReviewFreshness(c *domain.Case, reviewLabel string, requireMode
 	if c.Pairwise == nil {
 		return
 	}
-	a := domain.PairwiseRunSourceHash(c.Pairwise.RunA)
-	b := domain.PairwiseRunSourceHash(c.Pairwise.RunB)
 	for i := range c.Pairwise.Reviews {
 		review := &c.Pairwise.Reviews[i]
-		current := review.Status == domain.PairwiseReviewReady && review.SourceHashA == a && review.SourceHashB == b
+		current := review.Status == domain.PairwiseReviewReady && domain.PairwiseReviewMatchesRunSources(*review, c.Pairwise.RunA, c.Pairwise.RunB)
 		if requireModel {
 			current = current && review.Model == reviewLabel
 		}

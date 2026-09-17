@@ -263,7 +263,7 @@ func TestEnablePairwiseAutomaticallyStoresSubmissionMetadata(t *testing.T) {
 	if c.Pairwise.Harness != "Claude Code" || c.Pairwise.HarnessVersion == "" || c.Pairwise.OS != "MacOS/Linux" {
 		t.Fatalf("fixed metadata = %+v", c.Pairwise)
 	}
-	if c.Pairwise.Environment != "" || c.Pairwise.Validity != domain.PairwiseValidityValid {
+	if c.Pairwise.Environment != "已容器化，可一键起环境" || c.Pairwise.Validity != domain.PairwiseValidityValid {
 		t.Fatalf("defaults = %+v", c.Pairwise)
 	}
 }

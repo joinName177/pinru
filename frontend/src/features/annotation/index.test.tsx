@@ -13,6 +13,7 @@ const api = vi.hoisted(() => ({
   batchReviewPairwise: vi.fn(),
   cancelAnnotationJob: vi.fn(),
   captureAndPrepareTable: vi.fn(),
+  enablePairwise: vi.fn(),
   exportCases: vi.fn(),
   getAnnotationJob: vi.fn(),
   listCases: vi.fn(),
@@ -25,6 +26,7 @@ const api = vi.hoisted(() => ({
   reviewPairwise: vi.fn(),
   exportPairwise: vi.fn(),
   saveCaseSettings: vi.fn(),
+  savePairwiseSettings: vi.fn(),
 }));
 
 const wailsClipboard = vi.hoisted(() => ({
@@ -203,35 +205,6 @@ describe('AnnotationWorkspace', () => {
     expect(screen.queryByRole('button', { name: '导出全项目已制表' })).not.toBeInTheDocument();
   });
 
-  it('exports only checked prepared tasks and resets the selection between projects', async () => {
-    const first = makeCase({ taskName: '第一题' });
-    first.rounds[0].evaluations![0].status = 'ready';
-    first.rounds[0].evaluations![0].scores = [4, 4, 4, 4, 4];
-    const second = makeCase({ taskId: 'task-2', taskName: '第二题' });
-    second.rounds[0].evaluations![0].status = 'ready';
-    second.rounds[0].evaluations![0].scores = [4, 4, 4, 4, 4];
-    api.listCases.mockResolvedValue([first, second, makeCase({ taskId: 'task-3', taskName: '未制表题', rounds: [] })]);
-    api.exportCases.mockResolvedValue({ id: 'selected-export', status: 'pending' });
-    api.getAnnotationJob.mockResolvedValue({ id: 'selected-export', status: 'done', outputPayload: JSON.stringify({ outputPath: '/exports/selected.xlsx', rows: 1, issues: [] }) });
-    const { rerender } = render(<AnnotationWorkspace projectId="project-1" />);
-    const open = await screen.findByRole('button', { name: '选择题目导出' });
-    await waitFor(() => expect(open).toBeEnabled());
-    fireEvent.click(open);
-    expect(screen.getByRole('button', { name: '导出所选题目（0）' })).toBeDisabled();
-    expect(screen.queryByRole('checkbox', { name: /导出 未制表题/ })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '全选已制表' }));
-    expect(screen.getByRole('button', { name: '导出所选题目（2）' })).toBeEnabled();
-    fireEvent.click(screen.getByRole('button', { name: '清空选择' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: /导出 第二题/ }));
-    fireEvent.click(screen.getByRole('button', { name: '导出所选题目（1）' }));
-    await waitFor(() => expect(api.exportCases).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'project-1', taskIds: ['task-2'], taskId: undefined, reviewedOnly: true })));
-    await screen.findByText(/所选题目导出完成/);
-    rerender(<AnnotationWorkspace projectId="project-2" />);
-    await waitFor(() => expect(screen.getByRole('button', { name: '选择题目导出' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: '选择题目导出' }));
-    expect(screen.getByRole('button', { name: '导出所选题目（0）' })).toBeDisabled();
-  });
-
   it('scopes the detail capture panel to the requested task without batch controls', async () => {
     api.listCases.mockResolvedValue([makeCase(), makeCase({ taskId: 'task-2', taskName: '当前详情题目', repoRelativePath: 'repo-two' })]);
     render(<AnnotationWorkspace projectId="project-1" taskId="task-2" />);
@@ -255,7 +228,9 @@ describe('AnnotationWorkspace', () => {
     render(<AnnotationWorkspace projectId="project-1" taskId="task-1" />);
     await waitFor(() => expect(api.listTraces).toHaveBeenCalledTimes(1));
     api.listTraces.mockResolvedValue([{ path: '/new.jsonl', sessionId: 'new-session', size: 10 }]);
-    fireEvent.click(screen.getByRole('button', { name: '刷新容器' }));
+    const refreshButton = screen.getByRole('button', { name: '刷新容器' });
+    await waitFor(() => expect(refreshButton).toBeEnabled());
+    fireEvent.click(refreshButton);
     expect(await screen.findByRole('option', { name: /new-session/ })).toBeInTheDocument();
   });
 
@@ -266,50 +241,7 @@ describe('AnnotationWorkspace', () => {
     expect(api.listTraces).not.toHaveBeenCalled();
   });
 
-  it('exports saved evaluations for the whole project or a single card', async () => {
-    api.exportCases.mockResolvedValue({ id: 'export-job', status: 'pending' });
-    api.getAnnotationJob.mockResolvedValue({ id: 'export-job', status: 'done', outputPayload: JSON.stringify({ outputPath: '/exports/submission.xlsx', reportPath: '/exports/report.md', rows: 1, issues: [] }) });
-    render(<AnnotationWorkspace projectId="project-1" />);
-    await screen.findByText('题目进度');
-    await waitFor(() => expect(screen.getByRole('button', { name: '一键导出已制表' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: '一键导出已制表' }));
-    await waitFor(() => expect(api.exportCases).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'project-1', reviewedOnly: true, taskId: undefined })));
-    await screen.findByText(/一键导出已制表完成/);
-    fireEvent.click(screen.getByRole('button', { name: '导出本题 Excel' }));
-    await waitFor(() => expect(api.exportCases).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'project-1', reviewedOnly: true, taskId: 'task-1' })));
-    await screen.findByText(/单题导出完成/);
-  });
-
-  it('selects projects first and submits only explicitly checked tasks across projects', async () => {
-    const firstProjectCase = makeCase({ taskId: 'task-1', projectId: 'project-1', taskName: '项目一题目' });
-    const secondProjectCase = makeCase({ taskId: 'task-2', projectId: 'project-2', taskName: '项目二题目' });
-    api.listCases.mockImplementation((projectId: string) => Promise.resolve(projectId === 'project-2' ? [secondProjectCase] : [firstProjectCase]));
-    api.batchCaptureAndPrepareTable.mockResolvedValue({ id: 'batch-table-job', status: 'pending' });
-    api.getAnnotationJob.mockResolvedValue({
-      id: 'batch-table-job',
-      status: 'done',
-      outputPayload: JSON.stringify({ total: 3, prepared: 2, skipped: 1, failed: 0, items: [] }),
-    });
-    render(<AnnotationWorkspace projectId="project-1" />);
-    const button = await screen.findByRole('button', { name: '批量采集并准备制表数据' });
-    fireEvent.click(button);
-    expect(await screen.findByRole('checkbox', { name: '选择项目 项目一' })).not.toBeChecked();
-    expect(screen.queryByRole('checkbox', { name: /审核 项目一题目/ })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('checkbox', { name: '选择项目 项目一' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: '选择项目 项目二' }));
-    const firstTask = await screen.findByRole('checkbox', { name: /审核 项目一题目/ });
-    const secondTask = await screen.findByRole('checkbox', { name: /审核 项目二题目/ });
-    expect(firstTask).not.toBeChecked();
-    expect(secondTask).not.toBeChecked();
-    expect(screen.getByRole('button', { name: '开始批量审核（0）' })).toBeDisabled();
-    fireEvent.click(screen.getByRole('button', { name: '全选 项目一' }));
-    fireEvent.click(secondTask);
-    fireEvent.click(screen.getByRole('button', { name: '开始批量审核（2）' }));
-    await waitFor(() => expect(api.batchCaptureAndPrepareTable).toHaveBeenCalledWith(['task-1', 'task-2']));
-    expect(await screen.findByText(/批量制表完成：新准备 2 题，跳过 1 题，失败 0 题/)).toBeInTheDocument();
-  });
-
-  it('offers project batch GSB review while preserving independent review', async () => {
+  it('selects task numbers for batch GSB review and keeps one export action', async () => {
     const pairwise = makeCase({
       initialSha: 'a'.repeat(40), snapshotUrl: `https://github.com/u/r/commit/${'a'.repeat(40)}`, mode: 'pairwise_gsb',
       pairwise: {
@@ -320,20 +252,58 @@ describe('AnnotationWorkspace', () => {
     });
     api.listCases.mockResolvedValue([pairwise]);
     api.batchReviewPairwise.mockResolvedValue({ id: 'pairwise-batch', status: 'pending' });
-    api.getAnnotationJob.mockResolvedValue({ id: 'pairwise-batch', status: 'done', outputPayload: JSON.stringify({ total: 1, reviewed: 1, reused: 0, skipped: 0, failed: 0, items: [] }) });
+    api.exportPairwise.mockResolvedValue({ id: 'pairwise-export', status: 'pending' });
+    api.getAnnotationJob.mockImplementation((id: string) => Promise.resolve(id === 'pairwise-export'
+      ? { id, status: 'done', outputPayload: JSON.stringify({ outputPath: '/exports/gsb.xlsx', reportPath: '/exports/report.md', rows: 1, issues: [] }) }
+      : { id, status: 'done', outputPayload: JSON.stringify({ total: 1, reviewed: 1, reused: 0, skipped: 0, failed: 0, items: [] }) }));
     const { rerender } = render(<AnnotationWorkspace projectId="project-1" />);
     expect(await screen.findByText(/Pair-wise GSB 批量审核与导出/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '批量采集并准备制表数据' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '一键导出已制表' })).not.toBeInTheDocument();
-    fireEvent.click(await screen.findByRole('button', { name: '批量生成 GSB' }));
-    await waitFor(() => expect(api.batchReviewPairwise).toHaveBeenCalledWith({ projectId: 'project-1', force: false }));
+    expect(screen.queryByRole('button', { name: 'Pair-wise 预检' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /草稿|正式/ })).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: '批量审核 GSB' }));
+    const task = screen.getByRole('checkbox', { name: /审核 低分也保留的任务/ });
+    expect(task).not.toBeChecked();
+    fireEvent.click(task);
+    fireEvent.click(screen.getByRole('button', { name: '审核所选题目（1）' }));
+    await waitFor(() => expect(api.batchReviewPairwise).toHaveBeenCalledWith({ projectId: 'project-1', taskIds: ['task-1'], force: false }));
     expect(await screen.findByText(/批量 GSB 完成：新审核 1 题/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '批量导出 GSB' }));
+    await waitFor(() => expect(api.exportPairwise).toHaveBeenCalledWith({ projectId: 'project-1', submitter: '', submittedAt: '' }));
 
     rerender(<AnnotationWorkspace projectId="project-1" taskId="task-1" />);
-    expect(await screen.findByRole('button', { name: '生成 GSB' })).toBeInTheDocument();
+    await screen.findByText('GSB 对比结果');
+    expect(screen.queryByRole('button', { name: '生成 GSB' })).not.toBeInTheDocument();
   });
 
-  it('refreshes an A container, binds the exact match, and copies the prompt', async () => {
+  it('automatically enables GSB when entering an untouched task card', async () => {
+    const legacy = makeCase({
+      initialSha: 'a'.repeat(40), snapshotUrl: `https://github.com/u/r/commit/${'a'.repeat(40)}`,
+      mode: 'legacy', rounds: [], captures: [], sessionId: '', tracePath: '',
+    });
+    const enabled = {
+      ...legacy,
+      revision: 2,
+      mode: 'pairwise_gsb' as const,
+      pairwise: {
+        prompt: '修复真实问题', language: 'TypeScript', harness: 'Claude Code', harnessVersion: '2.1.197', os: 'MacOS/Linux', environment: '已容器化，可一键起环境', validity: '有效', notes: '', autoRecordEnabled: false, reviews: [],
+        runA: { side: 'A' as const, branch: 'A', containerId: '', containerName: '', workspacePath: '', repoRelativePath: 'repo-one', sessionId: '', tracePath: '', turnCount: 0, captureId: '', captureHash: '', traceHash: '', deliverableSha: '', deliverableUrl: '', videoStatus: 'missing', videoPath: '', videoUrl: '', recordingError: '', preparedAt: 0, capturedAt: 0, committedAt: 0 },
+        runB: { side: 'B' as const, branch: 'B', containerId: '', containerName: '', workspacePath: '', repoRelativePath: 'repo-one', sessionId: '', tracePath: '', turnCount: 0, captureId: '', captureHash: '', traceHash: '', deliverableSha: '', deliverableUrl: '', videoStatus: 'missing', videoPath: '', videoUrl: '', recordingError: '', preparedAt: 0, capturedAt: 0, committedAt: 0 },
+      },
+    };
+    api.listCases.mockResolvedValue([legacy]);
+    api.enablePairwise.mockResolvedValue({ id: 'enable-pairwise', status: 'pending' });
+    api.getAnnotationJob.mockResolvedValue({ id: 'enable-pairwise', status: 'done', outputPayload: JSON.stringify(enabled) });
+
+    render(<AnnotationWorkspace projectId="project-1" taskId="task-1" />);
+
+    await waitFor(() => expect(api.enablePairwise).toHaveBeenCalledWith({ taskId: 'task-1' }));
+    expect(await screen.findByText('GSB 对比结果')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '启用 Pair-wise GSB' })).not.toBeInTheDocument();
+  });
+
+  it('refreshes once, binds both exact containers, then copies one prompt', async () => {
     const unbound = makeCase({
       taskId: 'p1__feat__label-123-11', taskName: 'xh-05', sourcePath: '/tasks/xh-05-feature-11',
       repoRelativePath: 'xh-05-feature-11',
@@ -344,26 +314,31 @@ describe('AnnotationWorkspace', () => {
         runB: { side: 'B', branch: 'B', containerId: '', containerName: '', workspacePath: '', repoRelativePath: 'xh-05-feature-11', sessionId: '', tracePath: '', turnCount: 0, captureId: '', captureHash: '', traceHash: '', deliverableSha: '', deliverableUrl: '', videoStatus: 'missing', videoPath: '', videoUrl: '', recordingError: '', preparedAt: 0, capturedAt: 0, committedAt: 0 },
       },
     });
-    const bound = { ...unbound, revision: 2, pairwise: { ...unbound.pairwise!, runA: { ...unbound.pairwise!.runA, containerId: 'container-a', containerName: 'xh05-claude-11-a', workspacePath: '/workspace-a' } } };
+    const boundA = { ...unbound, revision: 2, pairwise: { ...unbound.pairwise!, runA: { ...unbound.pairwise!.runA, containerId: 'container-a', containerName: 'xh05-claude-11-a', workspacePath: '/workspace-a' } } };
+    const boundBoth = { ...boundA, revision: 3, pairwise: { ...boundA.pairwise!, runB: { ...boundA.pairwise!.runB, containerId: 'container-b', containerName: 'xh05-claude-11-b', workspacePath: '/workspace-b' } } };
     api.listCases.mockResolvedValue([unbound]);
     api.listContainers.mockResolvedValueOnce([]).mockResolvedValue([
       { id: 'container-a', name: 'xh05-claude-11-a', state: 'running', image: 'claude', workspacePath: '/workspace-a' },
-      { id: 'wrong', name: 'xh05-claude-1-a', state: 'running', image: 'claude', workspacePath: '/workspace-wrong' },
+      { id: 'container-b', name: 'xh05-claude-11-b', state: 'running', image: 'claude', workspacePath: '/workspace-b' },
     ]);
-    api.bindPairwiseContainer.mockResolvedValue({ id: 'bind-a', status: 'pending' });
-    api.getAnnotationJob.mockResolvedValue({ id: 'bind-a', status: 'done', outputPayload: JSON.stringify(bound) });
+    api.bindPairwiseContainer.mockResolvedValueOnce({ id: 'bind-a', status: 'pending' }).mockResolvedValueOnce({ id: 'bind-b', status: 'pending' });
+    api.getAnnotationJob.mockResolvedValueOnce({ id: 'bind-a', status: 'done', outputPayload: JSON.stringify(boundA) }).mockResolvedValueOnce({ id: 'bind-b', status: 'done', outputPayload: JSON.stringify(boundBoth) });
     render(<AnnotationWorkspace projectId="project-1" taskId={unbound.taskId} />);
 
-    const sideA = await screen.findByRole('region', { name: '运行 A' });
-    expect(screen.queryByRole('button', { name: '刷新' })).not.toBeInTheDocument();
-    fireEvent.click(within(sideA).getByRole('button', { name: '刷新容器' }));
+    await screen.findByRole('region', { name: '运行 A' });
+    fireEvent.click(screen.getByRole('button', { name: '刷新并绑定 A/B' }));
 
     await waitFor(() => expect(api.bindPairwiseContainer).toHaveBeenCalledWith({
       taskId: unbound.taskId, side: 'A', containerId: 'container-a', repoRelativePath: 'xh-05-feature-11', copyRepository: true,
     }));
-    expect(await within(sideA).findByRole('button', { name: '已绑定 A' })).toBeEnabled();
-    expect(await within(sideA).findByText('提示词已复制')).toBeInTheDocument();
-    expect(within(sideA).queryByRole('button', { name: '复制同一提示词' })).not.toBeInTheDocument();
+    expect(api.bindPairwiseContainer).toHaveBeenCalledWith({
+      taskId: unbound.taskId, side: 'B', containerId: 'container-b', repoRelativePath: 'xh-05-feature-11', copyRepository: true,
+    });
+    expect(await screen.findByText('已绑定 xh05-claude-11-a')).toBeInTheDocument();
+    expect(await screen.findByText('已绑定 xh05-claude-11-b')).toBeInTheDocument();
+    expect(wailsClipboard.setText).not.toHaveBeenCalledWith('实现加法');
+    fireEvent.click(screen.getByRole('button', { name: '复制提示词' }));
+    await screen.findByRole('button', { name: '提示词已复制' });
     expect(wailsClipboard.setText).toHaveBeenCalledWith('实现加法');
   });
 
@@ -489,7 +464,9 @@ describe('AnnotationWorkspace', () => {
       { id: 'container-11', name: 'xh05-claude-11', state: 'running', image: 'claude', workspacePath: '/workspace-11' },
     ]);
 
-    fireEvent.click(screen.getByRole('button', { name: '刷新容器' }));
+    const refreshButton = screen.getByRole('button', { name: '刷新容器' });
+    await waitFor(() => expect(refreshButton).toBeEnabled());
+    fireEvent.click(refreshButton);
 
     await waitFor(() => expect(api.listContainers).toHaveBeenCalledTimes(2));
     expect(screen.getByRole('combobox', { name: '容器' })).toHaveValue('');
@@ -701,32 +678,13 @@ describe('AnnotationWorkspace', () => {
     expect(screen.getAllByText('新项目任务').length).toBeGreaterThan(0);
   });
 
-  it('requires a clean preflight for formal export and forwards the entered submission time unchanged', async () => {
-    api.listCases.mockResolvedValue([makeCase({ completed: true })]);
-    api.preflight.mockResolvedValue({ tasks: 1, rounds: 1, ready: 1, issues: [] });
-    api.exportCases.mockResolvedValue({ id: 'job-export', status: 'pending' });
-    api.getAnnotationJob.mockResolvedValue({
-      id: 'job-export',
-      status: 'done',
-      outputPayload: JSON.stringify({ outputPath: '/out/batch.xlsx', reportPath: '/out/report.json', rows: 1, issues: [] }),
-    });
-
+  it('hides the legacy preflight and draft or formal export controls', async () => {
     render(<AnnotationWorkspace projectId="project-1" />);
-    expect(await screen.findByText('正式导出前请先执行批次预检')).toBeInTheDocument();
+
+    expect(await screen.findByRole('button', { name: '批量导出 GSB' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '批次预检' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '正式导出' })).not.toBeInTheDocument();
-
-    fireEvent.change(screen.getByLabelText('提交人'), { target: { value: '真实提交人' } });
-    fireEvent.change(screen.getByLabelText('实际提交时间（可选）'), { target: { value: '2026-09-12T09:30' } });
-    fireEvent.click(screen.getByRole('button', { name: '批次预检' }));
-    fireEvent.click(await screen.findByRole('button', { name: '正式导出' }));
-
-    await waitFor(() => expect(api.exportCases).toHaveBeenCalledWith({
-      projectId: 'project-1',
-      submitter: '真实提交人',
-      submittedAt: '2026-09-12T09:30',
-      draft: false,
-    }));
-    expect(await screen.findByText('已导出 1 行')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '草稿导出' })).not.toBeInTheDocument();
   });
 
   it('accepts a local absolute JSONL path when container discovery has no matching trace', async () => {
