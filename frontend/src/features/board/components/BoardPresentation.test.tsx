@@ -18,6 +18,7 @@ function createTask(overrides: Partial<Task> = {}): Task {
     executionRounds: overrides.executionRounds ?? 1,
     aiReviewRounds: overrides.aiReviewRounds ?? 0,
     aiReviewStatus: overrides.aiReviewStatus ?? 'none',
+    hasGeneratedGsb: overrides.hasGeneratedGsb ?? false,
     progress: overrides.progress ?? 0,
     totalModels: overrides.totalModels ?? 0,
     runningModels: overrides.runningModels ?? 0,
@@ -120,4 +121,21 @@ describe('TaskCard', () => {
 
     expect(screen.getByText('#17')).toBeInTheDocument();
   });
+
+  it.each(['sm', 'four', 'md', 'lg'] as const)(
+    'shows generated GSB badge on the %s task card',
+    (size) => {
+      render(
+        <TaskCard
+          task={createTask({ hasGeneratedGsb: true })}
+          size={size}
+          onClick={vi.fn()}
+          onContextMenu={vi.fn()}
+          onDelete={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText('GSB已生成')).toBeInTheDocument();
+    },
+  );
 });

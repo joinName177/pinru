@@ -85,6 +85,7 @@ function makeTask(): Task {
     executionRounds: 1,
     aiReviewRounds: 0,
     aiReviewStatus: 'none',
+    hasGeneratedGsb: false,
     progress: 0,
     totalModels: 0,
     runningModels: 0,

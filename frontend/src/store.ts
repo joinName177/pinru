@@ -8,6 +8,8 @@ import {
   type PromptGenerationStatus,
   type ReviewStatus,
 } from './api/task';
+import type { AnnotationCase } from './api/annotation';
+import { callService } from './api/wails';
 import {
   DEFAULT_TASK_TYPE,
   getActiveProjectId,
@@ -45,6 +47,7 @@ export interface Task {
   executionRounds: number;
   aiReviewRounds: number;
   aiReviewStatus: ReviewStatus;
+  hasGeneratedGsb: boolean;
   progress: number;
   totalModels: number;
   runningModels: number;
@@ -108,7 +111,29 @@ function getPersistedAiReviewStatus(modelRuns: ModelRunFromDB[]): ReviewStatus {
   return 'none';
 }
 
-function mapDbTaskToTask(dbTask: TaskFromDB, modelRuns: ModelRunFromDB[]): Task {
+function hasCurrentPairwiseGsbReview(annotationCase: AnnotationCase | undefined): boolean {
+  if (annotationCase?.mode !== 'pairwise_gsb') {
+    return false;
+  }
+
+  return annotationCase.pairwise?.reviews?.some(
+    (review) => review.current === true && review.status === 'ready',
+  ) ?? false;
+}
+
+function hasModelRunGsbScore(modelRuns: ModelRunFromDB[]): boolean {
+  return modelRuns.some((run) => run.gsbScore?.trim());
+}
+
+function listAnnotationCases(projectId: string): Promise<AnnotationCase[]> {
+  return callService('AnnotationService', 'ListCases', projectId);
+}
+
+function mapDbTaskToTask(
+  dbTask: TaskFromDB,
+  modelRuns: ModelRunFromDB[],
+  annotationCase?: AnnotationCase,
+): Task {
   const persistedSessionList = buildPersistedTaskSessionList(dbTask, modelRuns);
   return {
     id: dbTask.id,
@@ -124,6 +149,7 @@ function mapDbTaskToTask(dbTask: TaskFromDB, modelRuns: ModelRunFromDB[]): Task 
     executionRounds: getPersistedExecutionRounds(dbTask, modelRuns),
     aiReviewRounds: getPersistedAiReviewRounds(modelRuns),
     aiReviewStatus: getPersistedAiReviewStatus(modelRuns),
+    hasGeneratedGsb: hasCurrentPairwiseGsbReview(annotationCase) || hasModelRunGsbScore(modelRuns),
     progress: 0,
     totalModels: 0,
     runningModels: 0,
@@ -188,7 +214,13 @@ export const useAppStore = create<AppState>((set) => ({
       }
 
       const sourceModelName = activeProject?.sourceModelFolder?.trim() || 'ORIGIN';
-      const dbTasks = await listTasks(resolvedProjectId);
+      const [dbTasks, annotationCases] = await Promise.all([
+        listTasks(resolvedProjectId),
+        listAnnotationCases(resolvedProjectId).catch((error) => {
+          console.error(`Failed to load annotation cases for project ${resolvedProjectId}:`, error);
+          return [] as AnnotationCase[];
+        }),
+      ]);
       const runsByTask = await Promise.all(
         dbTasks.map(async (task) => {
           try {
@@ -202,6 +234,7 @@ export const useAppStore = create<AppState>((set) => ({
       );
 
       const runMap = new Map(runsByTask);
+      const annotationCaseMap = new Map(annotationCases.map((item) => [item.taskId, item]));
       set({
         tasks: dbTasks.map((dbTask) => {
           const runs = (runMap.get(dbTask.id) ?? []).filter(
@@ -212,7 +245,7 @@ export const useAppStore = create<AppState>((set) => ({
           const allRuns = runMap.get(dbTask.id) ?? [];
 
           return {
-            ...mapDbTaskToTask(dbTask, allRuns),
+            ...mapDbTaskToTask(dbTask, allRuns, annotationCaseMap.get(dbTask.id)),
             progress,
             totalModels: runs.length,
             runningModels,
