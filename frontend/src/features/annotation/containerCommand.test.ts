@@ -22,6 +22,18 @@ describe('container startup command', () => {
     expect(buildContainerCommand({ taskName: 'CYC-03', taskId: 'legacy', sourcePath: '/tasks/cyc-03-0-1代码生成-1/' }).containerName).toBe('cyc03-claude-1');
   });
 
+  it('creates isolated A and B container identities for pairwise runs', () => {
+    const task = { taskName: 'cyc-03', taskId: 'p1__feat__label-8815-9', sourcePath: '/tasks/cyc-03-feature迭代-9' };
+    const runA = buildContainerCommand(task, 'key', 'A');
+    const runB = buildContainerCommand(task, 'key', 'B');
+    expect(runA.containerName).toBe('cyc03-claude-9-a');
+    expect(runA.runDirectory).toBe('run-9-a');
+    expect(runB.containerName).toBe('cyc03-claude-9-b');
+    expect(runB.runDirectory).toBe('run-9-b');
+    expect(runA.command).toContain('adminfather/benzhi-claude-code:20260909-isolated-git');
+    expect(runB.command).toContain('adminfather/benzhi-claude-code:20260909-isolated-git');
+  });
+
   it('rejects missing, conflicting, and unsafe task identity', () => {
     const base = { taskName: 'cyc-03', taskId: 'p1__gen__label-8815-4', sourcePath: '/tasks/cyc-03-0-1代码生成-4' };
     expect(() => buildContainerCommand({ ...base, taskName: '$(touch /tmp/unwanted)' })).toThrow();

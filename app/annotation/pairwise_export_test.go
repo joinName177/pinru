@@ -2,6 +2,8 @@ package annotation
 
 import (
 	"archive/zip"
+	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -12,8 +14,9 @@ import (
 func pairwiseExportCase(t *testing.T, complete bool) (*AnnotationService, *domain.Case) {
 	t.Helper()
 	s, _, _ := annotationFixture(t)
+	s.verifyPairwiseRemote = func(context.Context, domain.Case) error { return nil }
 	c, err := s.EnablePairwise(EnablePairwiseRequest{
-		TaskID: "题目-1", Harness: "Codex", HarnessVersion: "1.2.3", OS: "MacOS/Linux", Environment: "本地仓库",
+		TaskID: "题目-1", Language: "Python", Harness: "Codex CLI", HarnessVersion: "1.2.3", OS: "MacOS/Linux", Environment: "无外部依赖", Validity: domain.PairwiseValidityValid,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -29,6 +32,10 @@ func pairwiseExportCase(t *testing.T, complete bool) (*AnnotationService, *domai
 		run.TracePath = "/evidence/" + label + "/session.jsonl"
 		run.TurnCount = 1
 		run.CaptureID = "capture-" + label
+		run.ContainerID = "container-" + label
+		run.ContainerName = "claude-" + label
+		run.WorkspacePath = "/workspace-" + label
+		run.RepoRelativePath = "repo"
 		run.CaptureHash = "code-hash-" + label
 		run.TraceHash = "trace-hash-" + label
 		run.DeliverableSHA = strings.Repeat(map[domain.PairwiseSide]string{domain.PairwiseSideA: "a", domain.PairwiseSideB: "b"}[side], 40)
@@ -56,6 +63,31 @@ func pairwiseExportCase(t *testing.T, complete bool) (*AnnotationService, *domai
 		t.Fatal(err)
 	}
 	return s, saved
+}
+
+func TestPairwisePreflightRequiresRemoteABBranches(t *testing.T) {
+	s, _ := pairwiseExportCase(t, true)
+	s.verifyPairwiseRemote = func(context.Context, domain.Case) error {
+		return errors.New("远端 A 分支未指向登记的 A 产物")
+	}
+	report, err := s.PreflightPairwise("batch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Ready != 0 || !strings.Contains(strings.Join(report.Issues, "；"), "远端 A 分支") {
+		t.Fatalf("report = %#v", report)
+	}
+}
+
+func TestPairwiseFormalExportBlocksRemoteABMismatch(t *testing.T) {
+	s, c := pairwiseExportCase(t, true)
+	s.verifyPairwiseRemote = func(context.Context, domain.Case) error {
+		return errors.New("远端 B 分支未指向登记的 B 产物")
+	}
+	_, err := s.ExportPairwise(PairwiseExportRequest{ProjectID: "batch", TaskID: c.TaskID})
+	if err == nil || !strings.Contains(err.Error(), "远端 B 分支") {
+		t.Fatalf("error = %v", err)
+	}
 }
 
 func TestPairwisePreflightReportsMissingSideMaterials(t *testing.T) {

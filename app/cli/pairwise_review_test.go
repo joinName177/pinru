@@ -29,6 +29,17 @@ func TestDecodePairwiseReviewRejectsGenericOrOneSidedReason(t *testing.T) {
 	}
 }
 
+func TestDecodePairwiseReviewRequiresPortalLengthAndDetailedSameReason(t *testing.T) {
+	short := []byte(`{"status":"ready","conclusion":"A_better","reason":"A 修改 main.go，B 未修改 main.go，所以 A 更好。"}`)
+	if _, err := decodePairwiseReview(short); err == nil {
+		t.Fatal("expected reason shorter than 60 Chinese characters to fail")
+	}
+	same := []byte(`{"status":"ready","conclusion":"same","reason":"A 在 main.go 完成实现并通过测试，B 在 main.go 也完成实现并通过测试；两边表现都很好，最终选择 Same。"}`)
+	if _, err := decodePairwiseReview(same); err == nil {
+		t.Fatal("expected Same without equivalence or offsetting trade-offs to fail")
+	}
+}
+
 func quotePairwiseJSON(value string) string {
 	value = strings.ReplaceAll(value, `\`, `\\`)
 	value = strings.ReplaceAll(value, `"`, `\"`)

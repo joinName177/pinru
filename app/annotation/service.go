@@ -18,14 +18,15 @@ import (
 )
 
 type AnnotationService struct {
-	store          *store.Store
-	cli            *appcli.CliService
-	root           string
-	locks          sync.Map
-	command        func(context.Context, string, string, ...string) ([]byte, error)
-	verifySnapshot func(context.Context, string) error
-	publishInitial func(context.Context, string, string, string, store.GitHubAccount) (string, error)
-	pushPairwise   func(context.Context, string, string, string) error
+	store                *store.Store
+	cli                  *appcli.CliService
+	root                 string
+	locks                sync.Map
+	command              func(context.Context, string, string, ...string) ([]byte, error)
+	verifySnapshot       func(context.Context, string) error
+	publishInitial       func(context.Context, string, string, string, store.GitHubAccount) (string, error)
+	pushPairwise         func(context.Context, string, string, string) error
+	verifyPairwiseRemote func(context.Context, domain.Case) error
 }
 
 func New(st *store.Store, cli *appcli.CliService) *AnnotationService {
@@ -169,6 +170,7 @@ func (s *AnnotationService) ListCases(projectID string) ([]domain.Case, error) {
 		if err != nil {
 			return nil, err
 		}
+		populatePairwiseMetadata(c)
 		c.Preparation = preparations[task.ID]
 		markEvaluationFreshness(c, skillHash, reviewExecution.Label, modelErr == nil)
 		markPairwiseReviewFreshness(c, reviewExecution.Label, modelErr == nil)
@@ -349,6 +351,12 @@ func (s *AnnotationService) ExecuteJob(ctx context.Context, kind, payload string
 			return nil, err
 		}
 		return s.PreparePairwiseSide(ctx, r)
+	case "annotation_pairwise_bind":
+		var r PairwiseBindRequest
+		if err := json.Unmarshal([]byte(payload), &r); err != nil {
+			return nil, err
+		}
+		return s.bindPairwiseContainer(ctx, r)
 	case "annotation_pairwise_commit_side":
 		var r PairwiseCommitRequest
 		if err := json.Unmarshal([]byte(payload), &r); err != nil {
@@ -360,13 +368,19 @@ func (s *AnnotationService) ExecuteJob(ctx context.Context, kind, payload string
 		if err := json.Unmarshal([]byte(payload), &r); err != nil {
 			return nil, err
 		}
-		return s.CapturePairwiseSide(ctx, r)
+		return s.CaptureAndCommitPairwiseSide(ctx, r)
 	case "annotation_pairwise_materials":
 		var r PairwiseMaterialsRequest
 		if err := json.Unmarshal([]byte(payload), &r); err != nil {
 			return nil, err
 		}
 		return s.SavePairwiseMaterials(r)
+	case "annotation_pairwise_settings":
+		var r PairwiseSettingsRequest
+		if err := json.Unmarshal([]byte(payload), &r); err != nil {
+			return nil, err
+		}
+		return s.SavePairwiseSettings(r)
 	case "annotation_capture", "annotation_capture_table":
 		var r CaptureRequest
 		if err := json.Unmarshal([]byte(payload), &r); err != nil {
@@ -394,6 +408,12 @@ func (s *AnnotationService) ExecuteJob(ctx context.Context, kind, payload string
 			return nil, err
 		}
 		return s.ReviewPairwise(ctx, r)
+	case "annotation_pairwise_batch_review":
+		var r PairwiseBatchReviewRequest
+		if err := json.Unmarshal([]byte(payload), &r); err != nil {
+			return nil, err
+		}
+		return s.BatchReviewPairwise(ctx, r)
 	case "annotation_export":
 		var r ExportRequest
 		if err := json.Unmarshal([]byte(payload), &r); err != nil {

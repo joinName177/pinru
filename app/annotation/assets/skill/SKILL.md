@@ -1,9 +1,15 @@
 ---
 name: coding-agent-satisfaction
-description: Use when 用户已自行准备项目与提示词并在 Claude Code CLI（或 Codex CLI）执行，需要 AI 接手分析轨迹与产物、逐轮五维评分、撰写依据并生成 Excel 提交表。不默认代出题或执行被测任务。
+description: Use when 用户已执行 Coding Agent 任务，需要 AI 分析轨迹与产物，完成 Pair-wise GSB 或旧版逐轮五维评价并生成提交数据。
 ---
 
 # Coding Agent 用户满意度做题助手（AI 评价版）
+
+## 09/16 Pair-wise GSB 优先规则
+
+当材料、页面或请求出现 Pair-wise、GSB、运行 A/B、两个 Session 或两个产物快照时，先读取 [Pair-wise GSB 规则](references/pairwise-gsb.md)，并以该规则为准。此模式一道题跑两次形成一条数据，只生成 GSB 结论与一段理由，不执行旧版五维评分，不使用旧版 28 列字段。
+
+用户已明确允许 AI 分析轨迹和产物并生成 GSB；最终理由必须自然、具体且无 AI 式前言或模板痕迹。AI 来源保留在内部证据记录，不写进提交字段，也不得虚构人工操作经历。
 
 默认分工：用户自己准备项目和提示词，在 Claude Code CLI 执行并完成交互；AI 在执行结束后负责材料读取、逐轮整理、轨迹与产物分析、必要验证、五维评分、依据撰写和 Excel 制表。评分与字段规范基于《ClaudeCcode 用户满意度标注说明（26.09）》，并按用户明确要求将评价职责全部改由 AI 执行。详见 [项目规则](references/project-rules.md) 和 [字段规范](references/fields.md)。
 

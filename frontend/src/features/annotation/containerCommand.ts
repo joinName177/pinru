@@ -1,6 +1,7 @@
 type TaskIdentity = { taskName: string; taskId: string; sourcePath: string };
+type PairwiseSide = 'A' | 'B';
 
-export function buildContainerCommand(task: TaskIdentity, apiKey = '') {
+export function buildContainerCommand(task: TaskIdentity, apiKey = '', side?: PairwiseSide) {
   const name = task.taskName.trim();
   if (!/^[a-zA-Z0-9][a-zA-Z0-9 _-]*$/.test(name)) {
     throw new Error('大题名称需使用英文字母、数字、空格或连字符，才能生成容器名称。');
@@ -16,12 +17,14 @@ export function buildContainerCommand(task: TaskIdentity, apiKey = '') {
   if (!Number.isSafeInteger(sequence) || sequence < 1) {
     throw new Error('尚未找到题目的固定编号，请先完成题目创建。');
   }
-  const containerName = `${prefix}-claude-${sequence}`;
+  const suffix = side ? `-${side.toLowerCase()}` : '';
+  const containerName = `${prefix}-claude-${sequence}${suffix}`;
+  const runDirectory = `run-${sequence}${suffix}`;
   const command = [
     '(',
     `CONTAINER_NAME="${containerName}"`,
     `BASE_DIR="$HOME/${prefix}-claude-runs"`,
-    `RUN_DIR="$BASE_DIR/run-${sequence}"`,
+    `RUN_DIR="$BASE_DIR/${runDirectory}"`,
     '',
     ...(apiKey ? [`apikey='${apiKey.replace(/'/g, "'\\''")}'`] : [
     'if [ -z "${apikey:-}" ]; then',
@@ -40,5 +43,5 @@ export function buildContainerCommand(task: TaskIdentity, apiKey = '') {
     'docker run -it --init --restart=no --cap-drop ALL --security-opt no-new-privileges --name "$CONTAINER_NAME" --mount "type=bind,src=$RUN_DIR/workspace,dst=/workspace" -e apikey adminfather/benzhi-claude-code:20260909-isolated-git',
     ')',
   ].join('\n');
-  return { containerName, baseDirectory: `$HOME/${prefix}-claude-runs`, runDirectory: `run-${sequence}`, command };
+  return { containerName, baseDirectory: `$HOME/${prefix}-claude-runs`, runDirectory, command };
 }

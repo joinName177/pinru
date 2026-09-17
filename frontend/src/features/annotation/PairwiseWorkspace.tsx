@@ -1,15 +1,16 @@
-import { CheckCircle2, Download, FileSearch, GitBranch, Loader2, Save, Sparkles } from 'lucide-react';
+import { CheckCircle2, Clipboard, Container, Download, ExternalLink, FileSearch, GitBranch, Loader2, Play, RefreshCw, Save, Sparkles, Square } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
   capturePairwiseSide,
   commitPairwiseSide,
-  preparePairwiseSide,
   reviewPairwise,
   savePairwiseMaterials,
   type AnnotationCase,
+  type AnnotationContainer,
   type AnnotationExportResult,
   type AnnotationPreflightReport,
   type PairwiseRun,
+  type PairwiseProjectState,
   type PairwiseSide,
 } from '../../api/annotation';
 import type { BackgroundJob } from '../../api/job';
@@ -17,50 +18,81 @@ import type { BackgroundJob } from '../../api/job';
 const INPUT = 'w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-800 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:border-stone-700 dark:bg-[#171B22] dark:text-stone-100';
 const PRIMARY = 'inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-slate-800 px-3 text-sm font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-slate-100 dark:text-slate-900';
 const SECONDARY = 'inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-stone-200 bg-white px-3 text-sm font-semibold text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200';
+const COMPLETED = 'inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300';
 
 export type PairwiseRunJob = (label: string, submit: () => Promise<BackgroundJob>) => Promise<boolean>;
 
 type Props = {
   annotationCase: AnnotationCase;
+  containers?: AnnotationContainer[];
   disabled: boolean;
   runJob: PairwiseRunJob;
+  onCopyContainerCommand?: (side: PairwiseSide) => Promise<void>;
+  onBindContainer?: (side: PairwiseSide, containerId: string) => Promise<boolean>;
+  onRefreshContainers?: (side: PairwiseSide) => Promise<void>;
+  onCopyPrompt?: (side: PairwiseSide) => Promise<boolean>;
+  onStartProject?: (side: PairwiseSide) => Promise<PairwiseProjectState | null>;
+  onStopProject?: (side: PairwiseSide) => Promise<boolean>;
+  promptCopied?: Record<PairwiseSide, boolean>;
   onExport?: (draft: boolean) => Promise<void>;
   onPreflight?: () => Promise<void>;
   preflightReport?: AnnotationPreflightReport | null;
   exportResult?: AnnotationExportResult | null;
-  submitter?: string;
-  submittedAt?: string;
-  onSubmitterChange?: (value: string) => void;
-  onSubmittedAtChange?: (value: string) => void;
 };
 
 function shortSha(value: string) {
   return value ? value.slice(0, 10) : '尚未提交';
 }
 
-function RunPanel({ taskId, side, run, disabled, runJob }: {
+function RunPanel({ taskId, side, run, containers, disabled, runJob, onCopyContainerCommand, onBindContainer, onRefreshContainers, onCopyPrompt, onStartProject, onStopProject, promptCopied }: {
   taskId: string;
   side: PairwiseSide;
   run: PairwiseRun;
+  containers: AnnotationContainer[];
   disabled: boolean;
   runJob: PairwiseRunJob;
+  onCopyContainerCommand?: (side: PairwiseSide) => Promise<void>;
+  onBindContainer?: (side: PairwiseSide, containerId: string) => Promise<boolean>;
+  onRefreshContainers?: (side: PairwiseSide) => Promise<void>;
+  onCopyPrompt?: (side: PairwiseSide) => Promise<boolean>;
+  onStartProject?: (side: PairwiseSide) => Promise<PairwiseProjectState | null>;
+  onStopProject?: (side: PairwiseSide) => Promise<boolean>;
+  promptCopied: boolean;
 }) {
-  const [tracePath, setTracePath] = useState(run.tracePath || '');
-  const [videoUrl, setVideoUrl] = useState(run.videoUrl || '');
-  useEffect(() => setTracePath(run.tracePath || ''), [run.tracePath]);
-  useEffect(() => setVideoUrl(run.videoUrl || ''), [run.videoUrl]);
+  const [videoSource, setVideoSource] = useState(run.videoPath || run.videoUrl || '');
+  const [containerId, setContainerId] = useState(run.containerId || '');
+  const [refreshing, setRefreshing] = useState(false);
+  const [projectBusy, setProjectBusy] = useState(false);
+  const [projectURL, setProjectURL] = useState('');
+  useEffect(() => setVideoSource(run.videoPath || run.videoUrl || ''), [run.videoPath, run.videoUrl]);
+  useEffect(() => setContainerId(run.containerId || ''), [run.containerId]);
   const readyVideo = run.videoStatus === 'ready';
+  const boundSelected = Boolean(containerId && containerId === run.containerId);
+  const showBound = boundSelected;
 
   return (
     <section role="region" aria-label={`运行 ${side}`} className="border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
-      <div className="flex items-center justify-between gap-3 border-b border-stone-100 pb-3 dark:border-stone-800">
+      <div className="border-b border-stone-100 pb-3 dark:border-stone-800">
         <div>
           <h3 className="text-base font-bold text-stone-900 dark:text-stone-100">运行 {side}</h3>
-          <p className="mt-1 text-xs text-stone-500">固定分支 {side} · {run.preparedAt ? '已从初始快照准备' : '等待准备'}</p>
+          <p className="mt-1 text-xs text-stone-500">固定分支 {side} · {run.preparedAt ? '已从初始快照准备' : '绑定容器时自动准备'}</p>
         </div>
-        <button className={SECONDARY} disabled={disabled} onClick={() => void runJob(`准备 ${side} 分支`, () => preparePairwiseSide({ taskId, side }))}>
-          <GitBranch className="h-4 w-4" />准备 {side}
-        </button>
+      </div>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+        <select aria-label={`${side} 容器`} className={INPUT} value={containerId} onChange={(event) => setContainerId(event.target.value)}>
+          <option value="">选择 {side} 独立容器</option>
+          {containers.map((container) => <option key={container.id} value={container.id}>{container.name} · {container.state}</option>)}
+        </select>
+        <button className={SECONDARY} disabled={disabled || refreshing} onClick={() => {
+          setRefreshing(true);
+          void Promise.resolve(onRefreshContainers?.(side)).finally(() => setRefreshing(false));
+        }}>{refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}刷新容器</button>
+        <button className={showBound ? COMPLETED : SECONDARY} disabled={disabled || !containerId} onClick={() => void onBindContainer?.(side, containerId)}>{showBound ? <CheckCircle2 className="h-4 w-4" /> : <Container className="h-4 w-4" />}{showBound ? `已绑定 ${side}` : `绑定 ${side}`}</button>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button className={SECONDARY} disabled={disabled} onClick={() => void onCopyContainerCommand?.(side)}><Clipboard className="h-4 w-4" />复制 {side} 启动命令</button>
+        <button className={promptCopied ? COMPLETED : SECONDARY} disabled={disabled || !run.containerId} onClick={() => void onCopyPrompt?.(side)}>{promptCopied ? <CheckCircle2 className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}{promptCopied ? '提示词已复制' : '复制同一提示词'}</button>
       </div>
 
       <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
@@ -69,25 +101,44 @@ function RunPanel({ taskId, side, run, disabled, runJob }: {
       </dl>
 
       <div className="mt-4 space-y-3">
-        <label className="block">
-          <span className="mb-1 block text-xs font-semibold text-stone-500">首轮轨迹 JSONL</span>
-          <input aria-label={`${side} 轨迹路径`} className={INPUT} value={tracePath} onChange={(event) => setTracePath(event.target.value)} placeholder="/absolute/path/to/session.jsonl" />
-        </label>
         <div className="flex flex-wrap gap-2">
-          <button className={PRIMARY} disabled={disabled || !tracePath.trim()} onClick={() => void runJob(`采集 ${side}`, () => capturePairwiseSide({ taskId, side, tracePath: tracePath.trim() }))}>
+          <button className={PRIMARY} disabled={disabled || !run.containerId} onClick={() => void runJob(`采集 ${side}`, () => capturePairwiseSide({ taskId, side }))}>
             <FileSearch className="h-4 w-4" />采集 {side}
           </button>
-          <button className={SECONDARY} disabled={disabled || !run.sessionId} onClick={() => void runJob(`提交 ${side} 产物`, () => commitPairwiseSide({ taskId, side, sessionId: run.sessionId }))}>
-            <GitBranch className="h-4 w-4" />提交 {side} 产物
+          <button className={run.deliverableSha ? COMPLETED : SECONDARY} disabled={disabled || !run.sessionId} onClick={() => void runJob(`提交 ${side} 产物`, () => commitPairwiseSide({ taskId, side, sessionId: run.sessionId }))}>
+            {run.deliverableSha ? <CheckCircle2 className="h-4 w-4" /> : <GitBranch className="h-4 w-4" />}{run.deliverableSha ? `已提交 ${side}` : `提交 ${side} 产物`}
           </button>
         </div>
 
+        <div className="flex flex-wrap items-center gap-2 border-t border-stone-100 pt-3 dark:border-stone-800">
+          <button aria-label={`启动项目 ${side}`} className={PRIMARY} disabled={disabled || projectBusy || !run.deliverableSha || !onStartProject} onClick={() => {
+            setProjectBusy(true);
+            void Promise.resolve(onStartProject?.(side) ?? null).then((state) => {
+              if (state?.running) setProjectURL(state.url);
+            }).finally(() => setProjectBusy(false));
+          }}>
+            {projectBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}启动项目
+          </button>
+          <button aria-label={`停止项目 ${side}`} className={SECONDARY} disabled={disabled || projectBusy || !run.containerId || !onStopProject} onClick={() => {
+            setProjectBusy(true);
+            void Promise.resolve(onStopProject?.(side) ?? false).then((stopped) => {
+              if (stopped) setProjectURL('');
+            }).finally(() => setProjectBusy(false));
+          }}>
+            <Square className="h-4 w-4" />停止项目
+          </button>
+          {projectURL && <a aria-label={`打开 ${side} 项目`} className="inline-flex h-9 items-center gap-1 text-sm font-semibold text-sky-700 hover:underline dark:text-sky-300" href={projectURL} target="_blank" rel="noreferrer"><ExternalLink className="h-4 w-4" />打开项目</a>}
+        </div>
+
         <label className="block">
-          <span className="mb-1 block text-xs font-semibold text-stone-500">运行视频链接</span>
-          <input aria-label={`${side} 视频链接`} className={INPUT} value={videoUrl} onChange={(event) => setVideoUrl(event.target.value)} placeholder="https://.../recording.mp4" />
+          <span className="mb-1 block text-xs font-semibold text-stone-500">运行录屏文件</span>
+          <input aria-label={`${side} 视频链接`} className={INPUT} value={videoSource} onChange={(event) => setVideoSource(event.target.value)} placeholder="/absolute/path/to/recording.mp4（也兼容 HTTP(S) 链接）" />
         </label>
         <div className="flex flex-wrap items-center gap-2">
-          <button className={SECONDARY} disabled={disabled || !videoUrl.trim()} onClick={() => void runJob(`保存 ${side} 视频`, () => savePairwiseMaterials({ taskId, side, videoUrl: videoUrl.trim(), recordingError: '' }))}>
+          <button className={SECONDARY} disabled={disabled || !videoSource.trim()} onClick={() => {
+            const source = videoSource.trim();
+            return void runJob(`保存 ${side} 视频`, () => savePairwiseMaterials({ taskId, side, videoUrl: /^https?:\/\//.test(source) ? source : '', videoPath: /^https?:\/\//.test(source) ? '' : source, recordingError: '' }));
+          }}>
             <Save className="h-4 w-4" />保存 {side} 视频
           </button>
           <span className={`inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-xs font-semibold ${readyVideo ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300' : 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300'}`}>
@@ -99,7 +150,7 @@ function RunPanel({ taskId, side, run, disabled, runJob }: {
   );
 }
 
-export function PairwiseWorkspace({ annotationCase, disabled, runJob, onExport, onPreflight, preflightReport, exportResult, submitter = '', submittedAt = '', onSubmitterChange, onSubmittedAtChange }: Props) {
+export function PairwiseWorkspace({ annotationCase, containers = [], disabled, runJob, onCopyContainerCommand, onBindContainer, onRefreshContainers, onCopyPrompt, onStartProject, onStopProject, promptCopied = { A: false, B: false }, onExport, onPreflight, preflightReport, exportResult }: Props) {
   const pairwise = annotationCase.pairwise;
   if (!pairwise) return null;
   const latestReview = pairwise.reviews.at(-1);
@@ -107,21 +158,11 @@ export function PairwiseWorkspace({ annotationCase, disabled, runJob, onExport, 
   const videosReady = pairwise.runA.videoStatus === 'ready' && pairwise.runB.videoStatus === 'ready';
   const reviewReady = Boolean(pairwise.runA.captureId && pairwise.runB.captureId && pairwise.runA.deliverableSha && pairwise.runB.deliverableSha);
   const formalExportReady = videosReady && Boolean(currentReview);
-
   return (
     <div className="space-y-4">
-      <section className="border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
-        <div className="grid gap-3 text-sm md:grid-cols-4">
-          <div><p className="text-xs text-stone-400">Harness</p><p className="mt-1 font-semibold text-stone-700 dark:text-stone-200">{pairwise.harness || '未填写'}</p></div>
-          <div><p className="text-xs text-stone-400">版本</p><p className="mt-1 font-semibold text-stone-700 dark:text-stone-200">{pairwise.harnessVersion || '未填写'}</p></div>
-          <div><p className="text-xs text-stone-400">操作系统</p><p className="mt-1 font-semibold text-stone-700 dark:text-stone-200">{pairwise.os || '未填写'}</p></div>
-          <div><p className="text-xs text-stone-400">初始 SHA</p><p className="mt-1 font-mono text-stone-700 dark:text-stone-200">{shortSha(annotationCase.initialSha)}</p></div>
-        </div>
-      </section>
-
       <div className="grid gap-4 xl:grid-cols-2">
-        <RunPanel taskId={annotationCase.taskId} side="A" run={pairwise.runA} disabled={disabled} runJob={runJob} />
-        <RunPanel taskId={annotationCase.taskId} side="B" run={pairwise.runB} disabled={disabled} runJob={runJob} />
+        <RunPanel taskId={annotationCase.taskId} side="A" run={pairwise.runA} containers={containers} disabled={disabled} runJob={runJob} onCopyContainerCommand={onCopyContainerCommand} onBindContainer={onBindContainer} onRefreshContainers={onRefreshContainers} onCopyPrompt={onCopyPrompt} onStartProject={onStartProject} onStopProject={onStopProject} promptCopied={promptCopied.A} />
+        <RunPanel taskId={annotationCase.taskId} side="B" run={pairwise.runB} containers={containers} disabled={disabled} runJob={runJob} onCopyContainerCommand={onCopyContainerCommand} onBindContainer={onBindContainer} onRefreshContainers={onRefreshContainers} onCopyPrompt={onCopyPrompt} onStartProject={onStartProject} onStopProject={onStopProject} promptCopied={promptCopied.B} />
       </div>
 
       <section className="border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
@@ -158,13 +199,9 @@ export function PairwiseWorkspace({ annotationCase, disabled, runJob, onExport, 
           <p className="font-semibold">{preflightReport.issues.length ? `仍有 ${preflightReport.issues.length} 项待补` : '正式导出材料齐全'}</p>
           {preflightReport.issues.length > 0 && <ul className="mt-2 space-y-1 text-xs">{preflightReport.issues.map((issue) => <li key={issue}>• {issue}</li>)}</ul>}
         </div>}
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          <label><span className="mb-1 block text-xs font-semibold text-stone-500">提交人</span><input className={INPUT} value={submitter} onChange={(event) => onSubmitterChange?.(event.target.value)} placeholder="按真实提交身份填写" /></label>
-          <label><span className="mb-1 block text-xs font-semibold text-stone-500">实际提交时间</span><input type="datetime-local" className={INPUT} value={submittedAt} onChange={(event) => onSubmittedAtChange?.(event.target.value)} /></label>
-        </div>
         <div className="mt-3 flex flex-wrap gap-2">
           <button className={SECONDARY} disabled={disabled} onClick={() => void onExport(true)}><Download className="h-4 w-4" />导出 Pair-wise 草稿</button>
-          <button className={PRIMARY} disabled={disabled || !formalExportReady || !submitter.trim()} onClick={() => void onExport(false)}><Download className="h-4 w-4" />正式导出 Pair-wise</button>
+          <button className={PRIMARY} disabled={disabled || !formalExportReady} onClick={() => void onExport(false)}><Download className="h-4 w-4" />正式导出 Pair-wise</button>
         </div>
         {exportResult && <div className="mt-4 border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-200">
           <p className="font-semibold">已导出 {exportResult.rows} 行</p>

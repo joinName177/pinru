@@ -13,8 +13,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	domain "github.com/blueship581/pinru/internal/annotation"
+	"github.com/blueship581/pinru/internal/gitops"
 )
 
 const containerTraceRoot = "/home/node/.claude/projects"
@@ -25,6 +27,14 @@ type Container struct {
 	State         string `json:"state"`
 	Image         string `json:"image"`
 	WorkspacePath string `json:"workspacePath"`
+}
+
+type PairwiseBindRequest struct {
+	TaskID           string              `json:"taskId"`
+	Side             domain.PairwiseSide `json:"side"`
+	ContainerID      string              `json:"containerId"`
+	RepoRelativePath string              `json:"repoRelativePath"`
+	CopyRepository   bool                `json:"copyRepository"`
 }
 type TraceCandidate struct {
 	Path      string `json:"path"`
@@ -83,6 +93,78 @@ func (s *AnnotationService) ListContainers() ([]Container, error) {
 // BindContainer associates an existing container; it never starts or stops it.
 func (s *AnnotationService) BindContainer(req BindRequest) (*domain.Case, error) {
 	return s.bindContainer(context.Background(), req)
+}
+
+func (s *AnnotationService) bindPairwiseContainer(ctx context.Context, req PairwiseBindRequest) (*domain.Case, error) {
+	unlock, err := s.lockTask(req.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	c, err := s.loadCase(req.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	if err := requirePairwiseCase(c); err != nil {
+		return nil, err
+	}
+	run, err := pairwiseRun(c.Pairwise, req.Side)
+	if err != nil {
+		return nil, err
+	}
+	if run.SessionID != "" || run.CaptureID != "" {
+		return nil, errors.New("该侧已有采集证据，不能更换容器")
+	}
+	d, err := s.inspectContainer(ctx, req.ContainerID)
+	if err != nil {
+		return nil, err
+	}
+	if d.WorkspacePath == "" {
+		return nil, errors.New("容器没有映射到本机的 /workspace")
+	}
+	other, _ := pairwiseRun(c.Pairwise, oppositePairwiseSide(req.Side))
+	if other.ContainerID != "" && other.ContainerID == d.ID {
+		return nil, errors.New("A/B 必须绑定不同容器")
+	}
+	all, err := s.store.ListAnnotationCases("")
+	if err != nil {
+		return nil, err
+	}
+	for _, candidate := range all {
+		if candidate.TaskID == c.TaskID {
+			continue
+		}
+		used := candidate.ContainerID == d.ID
+		if candidate.Pairwise != nil {
+			used = used || candidate.Pairwise.RunA.ContainerID == d.ID || candidate.Pairwise.RunB.ContainerID == d.ID
+		}
+		if used {
+			return nil, errors.New("该容器已绑定其他题目")
+		}
+	}
+	target, err := repositoryPath(d.WorkspacePath, req.RepoRelativePath)
+	if err != nil {
+		return nil, err
+	}
+	if req.CopyRepository {
+		if d.State != "running" {
+			return nil, errors.New("请先启动对应容器并停留在 Claude 输入界面")
+		}
+		if err := cloneInitialRepository(ctx, c.SourcePath, target, c.InitialSHA); err != nil {
+			return nil, err
+		}
+	} else if err := verifyInitialAncestry(ctx, target, c.InitialSHA); err != nil {
+		return nil, err
+	}
+	if err := gitops.PreparePairwiseBranch(ctx, target, string(req.Side), c.InitialSHA); err != nil {
+		return nil, err
+	}
+	run.ContainerID = d.ID
+	run.ContainerName = d.Name
+	run.WorkspacePath = d.WorkspacePath
+	run.RepoRelativePath = filepath.Clean(req.RepoRelativePath)
+	run.PreparedAt = time.Now().Unix()
+	return s.store.SaveAnnotationCase(*c, c.Revision)
 }
 func (s *AnnotationService) bindContainer(ctx context.Context, req BindRequest) (*domain.Case, error) {
 	unlock, err := s.lockTask(req.TaskID)
@@ -280,6 +362,18 @@ func (s *AnnotationService) verifyBinding(ctx context.Context, c *domain.Case) (
 		return "", err
 	}
 	return repo, nil
+}
+
+func (s *AnnotationService) verifyPairwiseBinding(ctx context.Context, c *domain.Case, run *domain.PairwiseRun) (string, error) {
+	if run.ContainerID == "" {
+		return c.SourcePath, nil
+	}
+	binding := *c
+	binding.ContainerID = run.ContainerID
+	binding.ContainerName = run.ContainerName
+	binding.WorkspacePath = run.WorkspacePath
+	binding.RepoRelativePath = run.RepoRelativePath
+	return s.verifyBinding(ctx, &binding)
 }
 
 func verifyInitialAncestry(ctx context.Context, repo, sha string) error {

@@ -2,6 +2,7 @@ package github
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,66 @@ import (
 
 	"github.com/blueship581/pinru/internal/errs"
 )
+
+type gitRef struct {
+	Object struct {
+		SHA string `json:"sha"`
+	} `json:"object"`
+}
+
+type gitCommit struct {
+	Parents []struct {
+		SHA string `json:"sha"`
+	} `json:"parents"`
+}
+
+func VerifyPairwiseRefs(ctx context.Context, targetRepo, token, initialSHA, aSHA, bSHA string) error {
+	return verifyPairwiseRefsWithBase(ctx, client, apiBase, targetRepo, token, initialSHA, aSHA, bSHA)
+}
+
+func verifyPairwiseRefsWithBase(ctx context.Context, httpClient *http.Client, base, targetRepo, token, initialSHA, aSHA, bSHA string) error {
+	for _, side := range []struct {
+		name string
+		sha  string
+	}{{"A", aSHA}, {"B", bSHA}} {
+		var ref gitRef
+		if err := getJSON(ctx, httpClient, base+"/repos/"+targetRepo+"/git/ref/heads/"+side.name, token, &ref); err != nil {
+			return fmt.Errorf("远端 %s 分支不存在或不可访问：%w", side.name, err)
+		}
+		if !strings.EqualFold(strings.TrimSpace(ref.Object.SHA), strings.TrimSpace(side.sha)) {
+			return fmt.Errorf("远端 %s 分支未指向登记的 %s 产物", side.name, side.name)
+		}
+		var commit gitCommit
+		if err := getJSON(ctx, httpClient, base+"/repos/"+targetRepo+"/commits/"+side.sha, token, &commit); err != nil {
+			return fmt.Errorf("读取远端 %s 产物提交失败：%w", side.name, err)
+		}
+		if len(commit.Parents) != 1 || !strings.EqualFold(strings.TrimSpace(commit.Parents[0].SHA), strings.TrimSpace(initialSHA)) {
+			return fmt.Errorf("远端 %s 产物的直接父提交不是初始快照", side.name)
+		}
+	}
+	return nil
+}
+
+func getJSON(ctx context.Context, httpClient *http.Client, url, token string, target any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "pinru")
+	if strings.TrimSpace(token) != "" {
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(token))
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if err := checkStatus(resp); err != nil {
+		return err
+	}
+	return json.NewDecoder(resp.Body).Decode(target)
+}
 
 const apiBase = "https://api.github.com"
 

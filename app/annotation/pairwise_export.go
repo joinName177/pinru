@@ -27,7 +27,22 @@ func (s *AnnotationService) PreflightPairwise(projectID string) (domain.Report, 
 	if err != nil {
 		return domain.Report{}, err
 	}
-	return preflightPairwiseCases(cases), nil
+	return s.preflightPairwise(context.Background(), cases), nil
+}
+
+func (s *AnnotationService) preflightPairwise(ctx context.Context, cases []domain.Case) domain.Report {
+	report := preflightPairwiseCases(cases)
+	verify := s.pairwiseRemoteVerifier()
+	for _, c := range cases {
+		if c.Mode != domain.CaseModePairwiseGSB || len(domain.ValidatePairwiseCase(c, true)) > 0 {
+			continue
+		}
+		if err := verify(ctx, c); err != nil {
+			report.Ready--
+			report.Issues = append(report.Issues, c.TaskName+"："+err.Error())
+		}
+	}
+	return report
 }
 
 func preflightPairwiseCases(cases []domain.Case) domain.Report {
@@ -97,10 +112,7 @@ func (s *AnnotationService) exportPairwise(ctx context.Context, req PairwiseExpo
 	if len(cases) == 0 {
 		return nil, errors.New("当前范围没有 Pair-wise GSB 题目")
 	}
-	report := preflightPairwiseCases(cases)
-	if strings.TrimSpace(req.Submitter) == "" {
-		report.Issues = append(report.Issues, "提交人未填写")
-	}
+	report := s.preflightPairwise(ctx, cases)
 	if !req.Draft && len(report.Issues) > 0 {
 		return nil, fmt.Errorf("Pair-wise 正式导出仍有 %d 项待处理：%s", len(report.Issues), strings.Join(report.Issues, "；"))
 	}

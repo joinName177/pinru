@@ -40,14 +40,24 @@ func (s *AnnotationService) PreparePairwiseSide(ctx context.Context, req Pairwis
 	if err != nil {
 		return nil, err
 	}
-	if err := gitops.PreparePairwiseBranch(ctx, c.SourcePath, string(req.Side), c.InitialSHA); err != nil {
+	source, err := s.verifyPairwiseBinding(ctx, c, run)
+	if err != nil {
 		return nil, err
 	}
+	if err := gitops.PreparePairwiseBranch(ctx, source, string(req.Side), c.InitialSHA); err != nil {
+		return nil, err
+	}
+	containerID, containerName := run.ContainerID, run.ContainerName
+	workspacePath, repoRelativePath := run.WorkspacePath, run.RepoRelativePath
 	*run = domain.PairwiseRun{
-		Side:        req.Side,
-		Branch:      string(req.Side),
-		VideoStatus: domain.PairwiseVideoMissing,
-		PreparedAt:  time.Now().Unix(),
+		Side:             req.Side,
+		Branch:           string(req.Side),
+		ContainerID:      containerID,
+		ContainerName:    containerName,
+		WorkspacePath:    workspacePath,
+		RepoRelativePath: repoRelativePath,
+		VideoStatus:      domain.PairwiseVideoMissing,
+		PreparedAt:       time.Now().Unix(),
 	}
 	return s.store.SaveAnnotationCase(*c, c.Revision)
 }
@@ -87,7 +97,11 @@ func (s *AnnotationService) CommitPairwiseSide(ctx context.Context, req Pairwise
 	if err != nil || frozenHash != capture.Hash {
 		return nil, errors.New("该侧已采集代码证据发生变化，请重新采集")
 	}
-	currentHash, err := domain.TreeHash(ctx, c.SourcePath)
+	source, err := s.verifyPairwiseBinding(ctx, c, run)
+	if err != nil {
+		return nil, err
+	}
+	currentHash, err := domain.TreeHash(ctx, source)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +112,7 @@ func (s *AnnotationService) CommitPairwiseSide(ctx context.Context, req Pairwise
 	if other.SessionID != "" && other.SessionID == sessionID {
 		return nil, errors.New("A/B SessionID 必须不同")
 	}
-	sha, err := gitops.CommitPairwiseResult(ctx, c.SourcePath, string(req.Side), c.InitialSHA, sessionID)
+	sha, err := gitops.CommitPairwiseResult(ctx, source, string(req.Side), c.InitialSHA, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -106,9 +120,9 @@ func (s *AnnotationService) CommitPairwiseSide(ctx context.Context, req Pairwise
 		return nil, errors.New("请先发布初始快照，再提交 A/B 产物")
 	}
 	if s.pushPairwise != nil {
-		err = s.pushPairwise(ctx, c.SourcePath, c.SnapshotURL, string(req.Side))
+		err = s.pushPairwise(ctx, source, c.SnapshotURL, string(req.Side))
 	} else {
-		err = s.pushPairwiseBranch(ctx, c.SourcePath, c.SnapshotURL, string(req.Side))
+		err = s.pushPairwiseBranch(ctx, source, c.SnapshotURL, string(req.Side))
 	}
 	if err != nil {
 		return nil, err

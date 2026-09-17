@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 )
@@ -35,26 +36,35 @@ const (
 	PairwiseConclusionA    = "A_better"
 	PairwiseConclusionSame = "same"
 	PairwiseConclusionB    = "B_better"
+
+	PairwiseValidityValid              = "有效"
+	PairwiseValidityEngineeringFailure = "作废-工程故障"
+	PairwiseValidityEnvironmentReset   = "作废-环境未重置"
+	PairwiseValidityOther              = "作废-其他"
 )
 
 type PairwiseRun struct {
-	Side           PairwiseSide `json:"side"`
-	Branch         string       `json:"branch"`
-	SessionID      string       `json:"sessionId"`
-	TracePath      string       `json:"tracePath"`
-	TurnCount      int          `json:"turnCount"`
-	CaptureID      string       `json:"captureId"`
-	CaptureHash    string       `json:"captureHash"`
-	TraceHash      string       `json:"traceHash"`
-	DeliverableSHA string       `json:"deliverableSha"`
-	DeliverableURL string       `json:"deliverableUrl"`
-	VideoStatus    string       `json:"videoStatus"`
-	VideoPath      string       `json:"videoPath"`
-	VideoURL       string       `json:"videoUrl"`
-	RecordingError string       `json:"recordingError"`
-	PreparedAt     int64        `json:"preparedAt"`
-	CapturedAt     int64        `json:"capturedAt"`
-	CommittedAt    int64        `json:"committedAt"`
+	Side             PairwiseSide `json:"side"`
+	Branch           string       `json:"branch"`
+	ContainerID      string       `json:"containerId"`
+	ContainerName    string       `json:"containerName"`
+	WorkspacePath    string       `json:"workspacePath"`
+	RepoRelativePath string       `json:"repoRelativePath"`
+	SessionID        string       `json:"sessionId"`
+	TracePath        string       `json:"tracePath"`
+	TurnCount        int          `json:"turnCount"`
+	CaptureID        string       `json:"captureId"`
+	CaptureHash      string       `json:"captureHash"`
+	TraceHash        string       `json:"traceHash"`
+	DeliverableSHA   string       `json:"deliverableSha"`
+	DeliverableURL   string       `json:"deliverableUrl"`
+	VideoStatus      string       `json:"videoStatus"`
+	VideoPath        string       `json:"videoPath"`
+	VideoURL         string       `json:"videoUrl"`
+	RecordingError   string       `json:"recordingError"`
+	PreparedAt       int64        `json:"preparedAt"`
+	CapturedAt       int64        `json:"capturedAt"`
+	CommittedAt      int64        `json:"committedAt"`
 }
 
 type PairwiseReview struct {
@@ -74,6 +84,7 @@ type PairwiseReview struct {
 
 type PairwiseData struct {
 	Prompt            string           `json:"prompt"`
+	Language          string           `json:"language"`
 	Harness           string           `json:"harness"`
 	HarnessVersion    string           `json:"harnessVersion"`
 	OS                string           `json:"os"`
@@ -82,6 +93,7 @@ type PairwiseData struct {
 	RunB              PairwiseRun      `json:"runB"`
 	Reviews           []PairwiseReview `json:"reviews"`
 	Notes             string           `json:"notes"`
+	Validity          string           `json:"validity"`
 	AutoRecordEnabled bool             `json:"autoRecordEnabled"`
 }
 
@@ -176,14 +188,23 @@ func ValidatePairwiseCase(c Case, formal bool) []string {
 		return append(issues, "题目尚未启用 Pair-wise GSB 模式")
 	}
 	p := c.Pairwise
+	repository, initialURLSHA, initialURLOk := pairwiseCommitIdentity(c.SnapshotURL)
 	if strings.TrimSpace(p.Prompt) == "" {
 		issues = append(issues, "User Prompt 未填写")
+	}
+	if strings.TrimSpace(p.Language) == "" {
+		issues = append(issues, "语言/框架未填写")
+	}
+	if c.PromptDifficulty != "困难" && c.PromptDifficulty != "地狱" {
+		issues = append(issues, "任务难度必须是困难或地狱")
 	}
 	if !pairwiseSHA.MatchString(c.InitialSHA) {
 		issues = append(issues, "初始快照必须是完整 40 位 SHA")
 	}
 	if strings.TrimSpace(c.SnapshotURL) == "" {
 		issues = append(issues, "初始快照地址未填写")
+	} else if !initialURLOk || !strings.EqualFold(initialURLSHA, c.InitialSHA) {
+		issues = append(issues, "初始快照必须是与初始 SHA 一致的 GitHub commit permalink")
 	}
 	if strings.TrimSpace(p.Harness) == "" || strings.TrimSpace(p.HarnessVersion) == "" {
 		issues = append(issues, "Harness 和版本必须填写")
@@ -191,12 +212,22 @@ func ValidatePairwiseCase(c Case, formal bool) []string {
 	if strings.TrimSpace(p.OS) == "" {
 		issues = append(issues, "操作系统未填写")
 	}
+	validities := map[string]bool{
+		PairwiseValidityValid: true, PairwiseValidityEngineeringFailure: true,
+		PairwiseValidityEnvironmentReset: true, PairwiseValidityOther: true,
+	}
+	if !validities[p.Validity] {
+		issues = append(issues, "有效性未填写或无效")
+	}
 	validatePairwiseRun := func(label string, expected PairwiseSide, run PairwiseRun) {
 		if run.Side != expected || run.Branch != string(expected) {
 			issues = append(issues, fmt.Sprintf("%s 分支名称必须固定为 %s", label, expected))
 		}
 		if strings.TrimSpace(run.SessionID) == "" {
 			issues = append(issues, label+" SessionID 未填写")
+		}
+		if formal && (run.ContainerID == "" || run.WorkspacePath == "" || run.RepoRelativePath == "") {
+			issues = append(issues, label+" 独立容器尚未绑定")
 		}
 		if run.TurnCount != 1 {
 			issues = append(issues, label+" 必须且只能包含一轮有效交互")
@@ -206,6 +237,8 @@ func ValidatePairwiseCase(c Case, formal bool) []string {
 		}
 		if !pairwiseSHA.MatchString(run.DeliverableSHA) || strings.TrimSpace(run.DeliverableURL) == "" {
 			issues = append(issues, label+" 产物快照不完整")
+		} else if runRepository, runSHA, ok := pairwiseCommitIdentity(run.DeliverableURL); !ok || runRepository != repository || !strings.EqualFold(runSHA, run.DeliverableSHA) {
+			issues = append(issues, label+" 产物快照必须与初始快照属于同一 GitHub 仓库且 SHA 一致")
 		}
 		if formal && (run.VideoStatus != PairwiseVideoReady || (strings.TrimSpace(run.VideoURL) == "" && strings.TrimSpace(run.VideoPath) == "")) {
 			issues = append(issues, label+" 运行视频尚未就绪")
@@ -216,8 +249,23 @@ func ValidatePairwiseCase(c Case, formal bool) []string {
 	if p.RunA.SessionID != "" && p.RunA.SessionID == p.RunB.SessionID {
 		issues = append(issues, "A/B SessionID 必须不同")
 	}
+	if p.RunA.ContainerID != "" && p.RunA.ContainerID == p.RunB.ContainerID {
+		issues = append(issues, "A/B 必须绑定不同容器")
+	}
 	if formal && CurrentPairwiseReview(c) == nil {
 		issues = append(issues, "缺少与当前 A/B 证据一致的 GSB 评价")
 	}
 	return issues
+}
+
+func pairwiseCommitIdentity(value string) (string, string, bool) {
+	u, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || u.Scheme != "https" || u.Host != "github.com" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", "", false
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 4 || parts[0] == "" || parts[1] == "" || parts[2] != "commit" || !pairwiseSHA.MatchString(parts[3]) {
+		return "", "", false
+	}
+	return strings.ToLower(parts[0] + "/" + parts[1]), strings.ToLower(parts[3]), true
 }

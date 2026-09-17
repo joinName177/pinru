@@ -8,7 +8,9 @@ const api = vi.hoisted(() => ({
   getAnnotationContainerApiKey: vi.fn(),
   getProjects: vi.fn(),
   bindContainer: vi.fn(),
+  bindPairwiseContainer: vi.fn(),
   batchCaptureAndPrepareTable: vi.fn(),
+  batchReviewPairwise: vi.fn(),
   cancelAnnotationJob: vi.fn(),
   captureAndPrepareTable: vi.fn(),
   exportCases: vi.fn(),
@@ -17,8 +19,11 @@ const api = vi.hoisted(() => ({
   listContainers: vi.fn(),
   listTraces: vi.fn(),
   preflight: vi.fn(),
+  preflightPairwise: vi.fn(),
   prepareCase: vi.fn(),
   reviewRound: vi.fn(),
+  reviewPairwise: vi.fn(),
+  exportPairwise: vi.fn(),
   saveCaseSettings: vi.fn(),
 }));
 
@@ -302,6 +307,63 @@ describe('AnnotationWorkspace', () => {
     fireEvent.click(screen.getByRole('button', { name: '开始批量审核（2）' }));
     await waitFor(() => expect(api.batchCaptureAndPrepareTable).toHaveBeenCalledWith(['task-1', 'task-2']));
     expect(await screen.findByText(/批量制表完成：新准备 2 题，跳过 1 题，失败 0 题/)).toBeInTheDocument();
+  });
+
+  it('offers project batch GSB review while preserving independent review', async () => {
+    const pairwise = makeCase({
+      initialSha: 'a'.repeat(40), snapshotUrl: `https://github.com/u/r/commit/${'a'.repeat(40)}`, mode: 'pairwise_gsb',
+      pairwise: {
+        prompt: '实现加法', language: 'Go', harness: 'Codex CLI', harnessVersion: '1', os: 'MacOS/Linux', environment: '', validity: '有效', notes: '', autoRecordEnabled: false, reviews: [],
+        runA: { side: 'A', branch: 'A', containerId: 'ca', containerName: 'ca', workspacePath: '/a', repoRelativePath: 'repo', sessionId: 'sa', tracePath: '/a.jsonl', turnCount: 1, captureId: 'a', captureHash: 'ha', traceHash: 'ta', deliverableSha: 'b'.repeat(40), deliverableUrl: `https://github.com/u/r/commit/${'b'.repeat(40)}`, videoStatus: 'missing', videoPath: '', videoUrl: '', recordingError: '', preparedAt: 1, capturedAt: 1, committedAt: 1 },
+        runB: { side: 'B', branch: 'B', containerId: 'cb', containerName: 'cb', workspacePath: '/b', repoRelativePath: 'repo', sessionId: 'sb', tracePath: '/b.jsonl', turnCount: 1, captureId: 'b', captureHash: 'hb', traceHash: 'tb', deliverableSha: 'c'.repeat(40), deliverableUrl: `https://github.com/u/r/commit/${'c'.repeat(40)}`, videoStatus: 'missing', videoPath: '', videoUrl: '', recordingError: '', preparedAt: 1, capturedAt: 1, committedAt: 1 },
+      },
+    });
+    api.listCases.mockResolvedValue([pairwise]);
+    api.batchReviewPairwise.mockResolvedValue({ id: 'pairwise-batch', status: 'pending' });
+    api.getAnnotationJob.mockResolvedValue({ id: 'pairwise-batch', status: 'done', outputPayload: JSON.stringify({ total: 1, reviewed: 1, reused: 0, skipped: 0, failed: 0, items: [] }) });
+    const { rerender } = render(<AnnotationWorkspace projectId="project-1" />);
+    expect(await screen.findByText(/Pair-wise GSB 批量审核与导出/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '批量采集并准备制表数据' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '一键导出已制表' })).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: '批量生成 GSB' }));
+    await waitFor(() => expect(api.batchReviewPairwise).toHaveBeenCalledWith({ projectId: 'project-1', force: false }));
+    expect(await screen.findByText(/批量 GSB 完成：新审核 1 题/)).toBeInTheDocument();
+
+    rerender(<AnnotationWorkspace projectId="project-1" taskId="task-1" />);
+    expect(await screen.findByRole('button', { name: '生成 GSB' })).toBeInTheDocument();
+  });
+
+  it('refreshes an A container, binds the exact match, and copies the prompt', async () => {
+    const unbound = makeCase({
+      taskId: 'p1__feat__label-123-11', taskName: 'xh-05', sourcePath: '/tasks/xh-05-feature-11',
+      repoRelativePath: 'xh-05-feature-11',
+      initialSha: 'a'.repeat(40), snapshotUrl: `https://github.com/u/r/commit/${'a'.repeat(40)}`, mode: 'pairwise_gsb',
+      pairwise: {
+        prompt: '实现加法', language: 'TypeScript, React', harness: 'Claude Code', harnessVersion: '2.1.197', os: 'MacOS/Linux', environment: '', validity: '有效', notes: '', autoRecordEnabled: false, reviews: [],
+        runA: { side: 'A', branch: 'A', containerId: '', containerName: '', workspacePath: '', repoRelativePath: 'xh-05-feature-11', sessionId: '', tracePath: '', turnCount: 0, captureId: '', captureHash: '', traceHash: '', deliverableSha: '', deliverableUrl: '', videoStatus: 'missing', videoPath: '', videoUrl: '', recordingError: '', preparedAt: 0, capturedAt: 0, committedAt: 0 },
+        runB: { side: 'B', branch: 'B', containerId: '', containerName: '', workspacePath: '', repoRelativePath: 'xh-05-feature-11', sessionId: '', tracePath: '', turnCount: 0, captureId: '', captureHash: '', traceHash: '', deliverableSha: '', deliverableUrl: '', videoStatus: 'missing', videoPath: '', videoUrl: '', recordingError: '', preparedAt: 0, capturedAt: 0, committedAt: 0 },
+      },
+    });
+    const bound = { ...unbound, revision: 2, pairwise: { ...unbound.pairwise!, runA: { ...unbound.pairwise!.runA, containerId: 'container-a', containerName: 'xh05-claude-11-a', workspacePath: '/workspace-a' } } };
+    api.listCases.mockResolvedValue([unbound]);
+    api.listContainers.mockResolvedValueOnce([]).mockResolvedValue([
+      { id: 'container-a', name: 'xh05-claude-11-a', state: 'running', image: 'claude', workspacePath: '/workspace-a' },
+      { id: 'wrong', name: 'xh05-claude-1-a', state: 'running', image: 'claude', workspacePath: '/workspace-wrong' },
+    ]);
+    api.bindPairwiseContainer.mockResolvedValue({ id: 'bind-a', status: 'pending' });
+    api.getAnnotationJob.mockResolvedValue({ id: 'bind-a', status: 'done', outputPayload: JSON.stringify(bound) });
+    render(<AnnotationWorkspace projectId="project-1" taskId={unbound.taskId} />);
+
+    const sideA = await screen.findByRole('region', { name: '运行 A' });
+    expect(screen.queryByRole('button', { name: '刷新' })).not.toBeInTheDocument();
+    fireEvent.click(within(sideA).getByRole('button', { name: '刷新容器' }));
+
+    await waitFor(() => expect(api.bindPairwiseContainer).toHaveBeenCalledWith({
+      taskId: unbound.taskId, side: 'A', containerId: 'container-a', repoRelativePath: 'xh-05-feature-11', copyRepository: true,
+    }));
+    expect(await within(sideA).findByRole('button', { name: '已绑定 A' })).toBeEnabled();
+    expect(await within(sideA).findByRole('button', { name: '提示词已复制' })).toBeEnabled();
+    expect(wailsClipboard.setText).toHaveBeenCalledWith('实现加法');
   });
 
   it('copies the startup command for the fixed task number in the detail panel', async () => {

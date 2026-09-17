@@ -43,17 +43,37 @@ func TestPreparePairwiseBranchRejectsDirtyWorkspaceAndInvalidSide(t *testing.T) 
 	}
 }
 
-func TestCommitPairwiseResultRejectsWrongBranch(t *testing.T) {
+func TestCommitPairwiseResultSwitchesDetachedInitialToTargetBranch(t *testing.T) {
 	repo, initial := pairwiseTestRepo(t)
-	if err := PreparePairwiseBranch(context.Background(), repo, "A", initial); err != nil {
+	pairwiseGit(t, repo, "checkout", "--detach", initial)
+	if err := os.WriteFile(filepath.Join(repo, "result.txt"), []byte("B result"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CommitPairwiseResult(context.Background(), repo, "B", initial, "session-b"); err == nil || !strings.Contains(err.Error(), "B") {
-		t.Fatalf("wrong branch error = %v", err)
+	got, err := CommitPairwiseResult(context.Background(), repo, "B", initial, "session-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if branch := pairwiseGit(t, repo, "branch", "--show-current"); branch != "B" {
+		t.Fatalf("branch = %q, want B", branch)
+	}
+	if parent := pairwiseGit(t, repo, "rev-parse", got+"^"); parent != initial {
+		t.Fatalf("artifact parent = %s, want %s", parent, initial)
 	}
 }
 
-func TestCommitPairwiseNoChangesUsesInitialSHA(t *testing.T) {
+func TestCommitPairwiseResultRejectsSwitchAfterAnotherCommit(t *testing.T) {
+	repo, initial := pairwiseTestRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "other.txt"), []byte("other work"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pairwiseGit(t, repo, "add", "other.txt")
+	pairwiseGit(t, repo, "commit", "-m", "unrelated commit")
+	if _, err := CommitPairwiseResult(context.Background(), repo, "B", initial, "session-b"); err == nil || !strings.Contains(err.Error(), "初始快照") {
+		t.Fatalf("diverged branch error = %v", err)
+	}
+}
+
+func TestCommitPairwiseNoChangesCreatesArtifactCommitWithInitialParent(t *testing.T) {
 	repo, initial := pairwiseTestRepo(t)
 	if err := PreparePairwiseBranch(context.Background(), repo, "A", initial); err != nil {
 		t.Fatal(err)
@@ -62,8 +82,11 @@ func TestCommitPairwiseNoChangesUsesInitialSHA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != initial {
-		t.Fatalf("no-change sha = %s, want %s", got, initial)
+	if got == initial {
+		t.Fatalf("no-change artifact reused initial sha %s", initial)
+	}
+	if parent := pairwiseGit(t, repo, "rev-parse", got+"^"); parent != initial {
+		t.Fatalf("artifact parent = %s, want %s", parent, initial)
 	}
 }
 

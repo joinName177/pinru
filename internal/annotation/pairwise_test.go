@@ -47,6 +47,17 @@ func TestValidatePairwiseCaseRequiresDistinctSingleTurnSides(t *testing.T) {
 	assertPairwiseIssueContains(t, issues, "一轮")
 }
 
+func TestValidatePairwiseCaseRequiresPortalFields(t *testing.T) {
+	c := completePairwiseCase()
+	c.Pairwise.Language = ""
+	c.Pairwise.Validity = ""
+	c.PromptDifficulty = "中等"
+	issues := ValidatePairwiseCase(c, true)
+	assertPairwiseIssueContains(t, issues, "语言/框架")
+	assertPairwiseIssueContains(t, issues, "有效性")
+	assertPairwiseIssueContains(t, issues, "困难或地狱")
+}
+
 func TestValidatePairwiseFormalRequiresVideosAndCurrentReview(t *testing.T) {
 	c := completePairwiseCase()
 	c.Pairwise.RunA.VideoStatus = PairwiseVideoMissing
@@ -75,24 +86,27 @@ func TestCurrentPairwiseReviewRequiresMatchingSourceHashes(t *testing.T) {
 func completePairwiseCase() Case {
 	sha := strings.Repeat("a", 40)
 	c := Case{
-		TaskID:      "task-pair",
-		TaskName:    "Pair",
-		Mode:        CaseModePairwiseGSB,
-		InitialSHA:  sha,
-		SnapshotURL: "https://github.com/example/repo/commit/" + sha,
+		TaskID:           "task-pair",
+		TaskName:         "Pair",
+		PromptDifficulty: "困难",
+		Mode:             CaseModePairwiseGSB,
+		InitialSHA:       sha,
+		SnapshotURL:      "https://github.com/example/repo/commit/" + sha,
 		Pairwise: &PairwiseData{
 			Prompt:         "实现筛选功能",
-			Harness:        "Codex",
+			Language:       "Go",
+			Harness:        "Codex CLI",
 			HarnessVersion: "1.0.0",
 			OS:             "MacOS/Linux",
+			Validity:       PairwiseValidityValid,
 			RunA: PairwiseRun{
-				Side: PairwiseSideA, Branch: "A", SessionID: "session-a", TurnCount: 1,
+				Side: PairwiseSideA, Branch: "A", ContainerID: "container-a", WorkspacePath: "/workspace-a", RepoRelativePath: "repo", SessionID: "session-a", TurnCount: 1,
 				CaptureID: "capture-a", CaptureHash: "capture-hash-a", TraceHash: "trace-hash-a",
 				DeliverableSHA: strings.Repeat("b", 40), DeliverableURL: "https://github.com/example/repo/commit/" + strings.Repeat("b", 40),
 				VideoStatus: PairwiseVideoReady, VideoURL: "https://example.com/a.mp4",
 			},
 			RunB: PairwiseRun{
-				Side: PairwiseSideB, Branch: "B", SessionID: "session-b", TurnCount: 1,
+				Side: PairwiseSideB, Branch: "B", ContainerID: "container-b", WorkspacePath: "/workspace-b", RepoRelativePath: "repo", SessionID: "session-b", TurnCount: 1,
 				CaptureID: "capture-b", CaptureHash: "capture-hash-b", TraceHash: "trace-hash-b",
 				DeliverableSHA: strings.Repeat("c", 40), DeliverableURL: "https://github.com/example/repo/commit/" + strings.Repeat("c", 40),
 				VideoStatus: PairwiseVideoReady, VideoURL: "https://example.com/b.mp4",

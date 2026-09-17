@@ -12,12 +12,12 @@ import (
 )
 
 const (
-	maxDepth        = 5
-	maxTrackedFiles = 240
-	maxTreeEntries  = 72
-	maxKeyFiles     = 6
-	maxSnippetLines = 60
-	maxSnippetChars = 2200
+	maxDepth         = 5
+	maxTrackedFiles  = 240
+	maxTreeEntries   = 72
+	maxKeyFiles      = 6
+	maxSnippetLines  = 60
+	maxSnippetChars  = 2200
 	maxFileSizeBytes = 48 * 1024
 )
 
@@ -192,10 +192,30 @@ func detectStack(files []fileEntry) []string {
 	if paths["Dockerfile"] {
 		stack = append(stack, "Docker")
 	}
+	if !paths["pyproject.toml"] && !paths["requirements.txt"] && hasFileSuffix(files, ".py") {
+		stack = append(stack, "Python")
+	}
+	if !paths["go.mod"] && hasFileSuffix(files, ".go") {
+		stack = append(stack, "Go")
+	}
+	if !paths["package.json"] && hasFileSuffix(files, ".js", ".jsx") {
+		stack = append(stack, "JavaScript")
+	}
 	if len(stack) == 0 {
 		stack = append(stack, "待识别项目")
 	}
 	return stack
+}
+
+func hasFileSuffix(files []fileEntry, suffixes ...string) bool {
+	for _, file := range files {
+		for _, suffix := range suffixes {
+			if strings.HasSuffix(strings.ToLower(file.relativePath), suffix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func collectKeyFiles(files []fileEntry) []FileSnippet {

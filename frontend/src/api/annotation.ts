@@ -69,6 +69,10 @@ export type PairwiseConclusion = 'A_better' | 'same' | 'B_better';
 export interface PairwiseRun {
   side: PairwiseSide;
   branch: string;
+  containerId: string;
+  containerName: string;
+  workspacePath: string;
+  repoRelativePath: string;
   sessionId: string;
   tracePath: string;
   turnCount: number;
@@ -103,6 +107,7 @@ export interface PairwiseReview {
 
 export interface PairwiseData {
   prompt: string;
+  language: string;
   harness: string;
   harnessVersion: string;
   os: string;
@@ -111,6 +116,7 @@ export interface PairwiseData {
   runB: PairwiseRun;
   reviews: PairwiseReview[];
   notes: string;
+  validity: string;
   autoRecordEnabled: boolean;
 }
 
@@ -212,10 +218,20 @@ export interface ReviewRequest {
 
 export interface EnablePairwiseRequest {
   taskId: string;
-  harness: string;
-  harnessVersion: string;
-  os: string;
+  language?: string;
+  harness?: string;
+  harnessVersion?: string;
+  os?: string;
+  environment?: string;
+  validity?: string;
+}
+
+export interface PairwiseSettingsRequest {
+  taskId: string;
+  language: string;
   environment: string;
+  validity: string;
+  notes: string;
 }
 
 export interface PairwiseSideRequest {
@@ -223,8 +239,21 @@ export interface PairwiseSideRequest {
   side: PairwiseSide;
 }
 
+export interface PairwiseProjectState {
+  side: PairwiseSide;
+  running: boolean;
+  url: string;
+  command: string;
+}
+
+export interface PairwiseBindRequest extends PairwiseSideRequest {
+  containerId: string;
+  repoRelativePath: string;
+  copyRepository: boolean;
+}
+
 export interface PairwiseCaptureRequest extends PairwiseSideRequest {
-  tracePath: string;
+  tracePath?: string;
 }
 
 export interface PairwiseCommitRequest extends PairwiseSideRequest {
@@ -233,12 +262,35 @@ export interface PairwiseCommitRequest extends PairwiseSideRequest {
 
 export interface PairwiseMaterialsRequest extends PairwiseSideRequest {
   videoUrl: string;
+  videoPath?: string;
   recordingError: string;
 }
 
 export interface PairwiseReviewRequest {
   taskId: string;
   force: boolean;
+}
+
+export interface PairwiseBatchReviewRequest {
+  projectId: string;
+  taskIds?: string[];
+  force: boolean;
+}
+
+export interface PairwiseBatchReviewItem {
+  taskId: string;
+  taskName: string;
+  status: 'reviewed' | 'reused' | 'skipped' | 'failed';
+  message: string;
+}
+
+export interface PairwiseBatchReviewResult {
+  total: number;
+  reviewed: number;
+  reused: number;
+  skipped: number;
+  failed: number;
+  items: PairwiseBatchReviewItem[];
 }
 
 export interface SaveCaseSettingsRequest {
@@ -342,6 +394,18 @@ export function preparePairwiseSide(request: PairwiseSideRequest): Promise<Backg
   return submitAnnotationJob('annotation_pairwise_prepare_side', request.taskId, request);
 }
 
+export function bindPairwiseContainer(request: PairwiseBindRequest): Promise<BackgroundJob> {
+  return submitAnnotationJob('annotation_pairwise_bind', request.taskId, request);
+}
+
+export function startPairwiseProject(request: PairwiseSideRequest): Promise<PairwiseProjectState> {
+  return callService('AnnotationService', 'StartPairwiseProject', request);
+}
+
+export function stopPairwiseProject(request: PairwiseSideRequest): Promise<void> {
+  return callService('AnnotationService', 'StopPairwiseProject', request);
+}
+
 export function capturePairwiseSide(request: PairwiseCaptureRequest): Promise<BackgroundJob> {
   return submitAnnotationJob('annotation_pairwise_capture', request.taskId, request);
 }
@@ -354,8 +418,22 @@ export function savePairwiseMaterials(request: PairwiseMaterialsRequest): Promis
   return submitAnnotationJob('annotation_pairwise_materials', request.taskId, request);
 }
 
+export function savePairwiseSettings(request: PairwiseSettingsRequest): Promise<BackgroundJob> {
+  return submitAnnotationJob('annotation_pairwise_settings', request.taskId, request);
+}
+
 export function reviewPairwise(request: PairwiseReviewRequest): Promise<BackgroundJob> {
   return submitAnnotationJob('annotation_pairwise_review', request.taskId, request);
+}
+
+export function batchReviewPairwise(request: PairwiseBatchReviewRequest): Promise<BackgroundJob> {
+  return submitJob({
+    jobType: 'annotation_pairwise_batch_review',
+    taskId: '',
+    inputPayload: JSON.stringify(request),
+    maxRetries: 1,
+    timeoutSeconds: 21600,
+  });
 }
 
 export function exportCases(request: ExportAnnotationRequest): Promise<BackgroundJob> {

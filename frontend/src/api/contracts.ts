@@ -43,6 +43,8 @@ import type {
   BindContainerRequest,
   CaptureRequest,
   ExportAnnotationRequest,
+  PairwiseProjectState,
+  PairwiseSideRequest,
   ReviewRequest,
   SaveCaseSettingsRequest,
   TraceCandidate,
@@ -103,6 +105,8 @@ export type WailsServiceContract = {
     SaveCaseSettings: ServiceMethod<[request: SaveCaseSettingsRequest], AnnotationCase>;
     Preflight: ServiceMethod<[projectId: string], AnnotationPreflightReport>;
     PreflightPairwise: ServiceMethod<[projectId: string], AnnotationPreflightReport>;
+    StartPairwiseProject: ServiceMethod<[request: PairwiseSideRequest], PairwiseProjectState>;
+    StopPairwiseProject: ServiceMethod<[request: PairwiseSideRequest], void>;
     Export: ServiceMethod<[request: ExportAnnotationRequest], AnnotationExportResult>;
   };
   ChatService: {

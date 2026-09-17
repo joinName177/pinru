@@ -74,7 +74,7 @@ func TestPairwiseGitServicePreparesAndCommitsBothSidesFromInitial(t *testing.T) 
 
 func TestPairwiseGitServiceRejectsUncapturedOrChangedResult(t *testing.T) {
 	s, _, source := annotationFixture(t)
-	c, err := s.EnablePairwise(EnablePairwiseRequest{TaskID: "题目-1", Harness: "Codex", HarnessVersion: "1", OS: "MacOS/Linux"})
+	c, err := s.EnablePairwise(EnablePairwiseRequest{TaskID: "题目-1", Language: "Python", Harness: "Codex CLI", HarnessVersion: "1", OS: "MacOS/Linux", Validity: domain.PairwiseValidityValid})
 	if err != nil {
 		t.Fatal(err)
 	}

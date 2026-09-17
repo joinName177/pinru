@@ -28,6 +28,12 @@ func (s *AnnotationService) ReviewPairwise(ctx context.Context, req PairwiseRevi
 	if err != nil {
 		return nil, err
 	}
+	if populatePairwiseMetadata(c) {
+		c, err = s.store.SaveAnnotationCase(*c, c.Revision)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if issues := domain.ValidatePairwiseCase(*c, false); len(issues) > 0 {
 		return nil, errors.New(issues[0])
 	}
@@ -92,7 +98,7 @@ func (s *AnnotationService) ReviewPairwise(ctx context.Context, req PairwiseRevi
 	}
 	review := domain.PairwiseReview{
 		ID: id, Status: result.Status, Conclusion: result.Conclusion, Reason: result.Reason,
-		Model: execution.Label, SkillHash: stableKey("pairwise-gsb-v1"),
+		Model: execution.Label, SkillHash: stableKey("pairwise-gsb-v2-20260917"),
 		SourceHashA: domain.PairwiseRunSourceHash(c.Pairwise.RunA),
 		SourceHashB: domain.PairwiseRunSourceHash(c.Pairwise.RunB),
 		ReviewPath:  work, CreatedAt: time.Now().Unix(),

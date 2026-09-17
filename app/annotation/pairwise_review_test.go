@@ -18,7 +18,7 @@ func TestReviewPairwiseStoresReviewBoundToBothEvidenceSources(t *testing.T) {
 	}
 	cli, _ := fakeReviewCLIWithEvaluation(t, payload, "")
 	s.cli = cli
-	c, err := s.EnablePairwise(EnablePairwiseRequest{TaskID: "题目-1", Harness: "Codex", HarnessVersion: "1", OS: "MacOS/Linux"})
+	c, err := s.EnablePairwise(EnablePairwiseRequest{TaskID: "题目-1", Language: "Python", Harness: "Codex CLI", HarnessVersion: "1", OS: "MacOS/Linux", Validity: domain.PairwiseValidityValid})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,5 +67,75 @@ func TestReviewPairwiseStoresReviewBoundToBothEvidenceSources(t *testing.T) {
 	}
 	if _, err := os.Stat(source); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestBatchReviewPairwiseReviewsThenReusesCurrentResult(t *testing.T) {
+	s, _, _ := annotationFixture(t)
+	payload := map[string]any{
+		"status": "ready", "conclusion": "A_better",
+		"reason": "A 在 code/main.py 中保留 add(a,b) 并完成静态核验；B 修改同一文件时删除返回值，调用方无法获得结果，因此 A 的过程和产物都更完整。",
+	}
+	cli, _ := fakeReviewCLIWithEvaluation(t, payload, "")
+	s.cli = cli
+	c, err := s.EnablePairwise(EnablePairwiseRequest{TaskID: "题目-1", Language: "Python", Harness: "Codex CLI", HarnessVersion: "1", OS: "MacOS/Linux", Validity: domain.PairwiseValidityValid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Pairwise.Language = ""
+	c.Pairwise.Harness = ""
+	c.Pairwise.HarnessVersion = ""
+	c.Pairwise.OS = ""
+	c.Pairwise.Validity = ""
+	c.Pairwise.Prompt = "实现加法功能"
+	c.SnapshotURL = "https://github.com/example/repo/commit/" + c.InitialSHA
+	for _, side := range []domain.PairwiseSide{domain.PairwiseSideA, domain.PairwiseSideB} {
+		captureID := "batch-capture-" + strings.ToLower(string(side))
+		dir := filepath.Join(s.caseDir(c.TaskID), "pairwise-batch-fixture", captureID)
+		code, traces := filepath.Join(dir, "code"), filepath.Join(dir, "traces")
+		if err := os.MkdirAll(code, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(traces, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(code, "main.py"), []byte("def add(a,b): return a+b\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(traces, "session.jsonl"), []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		codeHash, _ := domain.TreeHash(context.Background(), code)
+		traceHash, _ := domain.TreeHash(context.Background(), traces)
+		c.Captures = append(c.Captures, domain.Capture{ID: captureID, Dir: dir, CodePath: code, TracePath: filepath.Join(traces, "session.jsonl"), Hash: codeHash, TraceHash: traceHash})
+		run, _ := pairwiseRun(c.Pairwise, side)
+		run.SessionID, run.TurnCount, run.CaptureID, run.CaptureHash, run.TraceHash = "batch-session-"+strings.ToLower(string(side)), 1, captureID, codeHash, traceHash
+		run.DeliverableSHA = strings.Repeat(map[domain.PairwiseSide]string{domain.PairwiseSideA: "b", domain.PairwiseSideB: "c"}[side], 40)
+		run.DeliverableURL = "https://github.com/example/repo/commit/" + run.DeliverableSHA
+	}
+	if _, err := s.store.SaveAnnotationCase(*c, c.Revision); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := s.BatchReviewPairwise(context.Background(), PairwiseBatchReviewRequest{ProjectID: "batch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Reviewed != 1 || first.Reused != 0 || first.Failed != 0 {
+		t.Fatalf("first = %#v", first)
+	}
+	persisted, err := s.loadCase(c.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Pairwise.Language == "" || persisted.Pairwise.Harness != defaultPairwiseHarness || persisted.Pairwise.HarnessVersion != defaultPairwiseHarnessVersion || persisted.Pairwise.OS != defaultPairwiseOS || persisted.Pairwise.Validity != domain.PairwiseValidityValid {
+		t.Fatalf("backfilled metadata = %#v", persisted.Pairwise)
+	}
+	second, err := s.BatchReviewPairwise(context.Background(), PairwiseBatchReviewRequest{ProjectID: "batch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Reviewed != 0 || second.Reused != 1 || second.Failed != 0 {
+		t.Fatalf("second = %#v", second)
 	}
 }

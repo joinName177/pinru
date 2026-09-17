@@ -51,8 +51,20 @@ func CommitPairwiseResult(ctx context.Context, path, side, initialSHA, message s
 	if err != nil {
 		return "", err
 	}
+	headBefore, err := pairwiseGitOutput(ctx, path, "rev-parse", "HEAD")
+	if err != nil {
+		return "", err
+	}
 	if branch != side {
-		return "", fmt.Errorf("当前分支是 %s，必须先切换到 %s 分支", branch, side)
+		if !strings.EqualFold(headBefore, initialSHA) {
+			return "", fmt.Errorf("当前分支是 %s，且 HEAD 已偏离初始快照，不能自动切换到 %s 分支", branch, side)
+		}
+		if targetHead, targetErr := pairwiseGitOutput(ctx, path, "rev-parse", "--verify", "refs/heads/"+side); targetErr == nil && !strings.EqualFold(targetHead, initialSHA) {
+			return "", fmt.Errorf("%s 分支已偏离初始快照，不能自动重置", side)
+		}
+		if _, err := pairwiseGitOutput(ctx, path, "switch", "-C", side, initialSHA); err != nil {
+			return "", fmt.Errorf("自动切换到 %s 分支失败：%w", side, err)
+		}
 	}
 	if _, err := pairwiseGitOutput(ctx, path, "merge-base", "--is-ancestor", initialSHA, "HEAD"); err != nil {
 		return "", errors.New("当前分支不是从登记的初始快照派生")
@@ -61,17 +73,24 @@ func CommitPairwiseResult(ctx context.Context, path, side, initialSHA, message s
 	if err != nil {
 		return "", err
 	}
+	if !strings.EqualFold(headBefore, initialSHA) {
+		parent, parentErr := pairwiseGitOutput(ctx, path, "rev-parse", headBefore+"^")
+		if parentErr != nil || !strings.EqualFold(parent, initialSHA) || strings.TrimSpace(status) != "" {
+			return "", errors.New("产物提交的直接父提交必须是登记的初始快照")
+		}
+		return strings.ToLower(headBefore), nil
+	}
 	if strings.TrimSpace(status) != "" {
 		if _, err := pairwiseGitOutput(ctx, path, "add", "-A"); err != nil {
 			return "", err
 		}
-		message = strings.TrimSpace(message)
-		if message == "" {
-			message = "Pair-wise result " + side
-		}
-		if _, err := pairwiseGitOutput(ctx, path, "-c", "user.name=PINRU Pairwise", "-c", "user.email=pinru@local", "commit", "-m", message); err != nil {
-			return "", fmt.Errorf("提交 %s 产物失败：%w", side, err)
-		}
+	}
+	message = strings.TrimSpace(message)
+	if message == "" {
+		message = "Pair-wise result " + side
+	}
+	if _, err := pairwiseGitOutput(ctx, path, "-c", "user.name=PINRU Pairwise", "-c", "user.email=pinru@local", "commit", "--allow-empty", "-m", message); err != nil {
+		return "", fmt.Errorf("提交 %s 产物失败：%w", side, err)
 	}
 	head, err := pairwiseGitOutput(ctx, path, "rev-parse", "HEAD")
 	if err != nil {
@@ -79,6 +98,10 @@ func CommitPairwiseResult(ctx context.Context, path, side, initialSHA, message s
 	}
 	if _, err := pairwiseGitOutput(ctx, path, "merge-base", "--is-ancestor", initialSHA, head); err != nil {
 		return "", errors.New("产物提交没有继承登记的初始快照")
+	}
+	parent, err := pairwiseGitOutput(ctx, path, "rev-parse", head+"^")
+	if err != nil || !strings.EqualFold(parent, initialSHA) {
+		return "", errors.New("产物提交的直接父提交不是登记的初始快照")
 	}
 	return strings.ToLower(head), nil
 }

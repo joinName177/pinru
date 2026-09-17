@@ -10,16 +10,33 @@ import (
 	"strings"
 	"time"
 
+	analysis "github.com/blueship581/pinru/internal/analysis"
 	domain "github.com/blueship581/pinru/internal/annotation"
 	"github.com/google/uuid"
 )
 
+const (
+	defaultPairwiseHarness        = "Claude Code"
+	defaultPairwiseHarnessVersion = "2.1.197"
+	defaultPairwiseOS             = "MacOS/Linux"
+)
+
 type EnablePairwiseRequest struct {
 	TaskID         string `json:"taskId"`
+	Language       string `json:"language"`
 	Harness        string `json:"harness"`
 	HarnessVersion string `json:"harnessVersion"`
 	OS             string `json:"os"`
 	Environment    string `json:"environment"`
+	Validity       string `json:"validity"`
+}
+
+type PairwiseSettingsRequest struct {
+	TaskID      string `json:"taskId"`
+	Language    string `json:"language"`
+	Environment string `json:"environment"`
+	Validity    string `json:"validity"`
+	Notes       string `json:"notes"`
 }
 
 type PairwiseCaptureRequest struct {
@@ -32,7 +49,51 @@ type PairwiseMaterialsRequest struct {
 	TaskID         string              `json:"taskId"`
 	Side           domain.PairwiseSide `json:"side"`
 	VideoURL       string              `json:"videoUrl"`
+	VideoPath      string              `json:"videoPath"`
 	RecordingError string              `json:"recordingError"`
+}
+
+type pairwiseTraceSelection struct {
+	files     map[string][]byte
+	main      string
+	tracePath string
+	rounds    []domain.Round
+}
+
+func selectPairwiseTrace(all map[string][]byte, binding *domain.Case, source, prompt string) (*pairwiseTraceSelection, error) {
+	if strings.TrimSpace(prompt) == "" {
+		return nil, errors.New("题目提示词为空，无法自动匹配轨迹")
+	}
+	matches := make([]*pairwiseTraceSelection, 0, 1)
+	for name, raw := range all {
+		if !strings.HasSuffix(name, ".jsonl") || strings.Contains(name, "/subagents/") || len(raw) > 27*1024*1024 {
+			continue
+		}
+		rounds, err := domain.ParseTrace(raw)
+		if err != nil || len(rounds) != 1 || rounds[0].Status != "complete" || strings.TrimSpace(rounds[0].SessionID) == "" {
+			continue
+		}
+		if err := validateTraceSource(binding, source, rounds, prompt); err != nil {
+			continue
+		}
+		selectedFiles := map[string][]byte{name: raw}
+		prefix := strings.TrimSuffix(name, ".jsonl") + "/"
+		for attachmentName, data := range all {
+			if strings.HasPrefix(attachmentName, prefix) {
+				selectedFiles[attachmentName] = data
+			}
+		}
+		matches = append(matches, &pairwiseTraceSelection{
+			files: selectedFiles, main: name, tracePath: containerPathForArchive(name), rounds: rounds,
+		})
+	}
+	if len(matches) == 0 {
+		return nil, errors.New("未找到与本题提示词、仓库匹配且已完成的单轮轨迹")
+	}
+	if len(matches) > 1 {
+		return nil, errors.New("找到多条与本题匹配的完整轨迹，无法自动确认 Session；请清理重复会话后重试")
+	}
+	return matches[0], nil
 }
 
 func (s *AnnotationService) EnablePairwise(req EnablePairwiseRequest) (*domain.Case, error) {
@@ -64,10 +125,101 @@ func (s *AnnotationService) EnablePairwise(req EnablePairwiseRequest) (*domain.C
 	}
 	c.Mode = domain.CaseModePairwiseGSB
 	c.Pairwise.Prompt = prompt
+	c.Pairwise.Language = strings.TrimSpace(req.Language)
 	c.Pairwise.Harness = strings.TrimSpace(req.Harness)
 	c.Pairwise.HarnessVersion = strings.TrimSpace(req.HarnessVersion)
 	c.Pairwise.OS = strings.TrimSpace(req.OS)
 	c.Pairwise.Environment = strings.TrimSpace(req.Environment)
+	c.Pairwise.Validity = strings.TrimSpace(req.Validity)
+	populatePairwiseMetadata(c)
+	return s.store.SaveAnnotationCase(*c, c.Revision)
+}
+
+func populatePairwiseMetadata(c *domain.Case) bool {
+	if c == nil || c.Pairwise == nil {
+		return false
+	}
+	changed := false
+	if strings.TrimSpace(c.Pairwise.Language) == "" {
+		c.Pairwise.Language = detectPairwiseLanguage(c.SourcePath)
+		changed = true
+	}
+	if strings.TrimSpace(c.Pairwise.Harness) == "" {
+		c.Pairwise.Harness = defaultPairwiseHarness
+		changed = true
+	}
+	if strings.TrimSpace(c.Pairwise.HarnessVersion) == "" {
+		c.Pairwise.HarnessVersion = defaultPairwiseHarnessVersion
+		changed = true
+	}
+	if strings.TrimSpace(c.Pairwise.OS) == "" {
+		c.Pairwise.OS = defaultPairwiseOS
+		changed = true
+	}
+	if strings.TrimSpace(c.Pairwise.Validity) == "" {
+		c.Pairwise.Validity = domain.PairwiseValidityValid
+		changed = true
+	}
+	return changed
+}
+
+func detectPairwiseLanguage(sourcePath string) string {
+	summary, err := analysis.AnalyzeRepository(sourcePath)
+	if err != nil {
+		return "其他（自动识别失败）"
+	}
+	stack := make([]string, 0, len(summary.DetectedStack)+2)
+	seen := map[string]bool{}
+	add := func(value string) {
+		if value != "" && value != "JavaScript 包管理" && value != "Docker" && value != "待识别项目" && !seen[value] {
+			seen[value] = true
+			stack = append(stack, value)
+		}
+	}
+	for _, value := range summary.DetectedStack {
+		add(value)
+	}
+	var manifest struct {
+		Dependencies    map[string]json.RawMessage `json:"dependencies"`
+		DevDependencies map[string]json.RawMessage `json:"devDependencies"`
+	}
+	if raw, readErr := os.ReadFile(filepath.Join(summary.RepoPath, "package.json")); readErr == nil && json.Unmarshal(raw, &manifest) == nil {
+		dependencies := make(map[string]json.RawMessage, len(manifest.Dependencies)+len(manifest.DevDependencies))
+		for name, version := range manifest.Dependencies {
+			dependencies[strings.ToLower(name)] = version
+		}
+		for name, version := range manifest.DevDependencies {
+			dependencies[strings.ToLower(name)] = version
+		}
+		for name, label := range map[string]string{"react": "React", "vue": "Vue", "next": "Next.js", "svelte": "Svelte"} {
+			if _, ok := dependencies[name]; ok {
+				add(label)
+			}
+		}
+	}
+	if len(stack) == 0 {
+		return "其他（自动识别）"
+	}
+	return strings.Join(stack, ", ")
+}
+
+func (s *AnnotationService) SavePairwiseSettings(req PairwiseSettingsRequest) (*domain.Case, error) {
+	unlock, err := s.lockTask(req.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	c, err := s.loadCase(req.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	if err := requirePairwiseCase(c); err != nil {
+		return nil, err
+	}
+	c.Pairwise.Language = strings.TrimSpace(req.Language)
+	c.Pairwise.Environment = strings.TrimSpace(req.Environment)
+	c.Pairwise.Validity = strings.TrimSpace(req.Validity)
+	c.Pairwise.Notes = strings.TrimSpace(req.Notes)
 	return s.store.SaveAnnotationCase(*c, c.Revision)
 }
 
@@ -88,7 +240,7 @@ func (s *AnnotationService) CapturePairwiseSide(ctx context.Context, req Pairwis
 	if err != nil {
 		return nil, err
 	}
-	source, err := s.verifyBinding(ctx, c)
+	source, err := s.verifyPairwiseBinding(ctx, c, run)
 	if err != nil {
 		return nil, err
 	}
@@ -96,13 +248,44 @@ func (s *AnnotationService) CapturePairwiseSide(ctx context.Context, req Pairwis
 	if err != nil {
 		return nil, err
 	}
-	files, main, err := s.traceFiles(ctx, c, strings.TrimSpace(req.TracePath))
-	if err != nil {
-		return nil, err
-	}
-	rounds, err := domain.ParseTrace(files[main])
-	if err != nil {
-		return nil, err
+	binding := *c
+	binding.ContainerID = run.ContainerID
+	binding.ContainerName = run.ContainerName
+	binding.WorkspacePath = run.WorkspacePath
+	binding.RepoRelativePath = run.RepoRelativePath
+	tracePath := strings.TrimSpace(req.TracePath)
+	var files map[string][]byte
+	var main string
+	var rounds []domain.Round
+	if tracePath == "" {
+		if binding.ContainerID == "" {
+			return nil, errors.New("请先绑定该侧容器，再自动采集轨迹")
+		}
+		archive, err := s.command(ctx, "", "docker", "cp", binding.ContainerID+":"+containerTraceRoot, "-")
+		if err != nil {
+			return nil, err
+		}
+		all, err := archiveFiles(archive)
+		if err != nil {
+			return nil, err
+		}
+		selected, err := selectPairwiseTrace(all, &binding, source, c.Pairwise.Prompt)
+		if err != nil {
+			return nil, err
+		}
+		files, main, rounds, tracePath = selected.files, selected.main, selected.rounds, selected.tracePath
+	} else {
+		files, main, err = s.traceFiles(ctx, &binding, tracePath)
+		if err != nil {
+			return nil, err
+		}
+		if len(files[main]) > 27*1024*1024 {
+			return nil, errors.New("Pair-wise 轨迹文件不能超过 27 MB")
+		}
+		rounds, err = domain.ParseTrace(files[main])
+		if err != nil {
+			return nil, err
+		}
 	}
 	if len(rounds) != 1 || rounds[0].Status == "excluded" {
 		return nil, errors.New("Pair-wise 每个 Session 必须且只能包含一轮有效交互")
@@ -110,7 +293,7 @@ func (s *AnnotationService) CapturePairwiseSide(ctx context.Context, req Pairwis
 	if rounds[0].Status != "complete" {
 		return nil, errors.New("该 Session 首轮尚未完整结束")
 	}
-	if err := validateTraceSource(c, source, rounds, c.Pairwise.Prompt); err != nil {
+	if err := validateTraceSource(&binding, source, rounds, c.Pairwise.Prompt); err != nil {
 		return nil, err
 	}
 	sessionID := strings.TrimSpace(rounds[0].SessionID)
@@ -150,7 +333,7 @@ func (s *AnnotationService) CapturePairwiseSide(ctx context.Context, req Pairwis
 	if err != nil {
 		return nil, err
 	}
-	filesAfter, _, err := s.traceFiles(ctx, c, strings.TrimSpace(req.TracePath))
+	filesAfter, _, err := s.traceFiles(ctx, &binding, tracePath)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +354,7 @@ func (s *AnnotationService) CapturePairwiseSide(ctx context.Context, req Pairwis
 	}
 	now := time.Now().Unix()
 	run.SessionID = sessionID
-	run.TracePath = strings.TrimSpace(req.TracePath)
+	run.TracePath = tracePath
 	run.TurnCount = 1
 	run.CaptureID = id
 	run.CaptureHash = captureHash
@@ -187,6 +370,20 @@ func (s *AnnotationService) CapturePairwiseSide(ctx context.Context, req Pairwis
 	}
 	accepted = true
 	return saved, nil
+}
+
+func (s *AnnotationService) CaptureAndCommitPairwiseSide(ctx context.Context, req PairwiseCaptureRequest) (*domain.Case, error) {
+	captured, err := s.CapturePairwiseSide(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	run, err := pairwiseRun(captured.Pairwise, req.Side)
+	if err != nil {
+		return nil, err
+	}
+	return s.CommitPairwiseSide(ctx, PairwiseCommitRequest{
+		TaskID: req.TaskID, Side: req.Side, SessionID: run.SessionID,
+	})
 }
 
 func (s *AnnotationService) SavePairwiseMaterials(req PairwiseMaterialsRequest) (*domain.Case, error) {
@@ -207,10 +404,18 @@ func (s *AnnotationService) SavePairwiseMaterials(req PairwiseMaterialsRequest) 
 		return nil, err
 	}
 	videoURL := strings.TrimSpace(req.VideoURL)
+	videoPath := strings.TrimSpace(req.VideoPath)
 	if videoURL != "" {
 		u, err := url.Parse(videoURL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
 			return nil, errors.New("运行视频必须填写可访问的 HTTP(S) 链接")
+		}
+		run.VideoStatus = domain.PairwiseVideoReady
+	} else if videoPath != "" {
+		info, err := os.Stat(videoPath)
+		ext := strings.ToLower(filepath.Ext(videoPath))
+		if err != nil || !info.Mode().IsRegular() || info.Size() > 500*1024*1024 || (ext != ".mp4" && ext != ".mov" && ext != ".webm" && ext != ".m4v") {
+			return nil, errors.New("运行录屏必须是本机可访问的 mp4、mov、webm 或 m4v 文件，且不超过 500 MB")
 		}
 		run.VideoStatus = domain.PairwiseVideoReady
 	} else if strings.TrimSpace(req.RecordingError) != "" {
@@ -219,6 +424,7 @@ func (s *AnnotationService) SavePairwiseMaterials(req PairwiseMaterialsRequest) 
 		run.VideoStatus = domain.PairwiseVideoMissing
 	}
 	run.VideoURL = videoURL
+	run.VideoPath = videoPath
 	run.RecordingError = strings.TrimSpace(req.RecordingError)
 	return s.store.SaveAnnotationCase(*c, c.Revision)
 }

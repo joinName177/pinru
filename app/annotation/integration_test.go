@@ -41,7 +41,7 @@ func annotationFixture(t *testing.T) (*AnnotationService, string, string) {
 		t.Fatal(err)
 	}
 	prompt := "实现加法功能"
-	if err := st.CreateTask(store.Task{ID: "题目-1", ProjectName: "示例题", ProjectConfigID: &project, LocalPath: &source, PromptText: &prompt, TaskType: "0-1代码生成", Status: "Claimed"}); err != nil {
+	if err := st.CreateTask(store.Task{ID: "题目-1", ProjectName: "示例题", ProjectConfigID: &project, LocalPath: &source, PromptText: &prompt, TaskType: "0-1代码生成", PromptDifficulty: "困难", Status: "Claimed"}); err != nil {
 		t.Fatal(err)
 	}
 	s := New(st, nil)
@@ -384,4 +384,67 @@ func TestBindFreshContainerWithoutProjectsDirectory(t *testing.T) {
 	if err := verifyInitialAncestry(context.Background(), filepath.Join(workspace, "task-repo"), c.InitialSHA); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestBindPairwiseRequiresTwoDifferentContainers(t *testing.T) {
+	s, _, _ := annotationFixture(t)
+	if _, err := s.EnablePairwise(EnablePairwiseRequest{
+		TaskID: "题目-1", Language: "Python", Harness: "Claude Code", HarnessVersion: "1",
+		OS: "MacOS/Linux", Validity: domain.PairwiseValidityValid,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	workspaces := map[string]string{"container-a": t.TempDir(), "container-b": t.TempDir()}
+	s.command = func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+		if name != "docker" || len(args) < 4 || args[0] != "inspect" {
+			t.Fatalf("unexpected command %s %v", name, args)
+		}
+		id := args[len(args)-1]
+		workspace, ok := workspaces[id]
+		if !ok {
+			return nil, errors.New("unknown container")
+		}
+		return json.Marshal(map[string]any{
+			"ID": id, "Name": "/" + id, "State": "running", "Image": "fixture",
+			"Mounts": []map[string]string{{"Type": "bind", "Source": workspace, "Destination": "/workspace"}},
+		})
+	}
+	bound, err := s.bindPairwiseContainer(context.Background(), PairwiseBindRequest{
+		TaskID: "题目-1", Side: domain.PairwiseSideA, ContainerID: "container-a", RepoRelativePath: "task", CopyRepository: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.Pairwise.RunA.ContainerID != "container-a" || bound.Pairwise.RunA.PreparedAt == 0 {
+		t.Fatalf("A binding = %+v", bound.Pairwise.RunA)
+	}
+	if branch := pairwiseGitBranch(t, filepath.Join(workspaces["container-a"], "task")); branch != "A" {
+		t.Fatalf("A branch after binding = %q", branch)
+	}
+	if _, err := s.bindPairwiseContainer(context.Background(), PairwiseBindRequest{
+		TaskID: "题目-1", Side: domain.PairwiseSideB, ContainerID: "container-a", RepoRelativePath: "task", CopyRepository: true,
+	}); err == nil || !strings.Contains(err.Error(), "不同容器") {
+		t.Fatalf("same container error = %v", err)
+	}
+	bound, err = s.bindPairwiseContainer(context.Background(), PairwiseBindRequest{
+		TaskID: "题目-1", Side: domain.PairwiseSideB, ContainerID: "container-b", RepoRelativePath: "task", CopyRepository: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.Pairwise.RunB.ContainerID != "container-b" || bound.Pairwise.RunB.PreparedAt == 0 || bound.Pairwise.RunA.WorkspacePath == bound.Pairwise.RunB.WorkspacePath {
+		t.Fatalf("pairwise bindings = A:%+v B:%+v", bound.Pairwise.RunA, bound.Pairwise.RunB)
+	}
+	if branch := pairwiseGitBranch(t, filepath.Join(workspaces["container-b"], "task")); branch != "B" {
+		t.Fatalf("B branch after binding = %q", branch)
+	}
+}
+
+func pairwiseGitBranch(t *testing.T, repo string) string {
+	t.Helper()
+	out, err := runCommand(context.Background(), repo, "git", "branch", "--show-current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(out))
 }

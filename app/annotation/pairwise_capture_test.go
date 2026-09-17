@@ -2,6 +2,7 @@ package annotation
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +13,7 @@ import (
 
 func TestCapturePairwiseSideStoresOneTurnWithoutReplacingOtherSide(t *testing.T) {
 	s, trace, source := annotationFixture(t)
-	c, err := s.EnablePairwise(EnablePairwiseRequest{TaskID: "题目-1", Harness: "Codex", HarnessVersion: "1.0.0", OS: "MacOS/Linux"})
+	c, err := s.EnablePairwise(EnablePairwiseRequest{TaskID: "题目-1", Language: "Python", Harness: "Codex CLI", HarnessVersion: "1.0.0", OS: "MacOS/Linux", Validity: domain.PairwiseValidityValid})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,7 @@ func TestCapturePairwiseSideStoresOneTurnWithoutReplacingOtherSide(t *testing.T)
 
 func TestCapturePairwiseSideRejectsDuplicateSessionAndMultipleTurns(t *testing.T) {
 	s, trace, source := annotationFixture(t)
-	c, err := s.EnablePairwise(EnablePairwiseRequest{TaskID: "题目-1", Harness: "Codex", HarnessVersion: "1", OS: "MacOS/Linux"})
+	c, err := s.EnablePairwise(EnablePairwiseRequest{TaskID: "题目-1", Language: "Python", Harness: "Codex CLI", HarnessVersion: "1", OS: "MacOS/Linux", Validity: domain.PairwiseValidityValid})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,9 +90,129 @@ func TestCapturePairwiseSideRejectsDuplicateSessionAndMultipleTurns(t *testing.T
 	}
 }
 
+func TestCaptureAndCommitPairwiseSidePublishesCapturedResult(t *testing.T) {
+	s, trace, source := annotationFixture(t)
+	c, err := s.EnablePairwise(EnablePairwiseRequest{TaskID: "题目-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SnapshotURL = "https://github.com/example/repo/commit/" + c.InitialSHA
+	if _, err := s.store.SaveAnnotationCase(*c, c.Revision); err != nil {
+		t.Fatal(err)
+	}
+	s.pushPairwise = func(context.Context, string, string, string) error { return nil }
+	if _, err := s.PreparePairwiseSide(context.Background(), PairwiseSideRequest{TaskID: c.TaskID, Side: domain.PairwiseSideA}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "result.txt"), []byte("captured result"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := s.CaptureAndCommitPairwiseSide(context.Background(), PairwiseCaptureRequest{
+		TaskID: c.TaskID, Side: domain.PairwiseSideA, TracePath: trace,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Pairwise.RunA.SessionID != "session" || len(updated.Pairwise.RunA.DeliverableSHA) != 40 || updated.Pairwise.RunA.CommittedAt == 0 {
+		t.Fatalf("captured and committed A = %#v", updated.Pairwise.RunA)
+	}
+}
+
+func TestCaptureAndCommitPairwiseSideKeepsCaptureWhenPushFailsAndCanRetry(t *testing.T) {
+	s, trace, source := annotationFixture(t)
+	c, err := s.EnablePairwise(EnablePairwiseRequest{TaskID: "题目-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SnapshotURL = "https://github.com/example/repo/commit/" + c.InitialSHA
+	if _, err := s.store.SaveAnnotationCase(*c, c.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PreparePairwiseSide(context.Background(), PairwiseSideRequest{TaskID: c.TaskID, Side: domain.PairwiseSideA}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "result.txt"), []byte("captured result"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s.pushPairwise = func(context.Context, string, string, string) error { return errors.New("push unavailable") }
+
+	if _, err := s.CaptureAndCommitPairwiseSide(context.Background(), PairwiseCaptureRequest{
+		TaskID: c.TaskID, Side: domain.PairwiseSideA, TracePath: trace,
+	}); err == nil || !strings.Contains(err.Error(), "push unavailable") {
+		t.Fatalf("push error = %v", err)
+	}
+	failed, err := s.loadCase(c.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.Pairwise.RunA.CaptureID == "" || failed.Pairwise.RunA.SessionID != "session" || failed.Pairwise.RunA.DeliverableSHA != "" {
+		t.Fatalf("capture after failed push = %#v", failed.Pairwise.RunA)
+	}
+
+	s.pushPairwise = func(context.Context, string, string, string) error { return nil }
+	retried, err := s.CommitPairwiseSide(context.Background(), PairwiseCommitRequest{TaskID: c.TaskID, Side: domain.PairwiseSideA, SessionID: "session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(retried.Pairwise.RunA.DeliverableSHA) != 40 {
+		t.Fatalf("retried commit = %#v", retried.Pairwise.RunA)
+	}
+}
+
+func TestSelectPairwiseTraceFindsUniqueMatchingSession(t *testing.T) {
+	_, trace, _ := annotationFixture(t)
+	raw, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	matching := []byte(strings.ReplaceAll(string(raw), filepath.Dir(trace)+"/source", "/workspace/repo"))
+	unrelated := []byte(strings.ReplaceAll(string(matching), "实现加法功能", "修改无关功能"))
+	files := map[string][]byte{
+		"projects/-workspace-repo/session-a.jsonl":  matching,
+		"projects/-workspace-other/session-x.jsonl": unrelated,
+	}
+	binding := &domain.Case{ContainerID: "container-a", RepoRelativePath: "repo"}
+
+	selected, err := selectPairwiseTrace(files, binding, "/host/repo", "实现加法功能")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.main != "projects/-workspace-repo/session-a.jsonl" || selected.tracePath != containerTraceRoot+"/-workspace-repo/session-a.jsonl" {
+		t.Fatalf("selection = %#v", selected)
+	}
+	if len(selected.rounds) != 1 || selected.rounds[0].SessionID != "session" {
+		t.Fatalf("rounds = %#v", selected.rounds)
+	}
+}
+
+func TestSelectPairwiseTraceRejectsMissingAndAmbiguousMatches(t *testing.T) {
+	_, trace, _ := annotationFixture(t)
+	raw, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	matching := []byte(strings.ReplaceAll(string(raw), filepath.Dir(trace)+"/source", "/workspace/repo"))
+	binding := &domain.Case{ContainerID: "container-a", RepoRelativePath: "repo"}
+
+	if _, err := selectPairwiseTrace(map[string][]byte{
+		"projects/-workspace-repo/unrelated.jsonl": []byte(strings.ReplaceAll(string(matching), "实现加法功能", "修改无关功能")),
+	}, binding, "/host/repo", "实现加法功能"); err == nil || !strings.Contains(err.Error(), "未找到") {
+		t.Fatalf("missing match error = %v", err)
+	}
+
+	second := []byte(strings.ReplaceAll(string(matching), `"session"`, `"session-b"`))
+	if _, err := selectPairwiseTrace(map[string][]byte{
+		"projects/-workspace-repo/session-a.jsonl": matching,
+		"projects/-workspace-repo/session-b.jsonl": second,
+	}, binding, "/host/repo", "实现加法功能"); err == nil || !strings.Contains(err.Error(), "多条") {
+		t.Fatalf("ambiguous match error = %v", err)
+	}
+}
+
 func TestSavePairwiseMaterialsRequiresHTTPVideoURL(t *testing.T) {
 	s, _, _ := annotationFixture(t)
-	c, err := s.EnablePairwise(EnablePairwiseRequest{TaskID: "题目-1", Harness: "Codex", HarnessVersion: "1", OS: "MacOS/Linux"})
+	c, err := s.EnablePairwise(EnablePairwiseRequest{TaskID: "题目-1", Language: "Python", Harness: "Codex CLI", HarnessVersion: "1", OS: "MacOS/Linux", Validity: domain.PairwiseValidityValid})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,5 +225,45 @@ func TestSavePairwiseMaterialsRequiresHTTPVideoURL(t *testing.T) {
 	}
 	if updated.Pairwise.RunA.VideoStatus != domain.PairwiseVideoReady || updated.Pairwise.RunA.VideoURL != "https://example.com/a.mp4" {
 		t.Fatalf("video state = %#v", updated.Pairwise.RunA)
+	}
+}
+
+func TestSavePairwiseSettingsBackfillsSubmissionFields(t *testing.T) {
+	s, _, _ := annotationFixture(t)
+	c, err := s.EnablePairwise(EnablePairwiseRequest{TaskID: "题目-1", Language: "Python", Harness: "Codex CLI", HarnessVersion: "1", OS: "MacOS/Linux", Validity: domain.PairwiseValidityValid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := s.SavePairwiseSettings(PairwiseSettingsRequest{
+		TaskID: c.TaskID, Language: "TypeScript / React", Environment: "无外部依赖", Validity: domain.PairwiseValidityOther, Notes: "环境异常",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Pairwise.Language != "TypeScript / React" || updated.Pairwise.Environment != "无外部依赖" || updated.Pairwise.Validity != domain.PairwiseValidityOther || updated.Pairwise.Notes != "环境异常" {
+		t.Fatalf("settings = %+v", updated.Pairwise)
+	}
+}
+
+func TestEnablePairwiseAutomaticallyStoresSubmissionMetadata(t *testing.T) {
+	s, _, source := annotationFixture(t)
+	if err := os.WriteFile(filepath.Join(source, "package.json"), []byte(`{"dependencies":{"react":"latest"},"devDependencies":{"typescript":"latest"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "tsconfig.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.EnablePairwise(EnablePairwiseRequest{TaskID: "题目-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(c.Pairwise.Language, "TypeScript") || !strings.Contains(c.Pairwise.Language, "React") {
+		t.Fatalf("language = %q", c.Pairwise.Language)
+	}
+	if c.Pairwise.Harness != "Claude Code" || c.Pairwise.HarnessVersion == "" || c.Pairwise.OS != "MacOS/Linux" {
+		t.Fatalf("fixed metadata = %+v", c.Pairwise)
+	}
+	if c.Pairwise.Environment != "" || c.Pairwise.Validity != domain.PairwiseValidityValid {
+		t.Fatalf("defaults = %+v", c.Pairwise)
 	}
 }
