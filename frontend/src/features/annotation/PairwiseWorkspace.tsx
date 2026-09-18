@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import {
   capturePairwiseSide,
   commitPairwiseSide,
+  reviewPairwise,
   savePairwiseMaterials,
   savePairwiseSettings,
   type AnnotationCase,
@@ -144,12 +145,34 @@ export function PairwiseWorkspace({ annotationCase, containers = [], disabled, r
   if (!pairwise) return null;
   const latestReview = pairwise.reviews.at(-1);
   const [refreshing, setRefreshing] = useState(false);
+  const [copiedContainerCommands, setCopiedContainerCommands] = useState<Record<PairwiseSide, boolean>>({ A: false, B: false });
+  const reviewReady = Boolean(
+    pairwise.runA.captureId && pairwise.runA.deliverableSha
+    && pairwise.runB.captureId && pairwise.runB.deliverableSha,
+  );
+  useEffect(() => setCopiedContainerCommands({ A: false, B: false }), [annotationCase.taskId]);
+
+  const copyContainerCommand = async (side: PairwiseSide) => {
+    if (!onCopyContainerCommand) return;
+    await onCopyContainerCommand(side);
+    setCopiedContainerCommands((current) => ({ ...current, [side]: true }));
+  };
+
   return (
     <div className="space-y-4">
       <section aria-label="GSB 快捷操作" className="border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
         <div className="flex flex-wrap items-end gap-2">
-          <button className={SECONDARY} disabled={disabled} onClick={() => void onCopyContainerCommand?.('A')}><Clipboard className="h-4 w-4" />复制 A 容器命令</button>
-          <button className={SECONDARY} disabled={disabled} onClick={() => void onCopyContainerCommand?.('B')}><Clipboard className="h-4 w-4" />复制 B 容器命令</button>
+          {(['A', 'B'] as const).map((side) => (
+            <button
+              key={side}
+              className={copiedContainerCommands[side] ? COMPLETED : SECONDARY}
+              disabled={disabled || !onCopyContainerCommand}
+              onClick={() => void copyContainerCommand(side)}
+            >
+              {copiedContainerCommands[side] ? <CheckCircle2 className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+              {copiedContainerCommands[side] ? `${side} 容器命令已复制` : `复制 ${side} 容器命令`}
+            </button>
+          ))}
           <button className={PRIMARY} disabled={disabled || refreshing} onClick={() => {
             setRefreshing(true);
             void Promise.resolve(onRefreshContainers?.()).finally(() => setRefreshing(false));
@@ -183,6 +206,14 @@ export function PairwiseWorkspace({ annotationCase, containers = [], disabled, r
             <h3 className="text-base font-bold text-stone-900 dark:text-stone-100">GSB 对比结果</h3>
             <p className="mt-1 text-xs text-stone-500">AI 综合两侧轨迹、代码产物和已提供材料生成。</p>
           </div>
+          <button
+            className={latestReview ? COMPLETED : PRIMARY}
+            disabled={disabled || !reviewReady}
+            onClick={() => void runJob('单题 GSB 审核保存', () => reviewPairwise({ taskId: annotationCase.taskId, force: false }))}
+          >
+            {latestReview ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
+            单题 GSB 审核保存
+          </button>
         </div>
         {latestReview ? (
           <div className="mt-4 border-t border-stone-100 pt-4 dark:border-stone-800">
@@ -192,7 +223,7 @@ export function PairwiseWorkspace({ annotationCase, containers = [], disabled, r
             </div>
             <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-stone-700 dark:text-stone-300">{latestReview.reason}</p>
           </div>
-        ) : <p className="mt-4 text-sm text-stone-500">尚未审核，可返回项目列表通过“批量审核 GSB”选择本题。</p>}
+        ) : <p className="mt-4 text-sm text-stone-500">A/B 都采集并提交后，可在这里审核保存；也可以返回项目列表批量审核。</p>}
       </section>
     </div>
   );

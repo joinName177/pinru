@@ -208,15 +208,16 @@ function TaskAiReviewBadge({
   );
 }
 
-function TaskGsbBadge({ compact = false }: { compact?: boolean }) {
+function TaskGsbBadge({ reviewed, compact = false }: { reviewed: boolean; compact?: boolean }) {
+  const label = reviewed ? 'GSB已审核' : '已采集';
   return (
     <span
       className={`inline-flex items-center rounded-full border border-teal-200 bg-teal-50 font-semibold text-teal-700 dark:border-teal-500/20 dark:bg-teal-500/10 dark:text-teal-300 ${
         compact ? 'px-2 py-0.5 text-[10px]' : 'px-2.5 py-1 text-[11px]'
       }`}
-      title="当前题卡已生成 GSB"
+      title={reviewed ? '当前题卡 GSB 已审核' : '当前题卡 A/B 信息已采集'}
     >
-      GSB已生成
+      {label}
     </span>
   );
 }
@@ -389,7 +390,7 @@ export function TaskCard({
           </span>
           <TaskRoundBadge rounds={task.executionRounds} compact />
           <TaskAiReviewBadge rounds={task.aiReviewRounds} status={task.aiReviewStatus} compact />
-          {task.hasGeneratedGsb && <TaskGsbBadge compact />}
+          {(task.hasGeneratedGsb || task.hasCollectedPairwiseGsb) && <TaskGsbBadge reviewed={task.hasGeneratedGsb} compact />}
           <TableStatusBadge progress={tableProgress} />
         </div>
         {!selectionMode && (
@@ -464,7 +465,7 @@ export function TaskCard({
             </span>
             <TaskRoundBadge rounds={task.executionRounds} />
             <TaskAiReviewBadge rounds={task.aiReviewRounds} status={task.aiReviewStatus} />
-            {task.hasGeneratedGsb && <TaskGsbBadge />}
+            {(task.hasGeneratedGsb || task.hasCollectedPairwiseGsb) && <TaskGsbBadge reviewed={task.hasGeneratedGsb} />}
             <TableStatusBadge progress={tableProgress} />
           </div>
           <div className="ml-auto flex items-center gap-2">
@@ -590,7 +591,7 @@ export function TaskCard({
         </span>
         <TaskRoundBadge rounds={task.executionRounds} />
         <TaskAiReviewBadge rounds={task.aiReviewRounds} status={task.aiReviewStatus} />
-        {task.hasGeneratedGsb && <TaskGsbBadge />}
+        {(task.hasGeneratedGsb || task.hasCollectedPairwiseGsb) && <TaskGsbBadge reviewed={task.hasGeneratedGsb} />}
         <TableStatusBadge progress={tableProgress} />
       </div>
       <div className="flex items-center justify-between">

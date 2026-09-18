@@ -130,6 +130,7 @@ function createTask(overrides: Partial<Task> = {}): Task {
     executionRounds: overrides.executionRounds ?? 1,
     aiReviewRounds: overrides.aiReviewRounds ?? 0,
     aiReviewStatus: overrides.aiReviewStatus ?? 'none',
+    hasCollectedPairwiseGsb: overrides.hasCollectedPairwiseGsb ?? false,
     hasGeneratedGsb: overrides.hasGeneratedGsb ?? false,
     progress: overrides.progress ?? 0,
     totalModels: overrides.totalModels ?? 0,

@@ -22,6 +22,7 @@ function createTask(overrides: Partial<Task>): Task {
     executionRounds: 1,
     aiReviewRounds: 0,
     aiReviewStatus: 'none',
+    hasCollectedPairwiseGsb: false,
     hasGeneratedGsb: false,
     progress: 0,
     totalModels: 0,

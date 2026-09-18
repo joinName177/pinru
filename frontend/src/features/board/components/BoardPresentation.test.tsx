@@ -18,6 +18,7 @@ function createTask(overrides: Partial<Task> = {}): Task {
     executionRounds: overrides.executionRounds ?? 1,
     aiReviewRounds: overrides.aiReviewRounds ?? 0,
     aiReviewStatus: overrides.aiReviewStatus ?? 'none',
+    hasCollectedPairwiseGsb: overrides.hasCollectedPairwiseGsb ?? false,
     hasGeneratedGsb: overrides.hasGeneratedGsb ?? false,
     progress: overrides.progress ?? 0,
     totalModels: overrides.totalModels ?? 0,
@@ -123,7 +124,7 @@ describe('TaskCard', () => {
   });
 
   it.each(['sm', 'four', 'md', 'lg'] as const)(
-    'shows generated GSB badge on the %s task card',
+    'shows reviewed GSB badge on the %s task card',
     (size) => {
       render(
         <TaskCard
@@ -135,7 +136,37 @@ describe('TaskCard', () => {
         />,
       );
 
-      expect(screen.getByText('GSB已生成')).toBeInTheDocument();
+      expect(screen.getByText('GSB已审核')).toBeInTheDocument();
     },
   );
+
+  it('shows collected status before GSB review', () => {
+    render(
+      <TaskCard
+        task={createTask({ hasCollectedPairwiseGsb: true })}
+        size="md"
+        onClick={vi.fn()}
+        onContextMenu={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('已采集')).toBeInTheDocument();
+    expect(screen.queryByText('GSB已审核')).not.toBeInTheDocument();
+  });
+
+  it('prioritizes reviewed status when a collected task has been reviewed', () => {
+    render(
+      <TaskCard
+        task={createTask({ hasCollectedPairwiseGsb: true, hasGeneratedGsb: true })}
+        size="md"
+        onClick={vi.fn()}
+        onContextMenu={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('GSB已审核')).toBeInTheDocument();
+    expect(screen.queryByText('已采集')).not.toBeInTheDocument();
+  });
 });

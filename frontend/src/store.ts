@@ -47,6 +47,7 @@ export interface Task {
   executionRounds: number;
   aiReviewRounds: number;
   aiReviewStatus: ReviewStatus;
+  hasCollectedPairwiseGsb: boolean;
   hasGeneratedGsb: boolean;
   progress: number;
   totalModels: number;
@@ -119,6 +120,17 @@ function hasPairwiseGsbReview(annotationCase: AnnotationCase | undefined): boole
   return (annotationCase.pairwise?.reviews?.length ?? 0) > 0;
 }
 
+function hasCollectedPairwiseGsb(annotationCase: AnnotationCase | undefined): boolean {
+  if (annotationCase?.mode !== 'pairwise_gsb') {
+    return false;
+  }
+
+  return Boolean(
+    annotationCase.pairwise?.runA?.captureId?.trim()
+    && annotationCase.pairwise?.runB?.captureId?.trim(),
+  );
+}
+
 function hasModelRunGsbScore(modelRuns: ModelRunFromDB[]): boolean {
   return modelRuns.some((run) => run.gsbScore?.trim());
 }
@@ -147,6 +159,7 @@ function mapDbTaskToTask(
     executionRounds: getPersistedExecutionRounds(dbTask, modelRuns),
     aiReviewRounds: getPersistedAiReviewRounds(modelRuns),
     aiReviewStatus: getPersistedAiReviewStatus(modelRuns),
+    hasCollectedPairwiseGsb: hasCollectedPairwiseGsb(annotationCase),
     hasGeneratedGsb: hasPairwiseGsbReview(annotationCase) || hasModelRunGsbScore(modelRuns),
     progress: 0,
     totalModels: 0,

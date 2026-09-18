@@ -71,6 +71,28 @@ it('offers one shared refresh and one shared prompt copy action', async () => {
   expect(onBindContainer).not.toHaveBeenCalled();
 });
 
+it('marks A and B container commands as copied independently and keeps them clickable', async () => {
+  const onCopyContainerCommand = vi.fn().mockResolvedValue(undefined);
+  render(<PairwiseWorkspace
+    annotationCase={pairwiseCase}
+    disabled={false}
+    runJob={vi.fn()}
+    onCopyContainerCommand={onCopyContainerCommand}
+  />);
+
+  const copyA = screen.getByRole('button', { name: '复制 A 容器命令' });
+  fireEvent.click(copyA);
+  const copiedA = await screen.findByRole('button', { name: 'A 容器命令已复制' });
+  expect(copiedA).toBeEnabled();
+  expect(copiedA).toHaveClass('text-emerald-700');
+  expect(screen.getByRole('button', { name: '复制 B 容器命令' })).toBeInTheDocument();
+
+  fireEvent.click(copiedA);
+  await waitFor(() => expect(onCopyContainerCommand).toHaveBeenCalledTimes(2));
+  fireEvent.click(screen.getByRole('button', { name: '复制 B 容器命令' }));
+  expect(await screen.findByRole('button', { name: 'B 容器命令已复制' })).toBeEnabled();
+});
+
 it('submits side-specific capture and video actions', async () => {
   const runJob = vi.fn(async (_label: string, submit: () => Promise<unknown>) => { await submit(); return true; });
   render(<PairwiseWorkspace annotationCase={pairwiseCase} disabled={false} runJob={runJob} />);
@@ -139,6 +161,26 @@ it('saves one of the three environment reproducibility levels', async () => {
 
 it('keeps review and export actions out of the task detail', () => {
   render(<PairwiseWorkspace annotationCase={pairwiseCase} disabled={false} runJob={vi.fn()} />);
-  expect(screen.queryByRole('button', { name: '生成 GSB' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '单题 GSB 审核保存' })).toBeDisabled();
   expect(screen.queryByRole('button', { name: /导出/ })).not.toBeInTheDocument();
+});
+
+it('reviews and saves one GSB after both sides have been captured', async () => {
+  const captured = structuredClone(pairwiseCase);
+  captured.pairwise!.runB = {
+    ...captured.pairwise!.runB,
+    sessionId: 'session-b', tracePath: '/b.jsonl', turnCount: 1,
+    captureId: 'cb', captureHash: 'hb', traceHash: 'tb',
+    deliverableSha: 'c'.repeat(40), deliverableUrl: 'https://github.com/u/r/commit/b',
+    capturedAt: 2, committedAt: 3,
+  };
+  const runJob = vi.fn(async (_label: string, submit: () => Promise<unknown>) => { await submit(); return true; });
+  render(<PairwiseWorkspace annotationCase={captured} disabled={false} runJob={runJob} />);
+
+  const review = screen.getByRole('button', { name: '单题 GSB 审核保存' });
+  expect(review).toBeEnabled();
+  fireEvent.click(review);
+
+  await waitFor(() => expect(api.reviewPairwise).toHaveBeenCalledWith({ taskId: 'task-1', force: false }));
+  expect(runJob).toHaveBeenCalledWith('单题 GSB 审核保存', expect.any(Function));
 });
