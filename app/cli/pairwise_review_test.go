@@ -56,6 +56,16 @@ func TestDecodePairwiseReviewRejectsMarkdownOrChecklistFormatting(t *testing.T) 
 	}
 }
 
+func TestDecodePairwiseReviewRejectsDecorativeQuoteBrackets(t *testing.T) {
+	for _, marks := range []string{"『筛选功能』", "「筛选功能」"} {
+		reason := "A 完成了" + marks + "并运行测试确认空数据也有反馈；B 只实现常规流程，异常输入仍会中断操作。这道题更看重用户遇到异常时能否继续使用，因此 A 更可靠。"
+		raw := []byte(`{"status":"ready","conclusion":"A_better","reason":` + quotePairwiseJSON(reason) + `}`)
+		if result, err := decodePairwiseReview(raw); err == nil {
+			t.Fatalf("accepted decorative quote brackets: %#v", result)
+		}
+	}
+}
+
 func TestDecodePairwiseReviewAcceptsNaturalComparisonWithDecisionBasis(t *testing.T) {
 	reason := "A 很快找到了筛选失效的原因，修改后页面在空数据和重复提交时都能正常反馈，最后也实际走完了用户操作；B 的主体功能可以使用，但只验证了常规流程，空数据时仍会留下一块没有说明的空白区域。这道题更看重用户遇到异常输入时能不能继续操作，因此 A 更可靠。"
 	result, err := decodePairwiseReview([]byte(`{"status":"ready","conclusion":"A_better","reason":` + quotePairwiseJSON(reason) + `}`))
@@ -90,6 +100,9 @@ func TestBuildPairwiseReviewPromptRequiresTriggerNodeForInaction(t *testing.T) {
 	prompt := buildPairwiseReviewPrompt("/tmp/evidence.json", "", "")
 	if !strings.Contains(prompt, "触发节点") || !strings.Contains(prompt, "只读未改") {
 		t.Fatalf("prompt does not require a trigger node for inaction: %s", prompt)
+	}
+	if !strings.Contains(prompt, "『』") || !strings.Contains(prompt, "「」") {
+		t.Fatalf("prompt does not forbid decorative quote brackets: %s", prompt)
 	}
 }
 

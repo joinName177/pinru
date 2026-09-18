@@ -182,6 +182,10 @@ func PairwiseReviewMatchesRunSources(review PairwiseReview, runA, runB PairwiseR
 	return current || legacy
 }
 
+func PairwiseReasonHasDecorativeBrackets(reason string) bool {
+	return strings.ContainsAny(reason, "『』「」【】《》")
+}
+
 func CurrentPairwiseReview(c Case) *PairwiseReview {
 	if c.Pairwise == nil {
 		return nil

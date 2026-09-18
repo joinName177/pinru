@@ -177,3 +177,16 @@ func TestPairwiseExportSkipsReviewWithoutReason(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestPairwiseExportSkipsReviewWithDecorativeQuoteBrackets(t *testing.T) {
+	s, c := pairwiseExportCase(t, true)
+	c.Pairwise.Reviews[len(c.Pairwise.Reviews)-1].Reason = "A 完成了『筛选功能』并运行测试，B 的页面仍返回未过滤数据，因此 A 更完整。"
+	if _, err := s.store.SaveAnnotationCase(*c, c.Revision); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := s.ExportPairwise(PairwiseExportRequest{ProjectID: "batch", TaskID: c.TaskID})
+	if err == nil || !strings.Contains(err.Error(), "装饰引号") {
+		t.Fatalf("error = %v", err)
+	}
+}

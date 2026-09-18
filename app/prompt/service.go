@@ -850,6 +850,7 @@ func appendProjectRequirementGenerationRules(sb *strings.Builder, req GeneratePr
 	sb.WriteString("文案红线：直接写需求正文，不加“以下是”“作为 AI”等AI式前言，不写总结式收尾，不使用箭头、Emoji、反引号或装饰符号。语句完整通顺，避免重复句式、同义词堆叠和只替换少量名词的语义换皮；必要事实不得为了调整文风而删减或改名。\n")
 	sb.WriteString("任务类型边界：0-1代码生成必须是此前不存在的完整模块、新子系统或新主流程；Feature迭代必须是在已有功能基础上的规则增强、流程延展或能力补齐；Bug修复必须是当前项目中真实存在或由代码迹象支撑的缺陷，写清触发条件、异常表现和业务后果；代码理解聚焦梳理链路和风险；代码重构强调业务结果不变；工程化聚焦构建、依赖、发布或协作稳定性；代码测试围绕高风险流程、边界和回归风险补验证。\n")
 	sb.WriteString("质量自检：最终提示词不能只写“优化体验”“完善逻辑”“增强稳定性”这类空话；如果任务涉及导出、统计、预约、状态流转、权限、缓存、异步或跨页面流程，要优先体现数据一致性、异常恢复、边界值、前后端契约或验证链路。难度按理解成本、决策成本和约束复杂度判断，不按文件数量机械判断。\n")
+	appendDifficultPromptEligibilityRules(sb, false)
 
 	switch normalizedTaskType {
 	case internalprompt.TaskTypeCodeGen:
@@ -859,6 +860,15 @@ func appendProjectRequirementGenerationRules(sb *strings.Builder, req GeneratePr
 	case internalprompt.TaskTypeTesting:
 		sb.WriteString("代码测试额外规则：不要只写补覆盖率，要明确测试对象、正常和异常路径、边界输入、异步时序或回归风险。\n")
 	}
+}
+
+func appendDifficultPromptEligibilityRules(sb *strings.Builder, batch bool) {
+	sb.WriteString("困难题准入门槛：题目必须存在一条不能拆成互不影响的局部小修的联动链路，并至少命中两类真实复杂度：跨模块或跨层的数据与状态传递；状态机、异步时序、并发或失败恢复；多入口、持久化与展示之间的一致性；兼容旧数据或旧行为且需要成组回归验证。独立的样式、提示或输入校验不构成困难题，不能因为边界条件写得多就判为困难。文字截断与完整名称提示、本地存储失败提示、上传文件类型或大小校验都属于典型局部小修；把几项互不关联的小修拼在一起，也不能抬成困难题。")
+	if batch {
+		sb.WriteString("批量生成需要补足困难题名额时，必须换题，不能硬贴【困难】标签。\n")
+		return
+	}
+	sb.WriteString("达不到门槛时必须如实标为简单或一般，不得为了满足预期难度虚构链路。\n")
 }
 
 func appendTaskSpecificGenerationRules(sb *strings.Builder, req GeneratePromptRequest) {
@@ -900,6 +910,7 @@ func buildCustomProjectPromptDocumentPrompt(projectName string, projectProfile *
 	sb.WriteString("请基于当前项目一次性生成提示词需求文档，不要逐条调用单题出题逻辑。\n")
 	fmt.Fprintf(&sb, "数量要求：只生成 %d 条，其中 0-1代码生成 %d 条，Feature迭代 %d 条，Bug修复 %d 条。仅允许生成这三类题，数量为 0 的分类不生成。严格按数量生成，不擅自增减。\n", counts.Total(), counts.CodeGen, counts.Feature, counts.BugFix)
 	fmt.Fprintf(&sb, "难度数量：整批严格生成【一般】%d 条、【困难】%d 条，只允许使用【一般】和【困难】两种标签，不能输出简单或地狱。题型数量与难度数量是两套独立约束，由你结合每条任务的真实实现工作量，把难度名额合理分配到各题型，但两项合计必须与总题数完全一致。一般任务应有少量跨文件协作和完整验证；困难任务必须有代码事实支撑的跨模块状态、数据、异常链路或多项业务约束，不能编造 Bug、虚构链路或无依据堆叠复杂度。\n", counts.General, counts.Difficult)
+	appendDifficultPromptEligibilityRules(&sb, true)
 	sb.WriteString("去重要求：所有提示词之间不得重复或换皮，也要避免对项目已经具备的功能重复出题。先结合项目画像和必要的源码检查确认能力边界，不得只替换对象名、页面名、状态名后复用同一类需求。每条必须在业务目标、用户路径、状态链路、数据对象、交付边界中至少有两个维度明显不同，语义和句式都要明显不同。输出前逐条交叉检查，发现文字重复比例偏高、语义相近或同义改写时，必须换成真实的不同切入点。\n")
 	sb.WriteString("可验收性要求：每条都要自然写清当前情况、触发场景、目标行为和可核查的交付结果，并明确至少一个真实边界、异常场景或旧行为兼容要求。结果应能从页面反馈、状态变化、数据结果、接口行为或测试产物中确认，不能只写抽象目标。\n")
 	sb.WriteString("审核隔离要求：题目不得出现五维评分、21分收录门槛、审核通过率、压分或扣分暗示，也不能故意制造失败、保留缺陷、设置不可完成条件或用模糊要求诱导模型出错。\n")

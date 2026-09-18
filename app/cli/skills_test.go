@@ -23,6 +23,11 @@ func TestInstallBuiltinPromptSkillUsesVerifiableNaturalTaskRules(t *testing.T) {
 		"至少一个真实边界",
 		"不得出现五维评分",
 		"不能故意制造失败",
+		"困难题准入门槛",
+		"不能拆成互不影响的局部小修",
+		"文字截断与完整名称提示",
+		"本地存储失败提示",
+		"上传文件类型或大小校验",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("installed prompt skill missing %q", want)

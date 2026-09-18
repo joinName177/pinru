@@ -100,6 +100,10 @@ func (s *AnnotationService) exportPairwise(ctx context.Context, req PairwiseExpo
 			skipped = append(skipped, copy.TaskName+"：尚无当前有效的 GSB 结论和理由")
 			continue
 		}
+		if domain.PairwiseReasonHasDecorativeBrackets(current.Reason) {
+			skipped = append(skipped, copy.TaskName+"：GSB 理由包含『』、「」、【】、《》等装饰引号或括号，请重新审核")
+			continue
+		}
 		if issues := domain.ValidatePairwiseCase(copy, false); len(issues) > 0 {
 			skipped = append(skipped, copy.TaskName+"："+strings.Join(issues, "；"))
 			continue

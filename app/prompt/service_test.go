@@ -119,6 +119,12 @@ func TestBuildCustomProjectPromptDocumentPromptUsesActualDifficultyByDefault(t *
 		"至少一个真实边界",
 		"不得出现五维评分、21分收录门槛",
 		"不能故意制造失败",
+		"困难题准入门槛",
+		"不能拆成互不影响的局部小修",
+		"文字截断与完整名称提示",
+		"本地存储失败提示",
+		"上传文件类型或大小校验",
+		"必须换题，不能硬贴【困难】标签",
 	}
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(prompt, snippet) {
@@ -538,6 +544,9 @@ func TestBuildSkillPromptAddsProjectRequirementGenerationRules(t *testing.T) {
 		"至少一个真实边界",
 		"不得出现五维评分、21分收录门槛",
 		"不能故意制造失败",
+		"困难题准入门槛",
+		"独立的样式、提示或输入校验",
+		"不能因为边界条件写得多就判为困难",
 	} {
 		if !strings.Contains(featurePrompt, want) {
 			t.Fatalf("buildSkillPrompt(feature) missing %q in:\n%s", want, featurePrompt)

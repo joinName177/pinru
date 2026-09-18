@@ -18,7 +18,7 @@ type PairwiseReviewRequest struct {
 	Force  bool   `json:"force"`
 }
 
-const pairwiseReviewSkillVersion = "pairwise-gsb-v6-20260918"
+const pairwiseReviewSkillVersion = "pairwise-gsb-v7-20260918"
 
 func pairwiseReviewSkillHash() string {
 	return stableKey(pairwiseReviewSkillVersion)
