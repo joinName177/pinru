@@ -1,4 +1,4 @@
-import { CheckCircle2, Clipboard, Container, ExternalLink, FileSearch, GitBranch, Loader2, RefreshCw, Save } from 'lucide-react';
+import { CheckCircle2, Clipboard, Container, ExternalLink, FileSearch, GitBranch, Loader2, RefreshCw, Save, XCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
   capturePairwiseSide,
@@ -28,6 +28,7 @@ type Props = {
   runJob: PairwiseRunJob;
   onCopyContainerCommand?: (side: PairwiseSide) => Promise<void>;
   onBindContainer?: (side: PairwiseSide, containerId: string) => Promise<boolean>;
+  onRefreshContainer?: (side: PairwiseSide) => Promise<void>;
   onRefreshContainers?: () => Promise<void>;
   onCopyPrompt?: () => Promise<unknown>;
   onStartProject?: (side: PairwiseSide) => Promise<PairwiseProjectState | null>;
@@ -38,7 +39,7 @@ function shortSha(value: string) {
   return value ? value.slice(0, 10) : '尚未提交';
 }
 
-function RunPanel({ taskId, side, run, containers, disabled, runJob, onBindContainer, onStartProject }: {
+function RunPanel({ taskId, side, run, containers, disabled, runJob, onBindContainer, onRefreshContainer, onStartProject }: {
   taskId: string;
   side: PairwiseSide;
   run: PairwiseRun;
@@ -46,18 +47,40 @@ function RunPanel({ taskId, side, run, containers, disabled, runJob, onBindConta
   disabled: boolean;
   runJob: PairwiseRunJob;
   onBindContainer?: (side: PairwiseSide, containerId: string) => Promise<boolean>;
+  onRefreshContainer?: (side: PairwiseSide) => Promise<void>;
   onStartProject?: (side: PairwiseSide) => Promise<PairwiseProjectState | null>;
 }) {
   const [videoSource, setVideoSource] = useState(run.videoPath || run.videoUrl || '');
   const [containerId, setContainerId] = useState(run.containerId || '');
+  const [containerCleared, setContainerCleared] = useState(false);
+  const [refreshingContainer, setRefreshingContainer] = useState(false);
   const [projectBusy, setProjectBusy] = useState(false);
   const [projectURL, setProjectURL] = useState('');
   const [projectCommandCopied, setProjectCommandCopied] = useState(false);
   useEffect(() => setVideoSource(run.videoPath || run.videoUrl || ''), [run.videoPath, run.videoUrl]);
-  useEffect(() => setContainerId(run.containerId || ''), [run.containerId]);
+  useEffect(() => {
+    setContainerId(run.containerId || '');
+    setContainerCleared(false);
+  }, [run.containerId]);
   const readyVideo = run.videoStatus === 'ready';
   const boundSelected = Boolean(containerId && containerId === run.containerId);
-  const showBound = boundSelected;
+  const showBound = boundSelected && !containerCleared;
+  const hasActiveContainer = Boolean(run.containerId) && !containerCleared;
+
+  const bindSelectedContainer = async () => {
+    const completed = await onBindContainer?.(side, containerId);
+    if (completed) setContainerCleared(false);
+  };
+
+  const refreshContainer = async () => {
+    if (!onRefreshContainer) return;
+    setRefreshingContainer(true);
+    try {
+      await onRefreshContainer(side);
+    } finally {
+      setRefreshingContainer(false);
+    }
+  };
 
   return (
     <section role="region" aria-label={`运行 ${side}`} className="border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
@@ -69,8 +92,32 @@ function RunPanel({ taskId, side, run, containers, disabled, runJob, onBindConta
       </div>
 
       {showBound ? (
-        <div className="mt-3 flex h-9 items-center gap-2 text-sm font-semibold text-emerald-700 dark:text-emerald-300">
-          <CheckCircle2 className="h-4 w-4" />已绑定 {run.containerName || `${side} 容器`}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="inline-flex h-9 min-w-0 items-center gap-2 text-sm font-semibold text-emerald-700 dark:text-emerald-300">
+            <CheckCircle2 className="h-4 w-4 flex-none" />
+            <span className="truncate">已绑定 {run.containerName || `${side} 容器`}</span>
+          </span>
+          <button
+            aria-label={`清除当前容器 ${side}`}
+            title={`清除当前容器 ${side}`}
+            className={SECONDARY}
+            disabled={disabled}
+            onClick={() => {
+              setContainerId('');
+              setContainerCleared(true);
+            }}
+          >
+            <XCircle className="h-4 w-4" />清除当前容器
+          </button>
+          <button
+            aria-label={`刷新容器 ${side}`}
+            title={`刷新容器 ${side}`}
+            className={SECONDARY}
+            disabled={disabled || refreshingContainer || !onRefreshContainer}
+            onClick={() => void refreshContainer()}
+          >
+            {refreshingContainer ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}刷新容器
+          </button>
         </div>
       ) : (
         <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
@@ -78,7 +125,7 @@ function RunPanel({ taskId, side, run, containers, disabled, runJob, onBindConta
             <option value="">自动匹配失败，请手动选择 {side} 容器</option>
             {containers.map((container) => <option key={container.id} value={container.id}>{container.name} · {container.state}</option>)}
           </select>
-          <button className={SECONDARY} disabled={disabled || !containerId} onClick={() => void onBindContainer?.(side, containerId)}><Container className="h-4 w-4" />绑定 {side}</button>
+          <button className={SECONDARY} disabled={disabled || !containerId} onClick={() => void bindSelectedContainer()}><Container className="h-4 w-4" />绑定 {side}</button>
         </div>
       )}
 
@@ -93,7 +140,7 @@ function RunPanel({ taskId, side, run, containers, disabled, runJob, onBindConta
           <span className={`inline-flex h-7 items-center gap-1 rounded-full px-2.5 ${run.deliverableSha ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300' : 'bg-stone-100 text-stone-500 dark:bg-stone-800 dark:text-stone-400'}`}>{run.deliverableSha && <CheckCircle2 className="h-3.5 w-3.5" />}{run.deliverableSha ? '产物已提交' : '产物待提交'}</span>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button className={PRIMARY} disabled={disabled || !run.containerId} onClick={() => void (async () => {
+          <button className={PRIMARY} disabled={disabled || !hasActiveContainer} onClick={() => void (async () => {
             await runJob(`采集 ${side}`, () => capturePairwiseSide({ taskId, side }));
           })()}>
             <FileSearch className="h-4 w-4" />采集 {side}
@@ -106,7 +153,7 @@ function RunPanel({ taskId, side, run, containers, disabled, runJob, onBindConta
         </div>
 
         <div className="flex flex-wrap items-center gap-2 border-t border-stone-100 pt-3 dark:border-stone-800">
-          <button aria-label={`复制启动命令 ${side}`} className={projectCommandCopied ? COMPLETED : PRIMARY} disabled={disabled || projectBusy || !run.deliverableSha || !onStartProject} onClick={() => {
+          <button aria-label={`复制启动命令 ${side}`} className={projectCommandCopied ? COMPLETED : PRIMARY} disabled={disabled || projectBusy || !hasActiveContainer || !run.deliverableSha || !onStartProject} onClick={() => {
             setProjectBusy(true);
             void Promise.resolve(onStartProject?.(side) ?? null).then((state) => {
               if (state?.command) {
@@ -140,7 +187,7 @@ function RunPanel({ taskId, side, run, containers, disabled, runJob, onBindConta
   );
 }
 
-export function PairwiseWorkspace({ annotationCase, containers = [], disabled, runJob, onCopyContainerCommand, onBindContainer, onRefreshContainers, onCopyPrompt, onStartProject, promptCopied = false }: Props) {
+export function PairwiseWorkspace({ annotationCase, containers = [], disabled, runJob, onCopyContainerCommand, onBindContainer, onRefreshContainer, onRefreshContainers, onCopyPrompt, onStartProject, promptCopied = false }: Props) {
   const pairwise = annotationCase.pairwise;
   if (!pairwise) return null;
   const latestReview = pairwise.reviews.at(-1);
@@ -196,8 +243,8 @@ export function PairwiseWorkspace({ annotationCase, containers = [], disabled, r
       </section>
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <RunPanel taskId={annotationCase.taskId} side="A" run={pairwise.runA} containers={containers} disabled={disabled} runJob={runJob} onBindContainer={onBindContainer} onStartProject={onStartProject} />
-        <RunPanel taskId={annotationCase.taskId} side="B" run={pairwise.runB} containers={containers} disabled={disabled} runJob={runJob} onBindContainer={onBindContainer} onStartProject={onStartProject} />
+        <RunPanel taskId={annotationCase.taskId} side="A" run={pairwise.runA} containers={containers} disabled={disabled} runJob={runJob} onBindContainer={onBindContainer} onRefreshContainer={onRefreshContainer} onStartProject={onStartProject} />
+        <RunPanel taskId={annotationCase.taskId} side="B" run={pairwise.runB} containers={containers} disabled={disabled} runJob={runJob} onBindContainer={onBindContainer} onRefreshContainer={onRefreshContainer} onStartProject={onStartProject} />
       </div>
 
       <section className="border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">

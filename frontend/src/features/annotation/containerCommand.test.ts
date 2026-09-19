@@ -30,8 +30,8 @@ describe('container startup command', () => {
     expect(runA.runDirectory).toBe('run-9-a');
     expect(runB.containerName).toBe('cyc03-claude-9-b');
     expect(runB.runDirectory).toBe('run-9-b');
-    expect(runA.command).toContain('adminfather/benzhi-claude-code:20260909-isolated-git');
-    expect(runB.command).toContain('adminfather/benzhi-claude-code:20260909-isolated-git');
+    expect(runA.command).toContain('adminfather/benzhi-claude-code2:20260919');
+    expect(runB.command).toContain('adminfather/benzhi-claude-code2:20260919');
   });
 
   it('rejects missing, conflicting, and unsafe task identity', () => {

@@ -66,8 +66,8 @@ export interface CustomPromptCounts {
   codeGen: number;
   feature: number;
   bugFix: number;
-  general: number;
   difficult: number;
+  hell: number;
 }
 
 export interface CustomProjectPromptDocumentDetail {

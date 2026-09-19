@@ -48,23 +48,23 @@ func TestParseCustomPromptDocumentEntries(t *testing.T) {
 
 func TestValidateCustomPromptDocumentBatchRules(t *testing.T) {
 	entries := []customPromptEntry{
-		{TaskType: "0-1代码生成", PromptDifficulty: "一般", PromptText: "新增发布审核台，支持管理员查看待审核内容并批量处理。"},
-		{TaskType: "0-1代码生成", PromptDifficulty: "一般", PromptText: "新增模板配置页，让运营维护发布模板并在发布流程复用。"},
-		{TaskType: "0-1代码生成", PromptDifficulty: "一般", PromptText: "新增消息订阅入口，支持用户维护提醒偏好并在发布节点触发通知。"},
-		{TaskType: "0-1代码生成", PromptDifficulty: "一般", PromptText: "新增素材预览入口，让运营提交前查看标题、封面和正文摘要。"},
-		{TaskType: "0-1代码生成", PromptDifficulty: "一般", PromptText: "新增发布日历视图，按日期展示待发布内容和空档提醒。"},
-		{TaskType: "0-1代码生成", PromptDifficulty: "一般", PromptText: "新增跨角色协作发布流程，覆盖草稿、提交、撤回和管理员处理。"},
-		{TaskType: "0-1代码生成", PromptDifficulty: "一般", PromptText: "新增批量导入发布素材能力，处理重复数据、失败明细和结果回显。"},
-		{TaskType: "0-1代码生成", PromptDifficulty: "一般", PromptText: "新增运营复盘看板，串联筛选、统计口径、明细跳转和空态展示。"},
-		{TaskType: "Feature迭代", PromptDifficulty: "一般", PromptText: "在现有发布流程里补充草稿自动保存和恢复能力，并保证跨页面返回后内容和提示状态一致。"},
-		{TaskType: "Feature迭代", PromptDifficulty: "一般", PromptText: "在现有审核列表里补充处理人筛选和结果回显，兼容批量处理后的列表刷新和空态提示。"},
-		{TaskType: "Feature迭代", PromptDifficulty: "一般", PromptText: "在现有详情页补充返回列表后保留筛选条件，同时保证分页位置和高亮状态不丢失。"},
-		{TaskType: "Feature迭代", PromptDifficulty: "一般", PromptText: "在现有发布记录里补充失败原因展示和重试提示，兼容刷新后状态同步与历史记录回看。"},
-		{TaskType: "Feature迭代", PromptDifficulty: "一般", PromptText: "在现有模板选择里补充最近使用排序和空态提示，并处理默认模板失效后的兜底反馈。"},
-		{TaskType: "Feature迭代", PromptDifficulty: "一般", PromptText: "在现有审核详情里补充处理备注回显，并保证驳回、通过后列表摘要和详情内容一致。"},
-		{TaskType: "Feature迭代", PromptDifficulty: "一般", PromptText: "扩展审核流程的多状态流转，兼容撤回、驳回、重新提交和列表回显。"},
-		{TaskType: "Feature迭代", PromptDifficulty: "一般", PromptText: "增强发布列表筛选统计，保持详情、导出和刷新后的口径一致。"},
-		{TaskType: "代码理解", PromptDifficulty: "一般", PromptText: "梳理发布流程从填写到提交完成的关键状态流，并生成 README 文档。"},
+		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增发布审核台，支持管理员查看待审核内容并批量处理。"},
+		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增模板配置页，让运营维护发布模板并在发布流程复用。"},
+		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增消息订阅入口，支持用户维护提醒偏好并在发布节点触发通知。"},
+		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增素材预览入口，让运营提交前查看标题、封面和正文摘要。"},
+		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增发布日历视图，按日期展示待发布内容和空档提醒。"},
+		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增跨角色协作发布流程，覆盖草稿、提交、撤回和管理员处理。"},
+		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增批量导入发布素材能力，处理重复数据、失败明细和结果回显。"},
+		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增运营复盘看板，串联筛选、统计口径、明细跳转和空态展示。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "在现有发布流程里补充草稿自动保存和恢复能力，并保证跨页面返回后内容和提示状态一致。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "在现有审核列表里补充处理人筛选和结果回显，兼容批量处理后的列表刷新和空态提示。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "在现有详情页补充返回列表后保留筛选条件，同时保证分页位置和高亮状态不丢失。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "在现有发布记录里补充失败原因展示和重试提示，兼容刷新后状态同步与历史记录回看。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "在现有模板选择里补充最近使用排序和空态提示，并处理默认模板失效后的兜底反馈。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "在现有审核详情里补充处理备注回显，并保证驳回、通过后列表摘要和详情内容一致。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "扩展审核流程的多状态流转，兼容撤回、驳回、重新提交和列表回显。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "增强发布列表筛选统计，保持详情、导出和刷新后的口径一致。"},
+		{TaskType: "代码理解", PromptDifficulty: "困难", PromptText: "梳理发布流程从填写到提交完成的关键状态流，并生成 README 文档。"},
 	}
 	if err := validateCustomPromptDocumentBatch(entries); err != nil {
 		t.Fatalf("validateCustomPromptDocumentBatch() error = %v", err)
@@ -77,9 +77,15 @@ func TestValidateCustomPromptDocumentBatchRules(t *testing.T) {
 	}
 
 	validDifficulty := append([]customPromptEntry(nil), entries...)
-	validDifficulty[0].PromptDifficulty = "困难"
+	validDifficulty[0].PromptDifficulty = "地狱"
 	if err := validateCustomPromptDocumentBatch(validDifficulty); err != nil {
 		t.Fatalf("validate real difficulty error = %v", err)
+	}
+
+	tooEasy := append([]customPromptEntry(nil), entries...)
+	tooEasy[0].PromptDifficulty = "一般"
+	if err := validateCustomPromptDocumentBatch(tooEasy); err == nil || !strings.Contains(err.Error(), "低于困难下限") {
+		t.Fatalf("validate easy difficulty error = %v, want difficulty floor error", err)
 	}
 
 	unknownDifficulty := append([]customPromptEntry(nil), entries...)
@@ -103,16 +109,16 @@ func TestCustomPromptDocumentBatchPreservesDifficulties(t *testing.T) {
 		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增发布日历视图，按日期展示待发布内容和空档提醒。"},
 		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增跨角色协作发布流程，覆盖草稿、提交、撤回和管理员处理。"},
 		{TaskType: "0-1代码生成", PromptDifficulty: "困难", PromptText: "新增批量导入发布素材能力，处理重复数据、失败明细和结果回显。"},
-		{TaskType: "0-1代码生成", PromptDifficulty: "一般", PromptText: "新增运营复盘看板，串联筛选、统计口径、明细跳转和空态展示。"},
+		{TaskType: "0-1代码生成", PromptDifficulty: "地狱", PromptText: "新增运营复盘看板，串联筛选、统计口径、明细跳转和空态展示。"},
 		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "在现有发布流程里补充草稿自动保存和恢复能力。"},
 		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "在现有审核列表里补充处理人筛选和结果回显。"},
 		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "在现有详情页补充返回列表后保留筛选条件。"},
 		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "在现有发布记录里补充失败原因展示和重试提示。"},
 		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "在现有模板选择里补充最近使用排序和空态提示。"},
 		{TaskType: "Feature迭代", PromptDifficulty: "困难", PromptText: "在现有审核详情里补充处理备注回显。"},
-		{TaskType: "Feature迭代", PromptDifficulty: "一般", PromptText: "扩展审核流程的多状态流转，兼容撤回、驳回、重新提交和列表回显。"},
-		{TaskType: "Feature迭代", PromptDifficulty: "一般", PromptText: "增强发布列表筛选统计，保持详情、导出和刷新后的口径一致。"},
-		{TaskType: "代码理解", PromptDifficulty: "一般", PromptText: "梳理发布流程从填写到提交完成的关键状态流，并生成 README 文档。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "地狱", PromptText: "扩展审核流程的多状态流转，兼容撤回、驳回、重新提交和列表回显。"},
+		{TaskType: "Feature迭代", PromptDifficulty: "地狱", PromptText: "增强发布列表筛选统计，保持详情、导出和刷新后的口径一致。"},
+		{TaskType: "代码理解", PromptDifficulty: "困难", PromptText: "梳理发布流程从填写到提交完成的关键状态流，并生成 README 文档。"},
 	}
 
 	if err := validateCustomPromptDocumentBatch(entries); err != nil {
@@ -124,7 +130,7 @@ func TestCustomPromptDocumentBatchPreservesDifficulties(t *testing.T) {
 			counts[entry.PromptDifficulty]++
 		}
 	}
-	if counts["一般"] != 3 || counts["困难"] != 13 {
+	if counts["地狱"] != 3 || counts["困难"] != 13 {
 		t.Fatalf("difficulty counts = %+v, want preserved labels", counts)
 	}
 }
@@ -142,7 +148,7 @@ func TestParseCustomPromptDocumentKeepsUnknownDifficultyForValidation(t *testing
 func TestCustomPromptDocumentLimitsOnlyFixedTypes(t *testing.T) {
 	for _, kind := range []string{"代码理解", "工程化", "代码测试", "代码重构", "Bug修复", "Feature迭代", "0-1代码生成"} {
 		t.Run(kind, func(t *testing.T) {
-			entry := customPromptEntry{TaskType: kind, PromptDifficulty: "一般", PromptText: "真实需求并生成 README"}
+			entry := customPromptEntry{TaskType: kind, PromptDifficulty: "困难", PromptText: "真实需求并生成 README"}
 			err := validateCustomPromptDocumentBatch([]customPromptEntry{entry, entry})
 			fixed := kind == "代码理解" || kind == "工程化" || kind == "代码测试" || kind == "代码重构"
 			if (err != nil) != fixed {
@@ -191,10 +197,10 @@ func TestCreateTasksFromCustomPromptDocumentsCreatesTasksAndPromptArtifacts(t *t
 	docContent := strings.Join([]string{
 		"**0-1代码生成**",
 		"",
-		"1. 【一般】新增发布审核台，支持管理员查看待审核内容并批量处理。",
-		"2. 【一般】新增模板配置页，让运营维护发布模板并在发布流程复用。",
-		"3. 【一般】新增消息订阅入口，支持用户维护提醒偏好并在发布节点触发通知。",
-		"4. 【一般】新增素材预览入口，让运营提交前查看标题、封面和正文摘要。",
+		"1. 【困难】新增发布审核台，支持管理员查看待审核内容并批量处理。",
+		"2. 【困难】新增模板配置页，让运营维护发布模板并在发布流程复用。",
+		"3. 【困难】新增消息订阅入口，支持用户维护提醒偏好并在发布节点触发通知。",
+		"4. 【地狱】新增素材预览入口，让运营提交前查看标题、封面和正文摘要。",
 		"5. 【困难】新增发布日历视图，按日期展示待发布内容和空档提醒。",
 		"6. 【困难】新增跨角色协作发布流程，覆盖草稿、提交、撤回和管理员处理。",
 		"7. 【困难】新增批量导入发布素材能力，处理重复数据、失败明细和结果回显。",
@@ -213,7 +219,7 @@ func TestCreateTasksFromCustomPromptDocumentsCreatesTasksAndPromptArtifacts(t *t
 		"",
 		"**代码理解**",
 		"",
-		"1. 【一般】梳理发布流程从填写到提交完成的关键状态流，并生成 README 文档。",
+		"1. 【困难】梳理发布流程从填写到提交完成的关键状态流，并生成 README 文档。",
 	}, "\n")
 	if err := os.WriteFile(docPath, []byte(docContent), 0o644); err != nil {
 		t.Fatalf("WriteFile(doc) error = %v", err)
@@ -247,8 +253,8 @@ func TestCreateTasksFromCustomPromptDocumentsCreatesTasksAndPromptArtifacts(t *t
 	for _, task := range tasks {
 		seenTypes[task.TaskType]++
 		if task.TaskType == "代码理解" {
-			if task.PromptDifficulty != "一般" {
-				t.Fatalf("code understanding difficulty = %q, want 一般", task.PromptDifficulty)
+			if task.PromptDifficulty != "困难" {
+				t.Fatalf("code understanding difficulty = %q, want 困难", task.PromptDifficulty)
 			}
 		} else {
 			seenDifficulties[task.PromptDifficulty]++
@@ -289,7 +295,7 @@ func TestCreateTasksFromCustomPromptDocumentsCreatesTasksAndPromptArtifacts(t *t
 	if seenTypes["0-1代码生成"] != 8 || seenTypes["Feature迭代"] != 8 || seenTypes["代码理解"] != 1 {
 		t.Fatalf("seenTypes = %+v", seenTypes)
 	}
-	if seenDifficulties["一般"] != 4 || seenDifficulties["困难"] != 12 {
+	if seenDifficulties["地狱"] != 1 || seenDifficulties["困难"] != 15 {
 		t.Fatalf("seenDifficulties = %+v", seenDifficulties)
 	}
 }
@@ -341,7 +347,7 @@ func TestCreateTasksFromCustomPromptDocumentsPreparesPortableSource(t *testing.T
 		SourcePath:       sourcePath,
 		TargetSourcePath: filepath.Join(taskPath, filepath.Base(taskPath)),
 		TaskType:         "0-1代码生成",
-		PromptDifficulty: "一般",
+		PromptDifficulty: "困难",
 		PromptText:       "新增一个前端调试入口，方便快速查看当前页面运行状态。",
 		ClaimSequence:    1,
 		LocalPath:        taskPath,

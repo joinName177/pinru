@@ -51,11 +51,11 @@ func TestGenerateCustomProjectPromptDocumentsWritesMarkdownToCustomRoot(t *testi
 	expectedDoc := strings.Join([]string{
 		"**0-1代码生成**",
 		"",
-		"1. 【困难】新增完整地址簿能力，让用户能维护常用地址并在发布流程中复用。",
+		"1. 【困难】新增完整地址簿能力，让用户维护常用地址并在发布流程中复用；地址要和现有账号、订单和通知链路打通，保存失败时保留草稿并给出可重试的反馈。",
 		"",
 		"**Feature迭代**",
 		"",
-		"1. 【困难】在已有列表里补充状态筛选，方便快速定位异常数据。",
+		"1. 【地狱】在已有列表里补充状态筛选，并保证筛选条件、分页位置、批量操作结果和导出数据始终一致；切换筛选或刷新后不能出现列表与统计口径对不上的情况。",
 	}, "\n")
 	svc := &PromptService{
 		store:  testStore,
@@ -74,7 +74,7 @@ func TestGenerateCustomProjectPromptDocumentsWritesMarkdownToCustomRoot(t *testi
 	result, err := svc.GenerateCustomProjectPromptDocuments(GenerateCustomProjectPromptDocumentsRequest{
 		ProjectID:    "project-custom-doc",
 		ProjectNames: []string{"zw-001"},
-		Counts:       &internalprompt.DocumentCounts{CodeGen: 1, Feature: 1, General: 0, Difficult: 2},
+		Counts:       &internalprompt.DocumentCounts{CodeGen: 1, Feature: 1, Difficult: 1, Hell: 1},
 	})
 	if err != nil {
 		t.Fatalf("GenerateCustomProjectPromptDocuments() error = %v", err)
@@ -109,10 +109,11 @@ func TestBuildCustomProjectPromptDocumentPromptUsesActualDifficultyByDefault(t *
 
 	requiredSnippets := []string{
 		"只生成 22 条，其中 0-1代码生成 10 条，Feature迭代 10 条，Bug修复 2 条",
-		"整批严格生成【一般】0 条、【困难】22 条",
-		"只允许使用【一般】和【困难】两种标签",
+		"整批严格生成【困难】20 条、【地狱】2 条",
+		"只允许使用【困难】和【地狱】两种标签",
 		"避免对项目已经具备的功能重复出题",
-		"交付边界点到为止",
+		"严禁简单需求",
+		"不允许写成孤立脚手架、空白项目的从零搭建",
 		"模板化表达、AI式前言",
 		"语义和句式都要明显不同",
 		"可核查的交付结果",
@@ -121,6 +122,8 @@ func TestBuildCustomProjectPromptDocumentPromptUsesActualDifficultyByDefault(t *
 		"不能故意制造失败",
 		"困难题准入门槛",
 		"不能拆成互不影响的局部小修",
+		"至少命中一类真实复杂度",
+		"同一业务模块内多个协作部分的真实联动也可以构成困难题",
 		"文字截断与完整名称提示",
 		"本地存储失败提示",
 		"上传文件类型或大小校验",
@@ -158,8 +161,8 @@ func TestBuildCustomProjectPromptDocumentPromptUsesActualDifficultyByDefault(t *
 }
 
 func TestBuildCustomProjectPromptDocumentPromptAppliesExactDifficultyAllocation(t *testing.T) {
-	prompt := buildCustomProjectPromptDocumentPrompt("zw-001", nil, internalprompt.DocumentCounts{Feature: 3, BugFix: 2, General: 2, Difficult: 3})
-	for _, want := range []string{"难度数量：整批严格生成【一般】2 条、【困难】3 条", "只允许使用【一般】和【困难】", "题型数量与难度数量是两套独立约束"} {
+	prompt := buildCustomProjectPromptDocumentPrompt("zw-001", nil, internalprompt.DocumentCounts{Feature: 3, BugFix: 2, Difficult: 2, Hell: 3})
+	for _, want := range []string{"难度数量：整批严格生成【困难】2 条、【地狱】3 条", "只允许使用【困难】和【地狱】", "题型数量与难度数量是两套独立约束"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("difficulty allocation prompt missing %q:\n%s", want, prompt)
 		}
@@ -221,12 +224,15 @@ func TestGenerateCustomProjectPromptDocumentsRejectsInvalidCliOutput(t *testing.
 }
 
 func TestCustomDocumentUsesRequestedCountsAndAllowsNoCodeGeneration(t *testing.T) {
-	counts := internalprompt.DocumentCounts{Feature: 2, BugFix: 1, General: 1, Difficult: 2}
+	counts := internalprompt.DocumentCounts{Feature: 2, BugFix: 1, Difficult: 2, Hell: 1}
 	prompt := buildCustomProjectPromptDocumentPrompt("cyc-05", nil, counts)
 	if !strings.Contains(prompt, "只生成 3 条，其中 0-1代码生成 0 条，Feature迭代 2 条，Bug修复 1 条") {
 		t.Fatal("generation prompt did not use configured counts")
 	}
-	content := "**Feature迭代**\n1. 【一般】需求一\n2. 【困难】需求二\n**Bug修复**\n1. 【困难】修复已有问题"
+	featureOne := "在现有列表里补充状态筛选，并保证筛选条件、分页位置和刷新后的结果保持一致，切换筛选时不能残留上一轮的数据，批量处理之后汇总数量和空态提示也要同步更新。"
+	featureTwo := "扩展审核流程的多状态流转，把撤回、驳回和重新提交串起来，并保证列表摘要、详情内容和历史记录三处状态始终一致，任一环节失败都要保留可回退的上一步状态。"
+	bugFix := "修复商品下架后仍出现在搜索结果里的问题，同时刷新相关缓存，缓存刷新失败时列表要回退到数据库结果而不是继续展示旧数据，重试成功后搜索结果和商品详情要保持一致。"
+	content := "**Feature迭代**\n1. 【困难】" + featureOne + "\n2. 【地狱】" + featureTwo + "\n**Bug修复**\n1. 【困难】" + bugFix
 	svc := &PromptService{requirementDocGenerator: func(context.Context, string, string, string) (string, error) { return "生成说明\n" + content, nil }}
 	got, err := svc.generateCustomProjectPromptDocument(context.Background(), t.TempDir(), "cyc-05", "", counts)
 	if err != nil || got != content {
@@ -706,7 +712,7 @@ func TestGenerateTaskPromptWithContextRegeneratesDuplicatePrompt(t *testing.T) {
 			if !strings.Contains(prompt, existingPrompt) {
 				t.Fatalf("regeneration prompt missing duplicate text: %q", prompt)
 			}
-			return generatedPromptResult{PromptText: nextPrompt, PromptDifficulty: "一般"}, nil
+			return generatedPromptResult{PromptText: nextPrompt, PromptDifficulty: "困难"}, nil
 		},
 		promptHumanizer: func(ctx context.Context, workDir, prompt, model string) (string, error) {
 			if !strings.Contains(prompt, nextPrompt) {
@@ -768,9 +774,9 @@ func TestGenerateTaskPromptWithContextRegeneratesDuplicateFromAnotherProject(t *
 		promptGenerator: func(ctx context.Context, workDir, prompt, model string) (generatedPromptResult, error) {
 			callCount++
 			if callCount == 1 {
-				return generatedPromptResult{PromptText: existingPrompt, PromptDifficulty: "一般"}, nil
+				return generatedPromptResult{PromptText: existingPrompt, PromptDifficulty: "困难"}, nil
 			}
-			return generatedPromptResult{PromptText: nextPrompt, PromptDifficulty: "一般"}, nil
+			return generatedPromptResult{PromptText: nextPrompt, PromptDifficulty: "困难"}, nil
 		},
 		promptHumanizer: func(ctx context.Context, workDir, prompt, model string) (string, error) {
 			return nextPrompt, nil
@@ -814,7 +820,7 @@ func TestGenerateTaskPromptWithContextDoesNotSaveAfterDuplicateRetriesExhausted(
 		cliSvc: appcli.NewWithResolver(func(string) (string, error) { return "/tmp/fake-claude", nil }),
 		promptGenerator: func(ctx context.Context, workDir, prompt, model string) (generatedPromptResult, error) {
 			callCount++
-			return generatedPromptResult{PromptText: existingPrompt, PromptDifficulty: "一般"}, nil
+			return generatedPromptResult{PromptText: existingPrompt, PromptDifficulty: "困难"}, nil
 		},
 	}
 
@@ -861,7 +867,7 @@ func TestGenerateTaskPromptWithContextFailsClosedWhenSemanticJudgeFails(t *testi
 		store:  testStore,
 		cliSvc: appcli.NewWithResolver(func(string) (string, error) { return "/tmp/fake-claude", nil }),
 		promptGenerator: func(ctx context.Context, workDir, prompt, model string) (generatedPromptResult, error) {
-			return generatedPromptResult{PromptText: generatedPrompt, PromptDifficulty: "一般"}, nil
+			return generatedPromptResult{PromptText: generatedPrompt, PromptDifficulty: "困难"}, nil
 		},
 		duplicateJudge: func(ctx context.Context, workDir, prompt, model string) (semanticDuplicateDecision, error) {
 			return semanticDuplicateDecision{}, errors.New("judge unavailable")
@@ -907,7 +913,7 @@ func TestGenerateTaskPromptWithContextKeepsVerifiedRawPromptWhenPolishBecomesSem
 		store:  testStore,
 		cliSvc: appcli.NewWithResolver(func(string) (string, error) { return "/tmp/fake-claude", nil }),
 		promptGenerator: func(ctx context.Context, workDir, prompt, model string) (generatedPromptResult, error) {
-			return generatedPromptResult{PromptText: rawPrompt, PromptDifficulty: "一般"}, nil
+			return generatedPromptResult{PromptText: rawPrompt, PromptDifficulty: "困难"}, nil
 		},
 		promptHumanizer: func(ctx context.Context, workDir, prompt, model string) (string, error) {
 			return polishedDuplicate, nil
@@ -974,7 +980,7 @@ func TestGenerateTaskPromptWithContextRegeneratesSemanticDuplicatePrompt(t *test
 		promptGenerator: func(ctx context.Context, workDir, prompt, model string) (generatedPromptResult, error) {
 			callCount++
 			if callCount == 1 {
-				return generatedPromptResult{PromptText: semanticDuplicatePrompt, PromptDifficulty: "一般"}, nil
+				return generatedPromptResult{PromptText: semanticDuplicatePrompt, PromptDifficulty: "困难"}, nil
 			}
 			if !strings.Contains(prompt, "语义高度相似") {
 				t.Fatalf("regeneration prompt missing semantic duplicate instruction: %q", prompt)
@@ -982,7 +988,7 @@ func TestGenerateTaskPromptWithContextRegeneratesSemanticDuplicatePrompt(t *test
 			if !strings.Contains(prompt, siblingPrompt.ID) {
 				t.Fatalf("regeneration prompt missing duplicate task id: %q", prompt)
 			}
-			return generatedPromptResult{PromptText: nextPrompt, PromptDifficulty: "一般"}, nil
+			return generatedPromptResult{PromptText: nextPrompt, PromptDifficulty: "困难"}, nil
 		},
 		duplicateJudge: func(ctx context.Context, workDir, prompt, model string) (semanticDuplicateDecision, error) {
 			judgeCount++
@@ -1063,12 +1069,12 @@ func TestGenerateTaskPromptWithContextRegeneratesMenuStockSemanticDuplicatePromp
 		promptGenerator: func(ctx context.Context, workDir, prompt, model string) (generatedPromptResult, error) {
 			callCount++
 			if callCount == 1 {
-				return generatedPromptResult{PromptText: semanticDuplicatePrompt, PromptDifficulty: "一般"}, nil
+				return generatedPromptResult{PromptText: semanticDuplicatePrompt, PromptDifficulty: "困难"}, nil
 			}
 			if !strings.Contains(prompt, siblingPrompt.ID) {
 				t.Fatalf("regeneration prompt missing duplicate task id: %q", prompt)
 			}
-			return generatedPromptResult{PromptText: nextPrompt, PromptDifficulty: "一般"}, nil
+			return generatedPromptResult{PromptText: nextPrompt, PromptDifficulty: "困难"}, nil
 		},
 		duplicateJudge: func(ctx context.Context, workDir, prompt, model string) (semanticDuplicateDecision, error) {
 			judgeCount++
@@ -1155,7 +1161,7 @@ func TestGenerateTaskPromptWithContextRegeneratesCrossBatchCommentReplySemanticD
 			if !strings.Contains(prompt, siblingPrompt.ID) {
 				t.Fatalf("regeneration prompt missing cross-batch duplicate task id: %q", prompt)
 			}
-			return generatedPromptResult{PromptText: nextPrompt, PromptDifficulty: "一般"}, nil
+			return generatedPromptResult{PromptText: nextPrompt, PromptDifficulty: "困难"}, nil
 		},
 		duplicateJudge: func(ctx context.Context, workDir, prompt, model string) (semanticDuplicateDecision, error) {
 			judgeCount++
@@ -1322,7 +1328,7 @@ func TestGenerateTaskPromptWithContextUsesModelDifficulty(t *testing.T) {
 		store:  testStore,
 		cliSvc: appcli.NewWithResolver(func(string) (string, error) { return "/tmp/fake-claude", nil }),
 		promptGenerator: func(ctx context.Context, workDir, prompt, model string) (generatedPromptResult, error) {
-			if !strings.Contains(prompt, "promptDifficulty 只能是 简单、一般、困难、地狱 四选一") {
+			if !strings.Contains(prompt, "promptDifficulty 只能取 困难 或 地狱") {
 				t.Fatalf("promptGenerator prompt missing difficulty output contract: %q", prompt)
 			}
 			return generatedPromptResult{
@@ -1552,7 +1558,7 @@ func TestGenerateTaskPromptWithContextRejectsMachineWrittenPromptBeforeSaving(t 
 		store:  testStore,
 		cliSvc: appcli.NewWithResolver(func(string) (string, error) { return "/tmp/fake-claude", nil }),
 		promptGenerator: func(context.Context, string, string, string) (generatedPromptResult, error) {
-			return generatedPromptResult{PromptText: machineWritten, PromptDifficulty: "一般"}, nil
+			return generatedPromptResult{PromptText: machineWritten, PromptDifficulty: "困难"}, nil
 		},
 		promptHumanizer: func(context.Context, string, string, string) (string, error) {
 			return machineWritten, nil
@@ -1597,12 +1603,12 @@ func TestGenerateTaskPromptWithContextRegeneratesPromptThatFailsQualityPrecheck(
 		promptGenerator: func(_ context.Context, _ string, prompt string, _ string) (generatedPromptResult, error) {
 			callCount++
 			if callCount == 1 {
-				return generatedPromptResult{PromptText: invalidPrompt, PromptDifficulty: "一般"}, nil
+				return generatedPromptResult{PromptText: invalidPrompt, PromptDifficulty: "困难"}, nil
 			}
 			if !strings.Contains(prompt, invalidPrompt) || !strings.Contains(prompt, "审核规则") || !strings.Contains(prompt, "质量预检") {
 				t.Fatalf("quality regeneration prompt missing rejected result and reason: %q", prompt)
 			}
-			return generatedPromptResult{PromptText: validPrompt, PromptDifficulty: "一般"}, nil
+			return generatedPromptResult{PromptText: validPrompt, PromptDifficulty: "困难"}, nil
 		},
 	}
 
@@ -1633,13 +1639,13 @@ func TestEstimatePromptDifficultyByScopeAndConstraints(t *testing.T) {
 		expected string
 	}{
 		{
-			name: "single file is simple",
+			name: "single file still floors at difficult",
 			req: GeneratePromptRequest{
 				TaskType: "Bug修复",
 				Scopes:   []string{"单文件"},
 			},
 			prompt:   "保存备注后列表没有立即刷新，需要补齐单文件内的状态更新。",
-			expected: "简单",
+			expected: "困难",
 		},
 		{
 			name: "small cross module task is normal",

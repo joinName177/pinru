@@ -66,11 +66,21 @@ func TestPairwiseProjectManualCommandRunsForegroundInBoundContainer(t *testing.T
 		pairwiseProjectLaunch{Command: "npm run dev", Port: 5173, Host: "::1"},
 		4821,
 	)
-	want := "docker exec -it -w '/workspace/project-a' 'container-a' sh -lc 'exec npm run dev -- --host 0.0.0.0 --port 4821 --strictPort'"
-	if command != want {
-		t.Fatalf("command = %s\nwant    = %s", command, want)
+	for _, want := range []string{
+		"container='container-a'",
+		"docker exec -it -w '/workspace/project-a' \"$container\" sh -lc",
+		"项目地址：http://127.0.0.1:4821",
+		"docker inspect --format",
+		"proxy_pid=$!",
+		"trap cleanup EXIT HUP INT TERM",
+		`s.listen(4821,"127.0.0.1"`,
+		"exec npm run dev -- --host 0.0.0.0 --port 4821 --strictPort",
+	} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("command missing %q: %s", want, command)
+		}
 	}
-	for _, forbidden := range []string{"node -e", "proxy_pid", "setsid", "trap cleanup", "pinru-project"} {
+	for _, forbidden := range []string{"setsid", "pinru-project"} {
 		if strings.Contains(command, forbidden) {
 			t.Fatalf("manual command contains %q: %s", forbidden, command)
 		}
@@ -183,7 +193,7 @@ func TestRecordPairwiseVideoStoresAbsolutePathAndMarksVideoReady(t *testing.T) {
 	if !strings.Contains(joined, "-v -V30 -T3 -D1 -k -x") {
 		t.Fatalf("screencapture args = %q", joined)
 	}
-	if len(commands) != 4 || commands[2] != "/usr/bin/open http://172.18.0.8:4821" || !strings.HasPrefix(commands[3], "/usr/sbin/screencapture ") {
+	if len(commands) != 3 || commands[1] != "/usr/bin/open http://127.0.0.1:4821" || !strings.HasPrefix(commands[2], "/usr/sbin/screencapture ") {
 		t.Fatalf("commands = %#v", commands)
 	}
 }

@@ -527,7 +527,9 @@ func validateCustomPromptDocumentBatch(entries []customPromptEntry) error {
 			return fmt.Errorf("不支持的题型：%s", kind)
 		}
 		switch strings.TrimSpace(entry.PromptDifficulty) {
-		case "简单", "一般", "困难", "地狱":
+		case "困难", "地狱":
+		case "简单", "一般":
+			return fmt.Errorf("第 %d 条 %s 题难度为“%s”，低于困难下限，简单和一般难度不再接收", index+1, kind, strings.TrimSpace(entry.PromptDifficulty))
 		default:
 			return fmt.Errorf("第 %d 条 %s 题难度不支持：%s", index+1, kind, entry.PromptDifficulty)
 		}

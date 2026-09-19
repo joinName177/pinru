@@ -430,24 +430,24 @@ export function CustomProjectPickerModal({
   const prefixLabel = formatCustomProjectPrefixes(scanResult?.prefixes);
   const [selectedNames, setSelectedNames] = useState<string[]>([]);
   const [quantities, setQuantities] = useState({ codeGen: '10', feature: '10', bugFix: '2' });
-  const [difficultyQuantities, setDifficultyQuantities] = useState({ general: '0', difficult: '22' });
+  const [difficultyQuantities, setDifficultyQuantities] = useState({ difficult: '20', hell: '2' });
   const counts: CustomPromptCounts = {
     codeGen: Number(quantities.codeGen),
     feature: Number(quantities.feature),
     bugFix: Number(quantities.bugFix),
-    general: Number(difficultyQuantities.general),
     difficult: Number(difficultyQuantities.difficult),
+    hell: Number(difficultyQuantities.hell),
   };
   const totalCount = counts.codeGen + counts.feature + counts.bugFix;
-  const difficultyTotal = counts.general + counts.difficult;
+  const difficultyTotal = counts.difficult + counts.hell;
   const allQuantityValues = [
     quantities.codeGen,
     quantities.feature,
     quantities.bugFix,
-    difficultyQuantities.general,
     difficultyQuantities.difficult,
+    difficultyQuantities.hell,
   ];
-  const parsedCounts = [counts.codeGen, counts.feature, counts.bugFix, counts.general, counts.difficult];
+  const parsedCounts = [counts.codeGen, counts.feature, counts.bugFix, counts.difficult, counts.hell];
   const validCountInputs = allQuantityValues.every((value) => /^\d+$/.test(value))
     && parsedCounts.every((n) => Number.isSafeInteger(n) && n >= 0)
     && Number.isSafeInteger(totalCount)
@@ -529,7 +529,7 @@ export function CustomProjectPickerModal({
             <div className="mt-4 border-t border-stone-200 pt-3 dark:border-stone-700">
               <p className="mb-2 text-xs font-medium text-stone-700 dark:text-stone-200">难度数量分配</p>
               <div className="grid grid-cols-2 gap-3">
-                {([['general', '一般'], ['difficult', '困难']] as const).map(([key, label]) => (
+                {([['difficult', '困难'], ['hell', '地狱']] as const).map(([key, label]) => (
                   <label key={key} className="text-xs text-stone-600 dark:text-stone-300">
                     {label}
                     <input
@@ -546,7 +546,7 @@ export function CustomProjectPickerModal({
               {!validCountInputs
                 ? '请输入有效的非负整数。'
                 : difficultyAllocationMatches
-                  ? `每个项目共 ${totalCount} 题，其中一般 ${counts.general} 题、困难 ${counts.difficult} 题。`
+                  ? `每个项目共 ${totalCount} 题，其中困难 ${counts.difficult} 题、地狱 ${counts.hell} 题，难度下限为困难。`
                   : `难度数量合计 ${difficultyTotal} 题，与题型总数 ${totalCount} 题不一致。`}
             </p>
           </fieldset>

@@ -192,8 +192,20 @@ func pairwiseProjectManualCommand(containerID, containerRepo string, launch pair
 	if launch.Host != "::1" {
 		args = fmt.Sprintf(" -- -H 0.0.0.0 -p %d", port)
 	}
-	command := "exec " + launch.Command + args
-	return "docker exec -it -w " + shellQuote(containerRepo) + " " + shellQuote(containerID) + " sh -lc " + shellQuote(command)
+	proxyScript := `const n=require("net"),p=Number(process.argv[1]),h=process.argv[2],tp=Number(process.argv[3]);const s=n.createServer(c=>{const u=n.connect(tp,h);c.pipe(u);u.pipe(c);c.on("error",()=>u.destroy());u.on("error",()=>c.destroy())});s.listen(p,"127.0.0.1",()=>console.log("\n项目地址：http://127.0.0.1:"+p+"/\n"))`
+	containerVar := "container=" + shellQuote(containerID)
+	inspect := `target_ip=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container")`
+	checkIP := `if [ -z "$target_ip" ]; then echo '无法读取容器访问地址' >&2; exit 1; fi`
+	startProxy := "node -e " + shellQuote(proxyScript) + fmt.Sprintf(" %d \"$target_ip\" %d & proxy_pid=$!", port, port)
+	cleanup := `cleanup() { kill -TERM "$proxy_pid" 2>/dev/null || true; }`
+	trap := `trap cleanup EXIT HUP INT TERM`
+	devCommand := "exec " + launch.Command + args
+	runProject := "docker exec -it -w " + shellQuote(containerRepo) + ` "$container" sh -lc ` + shellQuote(devCommand)
+	return strings.Join([]string{containerVar, inspect, checkIP, startProxy, cleanup, trap, runProject}, "; ")
+}
+
+func pairwiseProjectBrowserURL(port int) string {
+	return fmt.Sprintf("http://127.0.0.1:%d", port)
 }
 
 func (s *AnnotationService) pairwiseProjectTarget(ctx context.Context, req PairwiseSideRequest, validateRevision bool) (*domain.PairwiseRun, string, error) {
@@ -245,17 +257,17 @@ func (s *AnnotationService) StartPairwiseProject(req PairwiseSideRequest) (*Pair
 	containerRepo := filepath.ToSlash(filepath.Join("/workspace", run.RepoRelativePath))
 	proxyPort, err := randomPairwiseProjectAvailablePort(cryptorand.Reader, func(port int) bool {
 		const probe = `const n=require("net"),s=n.createServer();s.once("error",()=>process.exit(1));s.listen(Number(process.argv[1]),"0.0.0.0",()=>s.close(()=>process.exit(0)))`
+		const hostProbe = `const n=require("net"),s=n.createServer();s.once("error",()=>process.exit(1));s.listen(Number(process.argv[1]),"127.0.0.1",()=>s.close(()=>process.exit(0)))`
+		if _, probeErr := s.command(ctx, "", "node", "-e", hostProbe, strconv.Itoa(port)); probeErr != nil {
+			return false
+		}
 		_, probeErr := s.command(ctx, "", "docker", "exec", run.ContainerID, "node", "-e", probe, strconv.Itoa(port))
 		return probeErr == nil
 	})
 	if err != nil {
 		return nil, errors.New("无法生成项目代理端口")
 	}
-	ipRaw, err := s.command(ctx, "", "docker", "inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", run.ContainerID)
-	if err != nil || strings.TrimSpace(string(ipRaw)) == "" {
-		return nil, errors.New("无法读取容器访问地址")
-	}
-	url := fmt.Sprintf("http://%s:%d", strings.TrimSpace(string(ipRaw)), proxyPort)
+	url := pairwiseProjectBrowserURL(proxyPort)
 	command := pairwiseProjectManualCommand(run.ContainerID, containerRepo, launch, proxyPort)
 	return &PairwiseProjectState{Side: req.Side, Running: false, URL: url, Command: command}, nil
 }
@@ -274,11 +286,7 @@ func (s *AnnotationService) pairwiseProjectURL(ctx context.Context, containerID,
 	if err != nil {
 		return "", err
 	}
-	ipRaw, err := s.command(ctx, "", "docker", "inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", containerID)
-	if err != nil || strings.TrimSpace(string(ipRaw)) == "" {
-		return "", errors.New("无法读取容器访问地址")
-	}
-	return fmt.Sprintf("http://%s:%d", strings.TrimSpace(string(ipRaw)), port), nil
+	return pairwiseProjectBrowserURL(port), nil
 }
 
 func (s *AnnotationService) StopPairwiseProject(req PairwiseSideRequest) error {

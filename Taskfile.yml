@@ -29,6 +29,13 @@ tasks:
       - codesign --force --deep --sign - dist/PINRU.app
       - echo "Packaged to dist/PINRU.app"
 
+  dmg:
+    desc: Build and package a macOS DMG installer
+    cmds:
+      - cd frontend && npm run build
+      - go build -o build/bin/pinru .
+      - bash scripts/package_macos_dmg.sh
+
   clean:
     desc: Clean build artifacts
     cmds:

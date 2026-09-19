@@ -40,7 +40,7 @@ export function buildContainerCommand(task: TaskIdentity, apiKey = '', side?: Pa
     'mkdir "$RUN_DIR" && \\',
     'mkdir "$RUN_DIR/workspace" && \\',
     'printf \'容器：%s\\n本题本地目录：%s\\n\' "$CONTAINER_NAME" "$RUN_DIR" && \\',
-    'docker run -it --init --restart=no --cap-drop ALL --security-opt no-new-privileges --name "$CONTAINER_NAME" --mount "type=bind,src=$RUN_DIR/workspace,dst=/workspace" -e apikey adminfather/benzhi-claude-code:20260909-isolated-git',
+    'docker run -it --init --restart=no --cap-drop ALL --security-opt no-new-privileges --name "$CONTAINER_NAME" --mount "type=bind,src=$RUN_DIR/workspace,dst=/workspace" -e apikey adminfather/benzhi-claude-code2:20260919',
     ')',
   ].join('\n');
   return { containerName, baseDirectory: `$HOME/${prefix}-claude-runs`, runDirectory, command };

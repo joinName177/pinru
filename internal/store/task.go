@@ -12,7 +12,10 @@ import (
 )
 
 const defaultTaskType = "未归类"
-const DefaultPromptDifficulty = "一般"
+
+// DefaultPromptDifficulty 是生成题目的难度下限。项目只生成困难及以上的题目，
+// 因此难度缺失或无法识别时一律按困难处理。
+const DefaultPromptDifficulty = "困难"
 
 type Task struct {
 	ID                         string        `json:"id"`
@@ -252,6 +255,9 @@ func normalizePromptDifficulty(value string) string {
 	switch strings.TrimSpace(value) {
 	case "简单":
 		return "简单"
+	case "一般":
+		// 历史记录保留原始标签；新的生成流程不再产出一般难度。
+		return "一般"
 	case "困难":
 		return "困难"
 	case "地狱":

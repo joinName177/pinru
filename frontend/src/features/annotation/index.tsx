@@ -506,6 +506,39 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     return bindPairwiseCaseToContainer(selectedCase, side, containerId);
   };
 
+  const bindExpectedPairwiseContainer = async (
+    targetCase: AnnotationCase,
+    side: 'A' | 'B',
+    refreshedContainers: AnnotationContainer[],
+  ) => {
+    let expectedName = '';
+    try {
+      expectedName = buildContainerCommand(targetCase, '', side).containerName.toLowerCase();
+    } catch (error) {
+      return `${side}：${errorMessage(error)}`;
+    }
+    const matches = refreshedContainers.filter((item) => item.name.toLowerCase() === expectedName);
+    if (matches.length !== 1) return `${side}：未找到唯一匹配的 ${expectedName}`;
+    const matched = matches[0];
+    if (matched.state !== 'running') return `${side}：${matched.name} 尚未运行`;
+    if (!targetCase.initialSha) return `${side}：题目尚未准备初始快照`;
+    if (!await bindPairwiseCaseToContainer(targetCase, side, matched.id)) return `${side}：绑定失败`;
+    return '';
+  };
+
+  const handleRefreshPairwiseContainer = async (side: 'A' | 'B') => {
+    const currentTaskId = selectedCase?.taskId;
+    if (!currentTaskId) return;
+    const refreshed = await loadProject(projectId);
+    if (!refreshed) return;
+    const targetCase = refreshed.cases.find((item) => item.taskId === currentTaskId);
+    if (!targetCase) return;
+    setPairwisePromptCopied(false);
+    const failure = await bindExpectedPairwiseContainer(targetCase, side, refreshed.containers);
+    if (failure) setActionError(failure);
+    else setNotice(`${side} 容器已刷新并绑定`);
+  };
+
   const handleRefreshPairwiseContainers = async () => {
     const currentTaskId = selectedCase?.taskId;
     if (!currentTaskId) return;
@@ -516,28 +549,8 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     setPairwisePromptCopied(false);
     const failures: string[] = [];
     for (const side of ['A', 'B'] as const) {
-      let expectedName = '';
-      try {
-        expectedName = buildContainerCommand(targetCase, '', side).containerName.toLowerCase();
-      } catch (error) {
-        failures.push(`${side}：${errorMessage(error)}`);
-        continue;
-      }
-      const matches = refreshed.containers.filter((item) => item.name.toLowerCase() === expectedName);
-      if (matches.length !== 1) {
-        failures.push(`${side}：未找到唯一匹配的 ${expectedName}`);
-        continue;
-      }
-      const matched = matches[0];
-      if (matched.state !== 'running') {
-        failures.push(`${side}：${matched.name} 尚未运行`);
-        continue;
-      }
-      if (!targetCase.initialSha) {
-        failures.push(`${side}：题目尚未准备初始快照`);
-        continue;
-      }
-      if (!await bindPairwiseCaseToContainer(targetCase, side, matched.id)) failures.push(`${side}：绑定失败`);
+      const failure = await bindExpectedPairwiseContainer(targetCase, side, refreshed.containers);
+      if (failure) failures.push(failure);
     }
     if (failures.length > 0) setActionError(failures.join('；'));
     else setNotice('A/B 容器已刷新并绑定，可以复制提示词开始执行');
@@ -924,6 +937,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                     runJob={(label, submit) => runCaseJob(selectedCase.taskId, label, submit)}
                     onCopyContainerCommand={handleCopyPairwiseStartupCommand}
                     onBindContainer={handleBindPairwiseContainer}
+                    onRefreshContainer={handleRefreshPairwiseContainer}
                     onRefreshContainers={handleRefreshPairwiseContainers}
                     onCopyPrompt={copyPairwisePrompt}
                     onStartProject={handleStartPairwiseProject}
