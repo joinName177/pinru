@@ -240,6 +240,8 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
   const [pairwisePromptCopied, setPairwisePromptCopied] = useState(false);
   const [showPairwiseReviewSelection, setShowPairwiseReviewSelection] = useState(false);
   const [pairwiseReviewTaskIds, setPairwiseReviewTaskIds] = useState<string[]>([]);
+  const [showPairwiseExportSelection, setShowPairwiseExportSelection] = useState(false);
+  const [pairwiseExportTaskIds, setPairwiseExportTaskIds] = useState<string[]>([]);
   const pairwiseCases = cases.filter((item) => item.mode === 'pairwise_gsb');
   const projectEpoch = useRef(0);
   const settingsEpoch = useRef(0);
@@ -312,6 +314,8 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     setPairwisePromptCopied(false);
     setShowPairwiseReviewSelection(false);
     setPairwiseReviewTaskIds([]);
+    setShowPairwiseExportSelection(false);
+    setPairwiseExportTaskIds([]);
     autoEnableAttempts.current.clear();
     settingsEpoch.current += 1;
     setSelectedTaskId('');
@@ -650,14 +654,15 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     }
   };
 
-  const handlePairwiseExport = async () => {
+  const handlePairwiseExport = async (taskIds: string[]) => {
+    if (taskIds.length === 0) return;
     setActionError('');
     setExportResult(null);
     const targetProjectId = activeProjectId.current;
     const label = '批量导出 GSB';
     setExportBusy({ taskId: '', label, jobId: '', progress: 0, message: '正在提交后台任务' });
     try {
-      const submitted = await exportPairwise({ projectId: targetProjectId, submitter, submittedAt });
+      const submitted = await exportPairwise({ projectId: targetProjectId, taskIds, submitter, submittedAt });
       setExportBusy({ taskId: '', label, jobId: submitted.id, progress: submitted.progress ?? 0, message: submitted.progressMessage ?? '等待执行' });
       const finished = await waitForAnnotationJob(submitted.id, (job) => {
         setExportBusy({ taskId: '', label, jobId: submitted.id, progress: job.progress, message: job.progressMessage || '执行中' });
@@ -723,8 +728,14 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
             {!taskId && <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">{`${projectName ? `${projectName} · ` : ''}Pair-wise GSB 批量审核与导出。`}</p>}
           </div>
           <div className="flex flex-wrap gap-2">
-            {!taskId && cases.length > 0 && <button className={SECONDARY_BUTTON} disabled={loading || globalBusy || Object.keys(caseBusy).length > 0} aria-expanded={showPairwiseReviewSelection} onClick={() => setShowPairwiseReviewSelection((open) => !open)}>{batchBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}批量审核 GSB</button>}
-            {!taskId && cases.length > 0 && <button className={PRIMARY_BUTTON} disabled={loading || globalBusy} onClick={() => void handlePairwiseExport()}><Download className="h-4 w-4" />批量导出 GSB</button>}
+            {!taskId && cases.length > 0 && <button className={SECONDARY_BUTTON} disabled={loading || globalBusy || Object.keys(caseBusy).length > 0} aria-expanded={showPairwiseReviewSelection} onClick={() => {
+              setShowPairwiseReviewSelection((open) => !open);
+              setShowPairwiseExportSelection(false);
+            }}>{batchBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}批量审核 GSB</button>}
+            {!taskId && cases.length > 0 && <button className={PRIMARY_BUTTON} disabled={loading || globalBusy} aria-expanded={showPairwiseExportSelection} onClick={() => {
+              setShowPairwiseExportSelection((open) => !open);
+              setShowPairwiseReviewSelection(false);
+            }}><Download className="h-4 w-4" />批量导出 GSB</button>}
             {taskId && view === 'capture' && selectedCase?.mode !== 'pairwise_gsb' && (
               <button className={startupCommandCopied ? COMPLETED_BUTTON : SECONDARY_BUTTON} disabled={!startup?.value} onClick={() => void handleCopyStartupCommand()}>
                 {startupCommandCopied ? <CheckCircle2 className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
@@ -745,6 +756,20 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
               </label>)}
             </div>
             <button className={`${PRIMARY_BUTTON} mt-3`} disabled={globalBusy || pairwiseReviewTaskIds.length === 0} onClick={() => void handleBatchPairwiseReview(pairwiseReviewTaskIds)}>审核所选题目（{pairwiseReviewTaskIds.length}）</button>
+          </section>
+        )}
+
+        {showPairwiseExportSelection && !taskId && (
+          <section aria-label="选择 GSB 导出题目" className="mb-5 border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
+            <h2 className="font-semibold text-stone-800 dark:text-stone-100">选择要导出的题号</h2>
+            <p className="my-2 text-xs text-stone-500">只导出勾选题目中已完成 GSB 审核且理由完整的数据，录屏不是导出前置条件。</p>
+            <div className="max-h-64 space-y-2 overflow-y-auto">
+              {pairwiseCases.map((item) => <label key={item.taskId} className="flex items-start gap-3 border border-stone-200 p-3 text-sm dark:border-stone-700 dark:text-stone-100">
+                <input type="checkbox" aria-label={`导出 ${item.taskName} ${item.taskId}`} checked={pairwiseExportTaskIds.includes(item.taskId)} disabled={globalBusy} onChange={(event) => setPairwiseExportTaskIds((ids) => event.target.checked ? [...ids.filter((id) => id !== item.taskId), item.taskId] : ids.filter((id) => id !== item.taskId))} />
+                <span><span className="font-semibold">{item.taskName}</span><span className="ml-2 text-xs text-stone-500">{item.taskId}</span></span>
+              </label>)}
+            </div>
+            <button className={`${PRIMARY_BUTTON} mt-3`} disabled={globalBusy || pairwiseExportTaskIds.length === 0} onClick={() => void handlePairwiseExport(pairwiseExportTaskIds)}>导出所选题目（{pairwiseExportTaskIds.length}）</button>
           </section>
         )}
 

@@ -84,7 +84,7 @@ func TestPairwiseFormalExportBlocksRemoteABMismatch(t *testing.T) {
 	s.verifyPairwiseRemote = func(context.Context, domain.Case) error {
 		return errors.New("远端 B 分支未指向登记的 B 产物")
 	}
-	_, err := s.ExportPairwise(PairwiseExportRequest{ProjectID: "batch", TaskID: c.TaskID})
+	_, err := s.ExportPairwise(PairwiseExportRequest{ProjectID: "batch", TaskIDs: []string{c.TaskID}})
 	if err == nil || !strings.Contains(err.Error(), "远端 B 分支") {
 		t.Fatalf("error = %v", err)
 	}
@@ -111,7 +111,7 @@ func TestPairwisePreflightAllowsMissingVideosButRequiresReview(t *testing.T) {
 func TestPairwiseExportWritesOnePairPerRow(t *testing.T) {
 	s, c := pairwiseExportCase(t, true)
 	result, err := s.ExportPairwise(PairwiseExportRequest{
-		ProjectID: "batch", TaskID: c.TaskID, Submitter: "标注员", SubmittedAt: "2026-09-17",
+		ProjectID: "batch", TaskIDs: []string{c.TaskID}, Submitter: "标注员", SubmittedAt: "2026-09-17",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -156,7 +156,7 @@ func TestPairwiseExportAllowsReviewedCaseWithoutVideos(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := s.ExportPairwise(PairwiseExportRequest{ProjectID: "batch", Submitter: "标注员"})
+	result, err := s.ExportPairwise(PairwiseExportRequest{ProjectID: "batch", TaskIDs: []string{c.TaskID}, Submitter: "标注员"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestPairwiseExportSkipsReviewWithoutReason(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := s.ExportPairwise(PairwiseExportRequest{ProjectID: "batch"})
+	_, err := s.ExportPairwise(PairwiseExportRequest{ProjectID: "batch", TaskIDs: []string{c.TaskID}})
 	if err == nil || !strings.Contains(err.Error(), "没有已完成 GSB 审核且理由完整的题目") {
 		t.Fatalf("error = %v", err)
 	}
@@ -185,8 +185,17 @@ func TestPairwiseExportSkipsReviewWithDecorativeQuoteBrackets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := s.ExportPairwise(PairwiseExportRequest{ProjectID: "batch", TaskID: c.TaskID})
+	_, err := s.ExportPairwise(PairwiseExportRequest{ProjectID: "batch", TaskIDs: []string{c.TaskID}})
 	if err == nil || !strings.Contains(err.Error(), "装饰引号") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestPairwiseExportRequiresSelectedTaskIDs(t *testing.T) {
+	s, _ := pairwiseExportCase(t, true)
+
+	_, err := s.ExportPairwise(PairwiseExportRequest{ProjectID: "batch"})
+	if err == nil || !strings.Contains(err.Error(), "至少选择一道") {
 		t.Fatalf("error = %v", err)
 	}
 }

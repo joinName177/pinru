@@ -241,7 +241,7 @@ describe('AnnotationWorkspace', () => {
     expect(api.listTraces).not.toHaveBeenCalled();
   });
 
-  it('selects task numbers for batch GSB review and keeps one export action', async () => {
+  it('selects task numbers independently for batch GSB review and export', async () => {
     const pairwise = makeCase({
       initialSha: 'a'.repeat(40), snapshotUrl: `https://github.com/u/r/commit/${'a'.repeat(40)}`, mode: 'pairwise_gsb',
       pairwise: {
@@ -270,7 +270,12 @@ describe('AnnotationWorkspace', () => {
     await waitFor(() => expect(api.batchReviewPairwise).toHaveBeenCalledWith({ projectId: 'project-1', taskIds: ['task-1'], force: false }));
     expect(await screen.findByText(/批量 GSB 完成：新审核 1 题/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '批量导出 GSB' }));
-    await waitFor(() => expect(api.exportPairwise).toHaveBeenCalledWith({ projectId: 'project-1', submitter: '', submittedAt: '' }));
+    expect(api.exportPairwise).not.toHaveBeenCalled();
+    const exportTask = screen.getByRole('checkbox', { name: /导出 低分也保留的任务/ });
+    expect(exportTask).not.toBeChecked();
+    fireEvent.click(exportTask);
+    fireEvent.click(screen.getByRole('button', { name: '导出所选题目（1）' }));
+    await waitFor(() => expect(api.exportPairwise).toHaveBeenCalledWith({ projectId: 'project-1', taskIds: ['task-1'], submitter: '', submittedAt: '' }));
 
     rerender(<AnnotationWorkspace projectId="project-1" taskId="task-1" />);
     await screen.findByText('GSB 对比结果');

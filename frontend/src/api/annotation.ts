@@ -313,7 +313,7 @@ export interface ExportAnnotationRequest {
 }
 
 export interface PairwiseExportRequest {
-  taskId?: string;
+  taskIds: string[];
   projectId: string;
   submitter: string;
   submittedAt: string;
@@ -447,7 +447,7 @@ export function exportCases(request: ExportAnnotationRequest): Promise<Backgroun
 }
 
 export function exportPairwise(request: PairwiseExportRequest): Promise<BackgroundJob> {
-  return submitAnnotationJob('annotation_pairwise_export', request.taskId ?? '', request);
+  return submitAnnotationJob('annotation_pairwise_export', '', request);
 }
 
 export const getAnnotationJob = getJob;

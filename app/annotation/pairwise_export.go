@@ -15,10 +15,10 @@ import (
 )
 
 type PairwiseExportRequest struct {
-	TaskID      string `json:"taskId,omitempty"`
-	ProjectID   string `json:"projectId"`
-	Submitter   string `json:"submitter"`
-	SubmittedAt string `json:"submittedAt"`
+	TaskIDs     []string `json:"taskIds"`
+	ProjectID   string   `json:"projectId"`
+	Submitter   string   `json:"submitter"`
+	SubmittedAt string   `json:"submittedAt"`
 }
 
 func (s *AnnotationService) PreflightPairwise(projectID string) (domain.Report, error) {
@@ -75,6 +75,15 @@ func (s *AnnotationService) exportPairwise(ctx context.Context, req PairwiseExpo
 	if strings.TrimSpace(req.ProjectID) == "" {
 		return nil, errors.New("请选择项目批次")
 	}
+	selected := make(map[string]struct{}, len(req.TaskIDs))
+	for _, taskID := range req.TaskIDs {
+		if taskID = strings.TrimSpace(taskID); taskID != "" {
+			selected[taskID] = struct{}{}
+		}
+	}
+	if len(selected) == 0 {
+		return nil, errors.New("请至少选择一道要导出的 GSB 题目")
+	}
 	unlock, err := s.lockTask("pairwise-export:" + req.ProjectID)
 	if err != nil {
 		return nil, err
@@ -87,12 +96,15 @@ func (s *AnnotationService) exportPairwise(ctx context.Context, req PairwiseExpo
 	}
 	cases := make([]domain.Case, 0, len(all))
 	skipped := make([]string, 0)
-	found := req.TaskID == ""
+	found := make(map[string]bool, len(selected))
 	for _, c := range all {
-		if c.Mode != domain.CaseModePairwiseGSB || (req.TaskID != "" && c.TaskID != req.TaskID) {
+		if c.Mode != domain.CaseModePairwiseGSB {
 			continue
 		}
-		found = true
+		if _, ok := selected[c.TaskID]; !ok {
+			continue
+		}
+		found[c.TaskID] = true
 		copy := c
 		populatePairwiseMetadata(&copy)
 		current := domain.CurrentPairwiseReview(copy)
@@ -121,8 +133,10 @@ func (s *AnnotationService) exportPairwise(ctx context.Context, req PairwiseExpo
 		copy.Pairwise = pairwise
 		cases = append(cases, copy)
 	}
-	if !found {
-		return nil, errors.New("题目不属于当前项目或尚未启用 Pair-wise GSB")
+	for taskID := range selected {
+		if !found[taskID] {
+			return nil, fmt.Errorf("所选题目 %s 不属于当前项目或尚未启用 Pair-wise GSB", taskID)
+		}
 	}
 	if len(cases) == 0 {
 		message := "当前范围没有已完成 GSB 审核且理由完整的题目"
