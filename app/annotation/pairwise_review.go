@@ -18,6 +18,8 @@ type PairwiseReviewRequest struct {
 	Force  bool   `json:"force"`
 }
 
+// 装饰性引号与括号的规则由生成端剔除和导出端拦截共同保证，
+// 这里不因该规则调整而作废历史 GSB 评价，避免整批重审。
 const pairwiseReviewSkillVersion = "pairwise-gsb-v7-20260918"
 
 func pairwiseReviewSkillHash() string {

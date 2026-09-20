@@ -56,12 +56,19 @@ func TestDecodePairwiseReviewRejectsMarkdownOrChecklistFormatting(t *testing.T) 
 	}
 }
 
-func TestDecodePairwiseReviewRejectsDecorativeQuoteBrackets(t *testing.T) {
-	for _, marks := range []string{"『筛选功能』", "「筛选功能」"} {
+func TestDecodePairwiseReviewStripsDecorativeQuoteBrackets(t *testing.T) {
+	for _, marks := range []string{"『筛选功能』", "「筛选功能」", "【筛选功能】", "《筛选功能》", "〔筛选功能〕", "〈筛选功能〉"} {
 		reason := "A 完成了" + marks + "并运行测试确认空数据也有反馈；B 只实现常规流程，异常输入仍会中断操作。这道题更看重用户遇到异常时能否继续使用，因此 A 更可靠。"
 		raw := []byte(`{"status":"ready","conclusion":"A_better","reason":` + quotePairwiseJSON(reason) + `}`)
-		if result, err := decodePairwiseReview(raw); err == nil {
-			t.Fatalf("accepted decorative quote brackets: %#v", result)
+		result, err := decodePairwiseReview(raw)
+		if err != nil {
+			t.Fatalf("rejected %q after stripping brackets: %v", marks, err)
+		}
+		if strings.ContainsAny(result.Reason, "『』「」【】《》〔〕〖〗〘〙〚〛〈〉") {
+			t.Fatalf("reason still contains decorative brackets after %q: %q", marks, result.Reason)
+		}
+		if !strings.Contains(result.Reason, "A 完成了筛选功能并运行测试") {
+			t.Fatalf("stripping %q changed the sentence beyond removing brackets: %q", marks, result.Reason)
 		}
 	}
 }
@@ -101,8 +108,24 @@ func TestBuildPairwiseReviewPromptRequiresTriggerNodeForInaction(t *testing.T) {
 	if !strings.Contains(prompt, "触发节点") || !strings.Contains(prompt, "只读未改") {
 		t.Fatalf("prompt does not require a trigger node for inaction: %s", prompt)
 	}
-	if !strings.Contains(prompt, "『』") || !strings.Contains(prompt, "「」") {
-		t.Fatalf("prompt does not forbid decorative quote brackets: %s", prompt)
+	for _, symbol := range []string{"『』", "「」", "【】", "《》", "〔〕", "〈〉"} {
+		if !strings.Contains(prompt, symbol) {
+			t.Fatalf("prompt does not forbid decorative bracket family %q: %s", symbol, prompt)
+		}
+	}
+}
+
+func TestDecodePairwiseReviewKeepsTriggerNodeAfterStrippingBrackets(t *testing.T) {
+	reason := "A 在 ClipboardShareAdapter 和 CyberCardView 中拆开『复制』与【分享】：复制按钮只写剪贴板，分享按钮按真实结果反馈，取消不再误报成功；补充的回归测试以及构建均通过。B 读完上述文件并定位到复制按钮误用 shareSlip 后，在拆分《两条调用路径》这一步反复重读，没有执行修改；还从 /workspace 运行 npm run build，因找不到 package.json 失败，提交仍保留原缺陷。本题最看重按钮行为与提示是否一致，因此 A 明显更好。"
+	result, err := decodePairwiseReview([]byte(`{"status":"ready","conclusion":"A_better","reason":` + quotePairwiseJSON(reason) + `}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(result.Reason, "『』「」【】《》〔〕〖〗〈〉") {
+		t.Fatalf("reason still contains decorative brackets: %q", result.Reason)
+	}
+	if !strings.Contains(result.Reason, "拆开复制与分享") || !strings.Contains(result.Reason, "拆分两条调用路径") {
+		t.Fatalf("stripping changed the sentence beyond removing brackets: %q", result.Reason)
 	}
 }
 

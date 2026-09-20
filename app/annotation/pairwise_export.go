@@ -113,7 +113,7 @@ func (s *AnnotationService) exportPairwise(ctx context.Context, req PairwiseExpo
 			continue
 		}
 		if domain.PairwiseReasonHasDecorativeBrackets(current.Reason) {
-			skipped = append(skipped, copy.TaskName+"：GSB 理由包含『』、「」、【】、《》等装饰引号或括号，请重新审核")
+			skipped = append(skipped, copy.TaskName+"：GSB 理由包含"+domain.PairwiseReasonDecorationLabel+"，请重新审核")
 			continue
 		}
 		if issues := domain.ValidatePairwiseCase(copy, false); len(issues) > 0 {

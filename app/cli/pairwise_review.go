@@ -50,7 +50,7 @@ func pairwiseReviewSchema() map[string]any {
 		"properties": map[string]any{
 			"status":     map[string]any{"type": "string", "enum": []string{"ready", "needs_evidence"}},
 			"conclusion": map[string]any{"type": "string", "enum": []string{"A_better", "same", "B_better"}},
-			"reason":     map[string]any{"type": "string", "minLength": 60, "maxLength": 320, "description": "单段自然中文，不使用『』、「」、【】、《》等装饰性括号"},
+			"reason":     map[string]any{"type": "string", "minLength": 60, "maxLength": 320, "description": "单段自然中文，不使用" + domain.PairwiseReasonDecorationLabel + "，需要引用名称时直接写普通文本"},
 		},
 	}
 }
@@ -154,7 +154,8 @@ func decodePairwiseReview(raw []byte) (*PairwiseReviewResult, error) {
 	if result.Conclusion != "A_better" && result.Conclusion != "same" && result.Conclusion != "B_better" {
 		return nil, errors.New("GSB 结论无效")
 	}
-	reason := strings.TrimSpace(result.Reason)
+	// 装饰性引号与括号一律不用：先统一去掉，再做长度和质量校验，避免这类符号进入提交字段。
+	reason := domain.StripPairwiseReasonDecorations(strings.TrimSpace(result.Reason))
 	if len([]rune(reason)) < 60 || !strings.Contains(reason, "A") || !strings.Contains(reason, "B") {
 		return nil, errors.New("GSB 理由必须分别、具体地说明 A 和 B")
 	}
@@ -166,9 +167,6 @@ func decodePairwiseReview(raw []byte) (*PairwiseReviewResult, error) {
 	}
 	if containsAny(reason, []string{"作为 AI", "作为AI", "根据上述分析", "综合评估", "综上所述"}) {
 		return nil, errors.New("GSB 理由包含 AI 式前言或机械总结")
-	}
-	if domain.PairwiseReasonHasDecorativeBrackets(reason) {
-		return nil, errors.New("GSB 理由不能使用『』、「」、【】、《》等装饰引号或括号")
 	}
 	if strings.ContainsAny(reason, "`#→✅❌") || pairwiseListPattern.MatchString(reason) || strings.Contains(reason, "\n") {
 		return nil, errors.New("GSB 理由必须是无 Markdown、编号或项目符号的单段自然中文")
@@ -255,5 +253,5 @@ func buildPairwiseReviewPrompt(inputPath, previous, violation string) string {
 	理由至少 60 个汉字且不超过 320 个字符，写成一段可以直接放进表单的精炼自然中文。先说真正影响结果的差异，再把 A、B 在执行过程和最终产物上的表现连起来，最后说明这道题最看重什么以及为什么据此选择当前结论。选择 same 时要说清采用的判准，以及为什么两边差异不足以改变用户实际结果。超过上限时完整重写，不要机械截断。
 	从证据中只挑有助于理解结论的关键事实。文件、函数、命令或测试只有在能解释实际行为和影响时才写；退出码、行号、版本号、哈希、断言数量、像素坐标等定位信息留在内部证据里，不要逐项罗列。直接描述用户能感知的功能差异、验证效果和风险，不要写成检查报告。
 	凡是评价某侧未修改、未执行、只读未改或停在规划阶段，必须紧跟触发节点，说明卡在具体文件、函数、命令或业务步骤；不能只写“全程没动文件”。触发节点自然写进句子，不要加标签。
-	不要使用 Markdown、编号、项目符号、反引号、箭头、Emoji、固定标签、分点模板或五维打分。禁止使用『』、「」、【】、《》等装饰引号或括号，需要引用名称时直接写普通文本。也不要出现“作为 AI”“根据上述分析”“综合评估”等前言和机械总结。不要虚构亲身操作或证据。证据不足时 status=needs_evidence，否则 status=ready。只返回符合 schema 的 JSON。%s`, inputPath, correction)
+	不要使用 Markdown、编号、项目符号、反引号、箭头、Emoji、固定标签、分点模板或五维打分。禁止使用%s，需要引用名称时直接写普通文本；这些符号会被系统直接剔除，请一开始就不要写。也不要出现“作为 AI”“根据上述分析”“综合评估”等前言和机械总结。不要虚构亲身操作或证据。证据不足时 status=needs_evidence，否则 status=ready。只返回符合 schema 的 JSON。%s`, inputPath, domain.PairwiseReasonDecorationLabel, correction)
 }

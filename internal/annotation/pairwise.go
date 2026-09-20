@@ -182,8 +182,33 @@ func PairwiseReviewMatchesRunSources(review PairwiseReview, runA, runB PairwiseR
 	return current || legacy
 }
 
+// PairwiseReasonDecorationRunes 是 GSB 理由里一律不用的装饰性引号与括号。
+// 需要引用名称时直接写普通文本，不要给名词套括号，也不要使用其他装饰性引号。
+const PairwiseReasonDecorationRunes = "『』「」【】《》〔〕〖〗〘〙〚〛〈〉｢｣"
+
+// PairwiseReasonDecorationLabel 用于提示、错误和导出拦截文案，说明被禁止的符号范围。
+const PairwiseReasonDecorationLabel = "『』、「」、【】、《》〔〕〖〗〈〉等装饰引号或括号"
+
+// PairwiseReasonHasDecorativeBrackets 判断理由中是否出现装饰性引号或括号。
 func PairwiseReasonHasDecorativeBrackets(reason string) bool {
-	return strings.ContainsAny(reason, "『』「」【】《》")
+	return strings.ContainsAny(reason, PairwiseReasonDecorationRunes)
+}
+
+// StripPairwiseReasonDecorations 去掉理由里的装饰性引号与括号，让生成结果直接落到普通文本。
+// 生成流程用它统一规整；导出校验仍按原样拦截历史或手工写入的不合规理由。
+func StripPairwiseReasonDecorations(reason string) string {
+	if !strings.ContainsAny(reason, PairwiseReasonDecorationRunes) {
+		return reason
+	}
+	var builder strings.Builder
+	builder.Grow(len(reason))
+	for _, r := range reason {
+		if strings.ContainsRune(PairwiseReasonDecorationRunes, r) {
+			continue
+		}
+		builder.WriteRune(r)
+	}
+	return builder.String()
 }
 
 func CurrentPairwiseReview(c Case) *PairwiseReview {

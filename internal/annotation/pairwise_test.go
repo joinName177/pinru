@@ -108,6 +108,30 @@ func TestCurrentPairwiseReviewAcceptsLegacyVideoAwareHashes(t *testing.T) {
 	}
 }
 
+func TestPairwiseReasonDecorativeBracketDetectionAndStripping(t *testing.T) {
+	for _, symbol := range []string{"『", "』", "「", "」", "【", "】", "《", "》", "〔", "〕", "〖", "〗", "〘", "〙", "〚", "〛", "〈", "〉", "｢", "｣"} {
+		reason := "A 修好" + symbol + "筛选" + symbol + "，B 未改动，本题最看重结果一致，判同级。"
+		if !PairwiseReasonHasDecorativeBrackets(reason) {
+			t.Fatalf("decorative bracket %q was not detected", symbol)
+		}
+		stripped := StripPairwiseReasonDecorations(reason)
+		if PairwiseReasonHasDecorativeBrackets(stripped) {
+			t.Fatalf("decorative bracket %q survived stripping: %q", symbol, stripped)
+		}
+		if stripped != "A 修好筛选，B 未改动，本题最看重结果一致，判同级。" {
+			t.Fatalf("stripping %q changed more than the brackets: %q", symbol, stripped)
+		}
+	}
+
+	clean := "A 修好筛选，B 未改动，本题最看重结果一致，判同级。"
+	if PairwiseReasonHasDecorativeBrackets(clean) {
+		t.Fatal("clean reason was flagged as containing decorative brackets")
+	}
+	if StripPairwiseReasonDecorations(clean) != clean {
+		t.Fatal("stripping rewrote a reason without decorative brackets")
+	}
+}
+
 func completePairwiseCase() Case {
 	sha := strings.Repeat("a", 40)
 	c := Case{
