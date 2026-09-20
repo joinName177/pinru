@@ -213,3 +213,37 @@ it('reviews and saves one GSB after both sides have been captured', async () => 
   await waitFor(() => expect(api.reviewPairwise).toHaveBeenCalledWith({ taskId: 'task-1', force: false }));
   expect(runJob).toHaveBeenCalledWith('单题 GSB 审核保存', expect.any(Function));
 });
+
+it('offers one shared A/B capture action and disables it without a bound container', async () => {
+  const onCaptureBoth = vi.fn().mockResolvedValue(undefined);
+  const { unmount } = render(<PairwiseWorkspace annotationCase={pairwiseCase} disabled={false} runJob={vi.fn()} onCaptureBoth={onCaptureBoth} />);
+  fireEvent.click(screen.getByRole('button', { name: '一键采集 A/B' }));
+  await waitFor(() => expect(onCaptureBoth).toHaveBeenCalledTimes(1));
+  unmount();
+
+  const unbound = structuredClone(pairwiseCase);
+  unbound.pairwise!.runA.containerId = '';
+  unbound.pairwise!.runB.containerId = '';
+  render(<PairwiseWorkspace annotationCase={unbound} disabled={false} runJob={vi.fn()} onCaptureBoth={onCaptureBoth} />);
+  expect(screen.getByRole('button', { name: '一键采集 A/B' })).toBeDisabled();
+});
+
+it('strips pasted quotes from the recording path and keeps the real apostrophe', async () => {
+  const runJob = vi.fn(async (_label: string, submit: () => Promise<unknown>) => { await submit(); return true; });
+  render(<PairwiseWorkspace annotationCase={pairwiseCase} disabled={false} runJob={runJob} />);
+  const sideB = screen.getByRole('region', { name: '运行 B' });
+  const input = within(sideB).getByLabelText('B 视频链接');
+  fireEvent.change(input, { target: { value: `'/tmp/it's demo.mov'` } });
+  fireEvent.click(within(sideB).getByRole('button', { name: '保存 B 视频' }));
+  await waitFor(() => expect(api.savePairwiseMaterials).toHaveBeenCalledWith({ taskId: 'task-1', side: 'B', videoUrl: '', videoPath: "/tmp/it's demo.mov", recordingError: '' }));
+  expect(input).toHaveValue("/tmp/it's demo.mov");
+});
+
+it('classifies a quoted HTTP link as a URL after unwrapping it', async () => {
+  const runJob = vi.fn(async (_label: string, submit: () => Promise<unknown>) => { await submit(); return true; });
+  render(<PairwiseWorkspace annotationCase={pairwiseCase} disabled={false} runJob={runJob} />);
+  const sideB = screen.getByRole('region', { name: '运行 B' });
+  fireEvent.change(within(sideB).getByLabelText('B 视频链接'), { target: { value: "'https://example.com/b.mp4'" } });
+  fireEvent.click(within(sideB).getByRole('button', { name: '保存 B 视频' }));
+  await waitFor(() => expect(api.savePairwiseMaterials).toHaveBeenCalledWith({ taskId: 'task-1', side: 'B', videoUrl: 'https://example.com/b.mp4', videoPath: '', recordingError: '' }));
+});

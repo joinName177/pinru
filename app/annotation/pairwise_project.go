@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -23,6 +24,9 @@ import (
 const (
 	pairwiseProjectProxyPortMin = 1024
 	pairwiseProjectProxyPortMax = 9999
+	// defaultPairwiseProjectStateDir holds the host-side runtime files of the
+	// copied startup command: the host proxy port and its pid.
+	defaultPairwiseProjectStateDir = "/tmp"
 )
 
 var vitePortPattern = regexp.MustCompile(`(?m)\bport\s*:\s*([0-9]{2,5})`)
@@ -140,14 +144,63 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }
 
-func pairwiseProjectFiles(taskID string, side domain.PairwiseSide) (string, string) {
-	base := "/tmp/pinru-project-" + stableKey(taskID) + "-" + strings.ToLower(string(side))
-	return base + ".pid", base + ".log"
+func (s *AnnotationService) pairwiseProjectStateDirPath() string {
+	dir := strings.TrimSpace(s.pairwiseProjectStateDir)
+	if dir == "" {
+		return defaultPairwiseProjectStateDir
+	}
+	return dir
 }
 
-func pairwiseProjectPortFile(taskID string, side domain.PairwiseSide) string {
-	base := "/tmp/pinru-project-" + stableKey(taskID) + "-" + strings.ToLower(string(side))
-	return base + ".port"
+// pairwiseProjectPortFile is the host-side file written by the copied startup
+// command with the host proxy port. It lives on this host because the command runs in
+// the user's terminal here, and the app reads the port back to locate the running
+// project. The command's own exit trap owns the host proxy and removes this file.
+func (s *AnnotationService) pairwiseProjectPortFile(taskID string, side domain.PairwiseSide) string {
+	return filepath.Join(s.pairwiseProjectStateDirPath(), pairwiseProjectStateBase(taskID, side)+".port")
+}
+
+// pairwiseContainerProjectPidFile is the in-container path written by the startup
+// command. The stop script runs inside the container and reads the same path, so it
+// describes the container dev server that the foreground docker exec started.
+func pairwiseContainerProjectPidFile(taskID string, side domain.PairwiseSide) string {
+	return "/tmp/" + pairwiseProjectStateBase(taskID, side) + ".pid"
+}
+
+func pairwiseProjectStateBase(taskID string, side domain.PairwiseSide) string {
+	return "pinru-project-" + stableKey(taskID) + "-" + strings.ToLower(string(side))
+}
+
+func pairwiseProjectStopScript(pidFile string) string {
+	return "if [ -f " + shellQuote(pidFile) + " ]; then " +
+		"while IFS= read -r pid; do case \"$pid\" in ''|*[!0-9]*) continue;; esac; " +
+		"pkill -TERM -s \"$pid\" 2>/dev/null || kill -TERM -- -\"$pid\" 2>/dev/null || kill -TERM \"$pid\" 2>/dev/null || true; done < " + shellQuote(pidFile) + "; " +
+		"fi; rm -f " + shellQuote(pidFile)
+}
+
+func pairwiseProjectManualCommand(containerID, containerRepo string, launch pairwiseProjectLaunch, port int, hostPortFile, containerPidFile string) string {
+	args := fmt.Sprintf(" -- --host 0.0.0.0 --port %d --strictPort", port)
+	if launch.Host != "::1" {
+		args = fmt.Sprintf(" -- -H 0.0.0.0 -p %d", port)
+	}
+	proxyScript := `const n=require("net"),p=Number(process.argv[1]),h=process.argv[2],tp=Number(process.argv[3]);const s=n.createServer(c=>{const u=n.connect(tp,h);c.pipe(u);u.pipe(c);c.on("error",()=>u.destroy());u.on("error",()=>c.destroy())});s.listen(p,"127.0.0.1")`
+	containerVar := "container=" + shellQuote(containerID)
+	inspect := `target_ip=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container")`
+	checkIP := `if [ -z "$target_ip" ]; then echo '无法读取容器访问地址' >&2; exit 1; fi`
+	startProxy := "node -e " + shellQuote(proxyScript) + fmt.Sprintf(" %d \"$target_ip\" %d & proxy_pid=$!", port, port)
+	cleanup := "cleanup() { kill -TERM \"$proxy_pid\" 2>/dev/null || true; rm -f " + shellQuote(hostPortFile) + "; }"
+	trap := `trap cleanup EXIT HUP INT TERM`
+	recordPort := fmt.Sprintf("printf '%%s\\n' %d > %s", port, shellQuote(hostPortFile))
+	url := pairwiseProjectBrowserURL(port) + "/"
+	announce := "echo " + shellQuote("项目地址："+url+"（容器内项目就绪后自动打开浏览器）")
+	autoOpen := pairwiseProjectAutoOpenScript(url)
+	// The container side records its own dev server pid, which the app's stop script
+	// kills as a process group; a read-only container /tmp must not break the start.
+	devCommand := "echo $$ > " + shellQuote(containerPidFile) + " 2>/dev/null || true; exec " + launch.Command + args
+	runProject := "docker exec -it -w " + shellQuote(containerRepo) + ` "$container" sh -lc ` + shellQuote(devCommand)
+	// The auto-open subshell is backgrounded, so it must be separated from the
+	// foreground command by a space instead of a semicolon.
+	return strings.Join([]string{containerVar, inspect, checkIP, startProxy, cleanup, trap, recordPort, announce, autoOpen}, "; ") + " " + runProject
 }
 
 func randomPairwiseProjectProxyPort(reader io.Reader) (int, error) {
@@ -180,28 +233,23 @@ func parsePairwiseProjectProxyPort(value string) (int, error) {
 	return port, nil
 }
 
-func pairwiseProjectStopScript(pidFile, portFile string) string {
-	return "if [ -f " + shellQuote(pidFile) + " ]; then " +
-		"while IFS= read -r pid; do case \"$pid\" in ''|*[!0-9]*) continue;; esac; " +
-		"pkill -TERM -s \"$pid\" 2>/dev/null || kill -TERM -- -\"$pid\" 2>/dev/null || kill -TERM \"$pid\" 2>/dev/null || true; done < " + shellQuote(pidFile) + "; " +
-		"fi; rm -f " + shellQuote(pidFile) + " " + shellQuote(portFile)
+func pairwiseProjectBrowserOpener() string {
+	if runtime.GOOS == "darwin" {
+		return "/usr/bin/open"
+	}
+	return "xdg-open"
 }
 
-func pairwiseProjectManualCommand(containerID, containerRepo string, launch pairwiseProjectLaunch, port int) string {
-	args := fmt.Sprintf(" -- --host 0.0.0.0 --port %d --strictPort", port)
-	if launch.Host != "::1" {
-		args = fmt.Sprintf(" -- -H 0.0.0.0 -p %d", port)
-	}
-	proxyScript := `const n=require("net"),p=Number(process.argv[1]),h=process.argv[2],tp=Number(process.argv[3]);const s=n.createServer(c=>{const u=n.connect(tp,h);c.pipe(u);u.pipe(c);c.on("error",()=>u.destroy());u.on("error",()=>c.destroy())});s.listen(p,"127.0.0.1",()=>console.log("\n项目地址：http://127.0.0.1:"+p+"/\n"))`
-	containerVar := "container=" + shellQuote(containerID)
-	inspect := `target_ip=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container")`
-	checkIP := `if [ -z "$target_ip" ]; then echo '无法读取容器访问地址' >&2; exit 1; fi`
-	startProxy := "node -e " + shellQuote(proxyScript) + fmt.Sprintf(" %d \"$target_ip\" %d & proxy_pid=$!", port, port)
-	cleanup := `cleanup() { kill -TERM "$proxy_pid" 2>/dev/null || true; }`
-	trap := `trap cleanup EXIT HUP INT TERM`
-	devCommand := "exec " + launch.Command + args
-	runProject := "docker exec -it -w " + shellQuote(containerRepo) + ` "$container" sh -lc ` + shellQuote(devCommand)
-	return strings.Join([]string{containerVar, inspect, checkIP, startProxy, cleanup, trap, runProject}, "; ")
+// pairwiseProjectAutoOpenScript waits until the container dev server answers
+// through the host proxy and then opens the browser once. It runs as a detached
+// subshell so the foreground docker exec keeps the terminal, and it gives up as
+// soon as the proxy process is gone, which is when the user stops the project.
+func pairwiseProjectAutoOpenScript(url string) string {
+	target := shellQuote(url)
+	probe := `code=$(curl -s -o /dev/null -w '%{http_code}' ` + target + ` 2>/dev/null)`
+	return `( i=0; while [ "$i" -lt 60 ]; do kill -0 "$proxy_pid" 2>/dev/null || exit 0; ` + probe +
+		`; if [ -n "$code" ] && [ "$code" != "000" ]; then break; fi; i=$((i+1)); sleep 1; done; ` +
+		`kill -0 "$proxy_pid" 2>/dev/null && ` + pairwiseProjectBrowserOpener() + ` ` + target + ` ) >/dev/null 2>&1 &`
 }
 
 func pairwiseProjectBrowserURL(port int) string {
@@ -268,27 +316,41 @@ func (s *AnnotationService) StartPairwiseProject(req PairwiseSideRequest) (*Pair
 		return nil, errors.New("无法生成项目代理端口")
 	}
 	url := pairwiseProjectBrowserURL(proxyPort)
-	command := pairwiseProjectManualCommand(run.ContainerID, containerRepo, launch, proxyPort)
+	command := pairwiseProjectManualCommand(run.ContainerID, containerRepo, launch, proxyPort, s.pairwiseProjectPortFile(req.TaskID, req.Side), pairwiseContainerProjectPidFile(req.TaskID, req.Side))
 	return &PairwiseProjectState{Side: req.Side, Running: false, URL: url, Command: command}, nil
 }
 
-func (s *AnnotationService) stopPairwiseProject(ctx context.Context, containerID, pidFile, portFile string) error {
-	_, err := s.command(ctx, "", "docker", "exec", containerID, "sh", "-lc", pairwiseProjectStopScript(pidFile, portFile))
+func (s *AnnotationService) stopPairwiseProject(ctx context.Context, containerID, containerPidFile string) error {
+	_, err := s.command(ctx, "", "docker", "exec", containerID, "sh", "-lc", pairwiseProjectStopScript(containerPidFile))
 	return err
 }
 
-func (s *AnnotationService) pairwiseProjectURL(ctx context.Context, containerID, portFile string) (string, error) {
-	portRaw, err := s.command(ctx, "", "docker", "exec", containerID, "sh", "-lc", "cat "+shellQuote(portFile)+" 2>/dev/null")
+// pairwiseProjectPort reads the host proxy port that the copied startup command
+// recorded, so the app knows where the running project is served.
+func (s *AnnotationService) pairwiseProjectPort(taskID string, side domain.PairwiseSide) (int, error) {
+	raw, err := os.ReadFile(s.pairwiseProjectPortFile(taskID, side))
 	if err != nil {
-		return "", errors.New("项目尚未启动，请先启动项目")
+		return 0, errors.New("项目尚未启动，请先在终端粘贴执行启动命令")
 	}
-	port, err := parsePairwiseProjectProxyPort(string(portRaw))
+	port, err := parsePairwiseProjectProxyPort(string(raw))
 	if err != nil {
-		return "", err
+		return 0, err
 	}
-	return pairwiseProjectBrowserURL(port), nil
+	return port, nil
 }
 
+func pairwiseProjectProxyAlive(port int) bool {
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 2*time.Second)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+// StopPairwiseProject stops the dev server inside the container, which is what
+// releases the foreground docker exec. The startup command's own exit trap then
+// terminates the host proxy and removes the port file this app read.
 func (s *AnnotationService) StopPairwiseProject(req PairwiseSideRequest) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -301,9 +363,15 @@ func (s *AnnotationService) StopPairwiseProject(req PairwiseSideRequest) error {
 	if err != nil {
 		return err
 	}
-	pidFile, _ := pairwiseProjectFiles(req.TaskID, req.Side)
-	portFile := pairwiseProjectPortFile(req.TaskID, req.Side)
-	return s.stopPairwiseProject(ctx, run.ContainerID, pidFile, portFile)
+	portFile := s.pairwiseProjectPortFile(req.TaskID, req.Side)
+	if _, statErr := os.Stat(portFile); statErr != nil {
+		return errors.New("项目尚未通过启动命令运行，无需停止")
+	}
+	if err := s.stopPairwiseProject(ctx, run.ContainerID, pairwiseContainerProjectPidFile(req.TaskID, req.Side)); err != nil {
+		return fmt.Errorf("容器内项目未确认停止：%w", err)
+	}
+	_ = os.Remove(portFile)
+	return nil
 }
 
 func (s *AnnotationService) RecordPairwiseVideo(ctx context.Context, req PairwiseSideRequest) (*domain.Case, error) {
@@ -329,10 +397,17 @@ func (s *AnnotationService) RecordPairwiseVideo(ctx context.Context, req Pairwis
 		return nil, fmt.Errorf("创建录屏目录失败：%w", err)
 	}
 	output := filepath.Join(dir, strings.ToLower(string(req.Side))+"-"+time.Now().Format("20060102-150405.000")+".mov")
-	projectURL, err := s.pairwiseProjectURL(ctx, run.ContainerID, pairwiseProjectPortFile(req.TaskID, req.Side))
+	port, err := s.pairwiseProjectPort(req.TaskID, req.Side)
 	if err != nil {
+		_, _ = s.SavePairwiseMaterials(PairwiseMaterialsRequest{TaskID: req.TaskID, Side: req.Side, RecordingError: err.Error()})
 		return nil, err
 	}
+	if !pairwiseProjectProxyAlive(port) {
+		message := "项目启动命令尚未在终端运行，或项目已停止：请先粘贴执行启动命令"
+		_, _ = s.SavePairwiseMaterials(PairwiseMaterialsRequest{TaskID: req.TaskID, Side: req.Side, RecordingError: message})
+		return nil, errors.New(message)
+	}
+	projectURL := pairwiseProjectBrowserURL(port)
 	if _, err := s.command(ctx, "", "/usr/bin/open", projectURL); err != nil {
 		message := "自动打开项目页面失败：" + err.Error()
 		_, _ = s.SavePairwiseMaterials(PairwiseMaterialsRequest{TaskID: req.TaskID, Side: req.Side, RecordingError: message})

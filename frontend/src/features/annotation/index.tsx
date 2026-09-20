@@ -19,6 +19,7 @@ import {
   batchReviewPairwise,
   cancelAnnotationJob,
   captureAndPrepareTable,
+  capturePairwiseSide,
   enablePairwise,
   exportPairwise,
   listCases,
@@ -43,6 +44,7 @@ import { useAppStore } from '../../store';
 import { writeClipboardText } from '../../shared/lib/clipboard';
 import { waitForAnnotationJob } from './job';
 import { buildContainerCommand } from './containerCommand';
+import { hasGeneratedPairwiseGsb, pairwiseExportBlocker, selectableExportIds } from './pairwiseExportSelection';
 import { getAnnotationContainerApiKey, getConfig } from '../../api/config';
 import {
   CONTAINER_SORT_PREFIXES_CONFIG_KEY,
@@ -243,6 +245,10 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
   const [showPairwiseExportSelection, setShowPairwiseExportSelection] = useState(false);
   const [pairwiseExportTaskIds, setPairwiseExportTaskIds] = useState<string[]>([]);
   const pairwiseCases = cases.filter((item) => item.mode === 'pairwise_gsb');
+  const exportableCases = pairwiseCases.filter(hasGeneratedPairwiseGsb);
+  const exportableIds = selectableExportIds(exportableCases);
+  const selectedExportIds = pairwiseExportTaskIds.filter((id) => exportableIds.includes(id));
+  const allExportableSelected = exportableIds.length > 0 && exportableIds.every((id) => pairwiseExportTaskIds.includes(id));
   const projectEpoch = useRef(0);
   const settingsEpoch = useRef(0);
   const activeProjectId = useRef(projectId);
@@ -556,12 +562,35 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     else setNotice('A/B 容器已刷新并绑定，可以复制提示词开始执行');
   };
 
+  const handleCapturePairwiseBoth = async () => {
+    if (!selectedCase) return;
+    const sides = ['A', 'B'] as const;
+    const failures: string[] = [];
+    const captured: string[] = [];
+    for (const side of sides) {
+      const run = side === 'A' ? selectedCase.pairwise?.runA : selectedCase.pairwise?.runB;
+      if (!run?.containerId) {
+        failures.push(`${side} 尚未绑定容器`);
+        continue;
+      }
+      const completed = await runCaseJob(selectedCase.taskId, `采集 ${side}`, () => capturePairwiseSide({ taskId: selectedCase.taskId, side }));
+      if (completed) captured.push(side);
+      else failures.push(`${side} 采集失败`);
+    }
+    if (failures.length > 0) {
+      setActionError(`一键采集 A/B 未全部完成：${failures.join('；')}${captured.length > 0 ? `（已完成 ${captured.join('、')}）` : ''}`);
+      return;
+    }
+    setActionError('');
+    setNotice(`一键采集完成：${captured.join('、')} 轨迹已采集并提交产物`);
+  };
+
   const handleStartPairwiseProject = async (side: 'A' | 'B') => {
     if (!selectedCase) return null;
     try {
       const state = await startPairwiseProject({ taskId: selectedCase.taskId, side });
       await writeClipboardText(state.command);
-      setNotice(`${side} 项目启动命令已复制，请先开始录屏，再到终端粘贴执行。访问地址：${state.url}`);
+      setNotice(`${side} 项目启动命令已复制，请先开始录屏，再到终端粘贴执行；项目就绪后会自动打开 ${state.url}`);
       setActionError('');
       return state;
     } catch (error) {
@@ -774,15 +803,29 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
 
         {showPairwiseExportSelection && !taskId && (
           <section aria-label="选择 GSB 导出题目" className="mb-5 border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
-            <h2 className="font-semibold text-stone-800 dark:text-stone-100">选择要导出的题号</h2>
-            <p className="my-2 text-xs text-stone-500">只导出勾选题目中已完成 GSB 审核且理由完整的数据，录屏不是导出前置条件。</p>
-            <div className="max-h-64 space-y-2 overflow-y-auto">
-              {pairwiseCases.map((item) => <label key={item.taskId} className="flex items-start gap-3 border border-stone-200 p-3 text-sm dark:border-stone-700 dark:text-stone-100">
-                <input type="checkbox" aria-label={`导出 ${item.taskName} ${item.taskId}`} checked={pairwiseExportTaskIds.includes(item.taskId)} disabled={globalBusy} onChange={(event) => setPairwiseExportTaskIds((ids) => event.target.checked ? [...ids.filter((id) => id !== item.taskId), item.taskId] : ids.filter((id) => id !== item.taskId))} />
-                <span><span className="font-semibold">{item.taskName}</span><span className="ml-2 text-xs text-stone-500">{item.taskId}</span></span>
-              </label>)}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="font-semibold text-stone-800 dark:text-stone-100">选择要导出的题号</h2>
+              {exportableCases.length > 0 && <button
+                className={SECONDARY_BUTTON}
+                disabled={globalBusy}
+                onClick={() => setPairwiseExportTaskIds(allExportableSelected ? [] : exportableIds)}
+              >{allExportableSelected ? '取消全选' : `全选已生成 GSB 的 ${exportableIds.length} 题`}</button>}
             </div>
-            <button className={`${PRIMARY_BUTTON} mt-3`} disabled={globalBusy || pairwiseExportTaskIds.length === 0} onClick={() => void handlePairwiseExport(pairwiseExportTaskIds)}>导出所选题目（{pairwiseExportTaskIds.length}）</button>
+            <p className="my-2 text-xs text-stone-500">只展示已生成 GSB 的题目；证据已变化或理由不完整的题目需重新审核后才能导出，录屏不是导出前置条件。</p>
+            <div className="max-h-64 space-y-2 overflow-y-auto">
+              {exportableCases.length === 0 && <p className="rounded-2xl bg-stone-50 px-3 py-6 text-center text-sm text-stone-400 dark:bg-stone-800/50">当前项目还没有已生成 GSB 的题目</p>}
+              {exportableCases.map((item) => {
+                const blocker = pairwiseExportBlocker(item);
+                return <label key={item.taskId} className="flex items-start gap-3 border border-stone-200 p-3 text-sm dark:border-stone-700 dark:text-stone-100">
+                  <input type="checkbox" aria-label={`导出 ${item.taskName} ${item.taskId}`} checked={pairwiseExportTaskIds.includes(item.taskId)} disabled={globalBusy || blocker !== ''} onChange={(event) => setPairwiseExportTaskIds((ids) => event.target.checked ? [...ids.filter((id) => id !== item.taskId), item.taskId] : ids.filter((id) => id !== item.taskId))} />
+                  <span>
+                    <span className="font-semibold">{item.taskName}</span><span className="ml-2 text-xs text-stone-500">{item.taskId}</span>
+                    {blocker !== '' && <span className="ml-2 text-xs font-semibold text-amber-600 dark:text-amber-400">{blocker}</span>}
+                  </span>
+                </label>;
+              })}
+            </div>
+            <button className={`${PRIMARY_BUTTON} mt-3`} disabled={globalBusy || selectedExportIds.length === 0} onClick={() => void handlePairwiseExport(selectedExportIds)}>导出所选题目（{selectedExportIds.length}）</button>
           </section>
         )}
 
@@ -941,6 +984,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                     onRefreshContainers={handleRefreshPairwiseContainers}
                     onCopyPrompt={copyPairwisePrompt}
                     onStartProject={handleStartPairwiseProject}
+                    onCaptureBoth={handleCapturePairwiseBoth}
                     promptCopied={pairwisePromptCopied}
                   />
                 ) : <>

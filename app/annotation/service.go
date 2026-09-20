@@ -18,27 +18,29 @@ import (
 )
 
 type AnnotationService struct {
-	store                *store.Store
-	cli                  *appcli.CliService
-	root                 string
-	pairwiseVideoDir     string
-	locks                sync.Map
-	command              func(context.Context, string, string, ...string) ([]byte, error)
-	verifySnapshot       func(context.Context, string) error
-	publishInitial       func(context.Context, string, string, string, store.GitHubAccount) (string, error)
-	pushPairwise         func(context.Context, string, string, string) error
-	verifyPairwiseRemote func(context.Context, domain.Case) error
+	store                   *store.Store
+	cli                     *appcli.CliService
+	root                    string
+	pairwiseVideoDir        string
+	pairwiseProjectStateDir string
+	locks                   sync.Map
+	command                 func(context.Context, string, string, ...string) ([]byte, error)
+	verifySnapshot          func(context.Context, string) error
+	publishInitial          func(context.Context, string, string, string, store.GitHubAccount) (string, error)
+	pushPairwise            func(context.Context, string, string, string) error
+	verifyPairwiseRemote    func(context.Context, domain.Case) error
 }
 
 func New(st *store.Store, cli *appcli.CliService) *AnnotationService {
 	return &AnnotationService{
-		store:            st,
-		cli:              cli,
-		root:             filepath.Join(filepath.Dir(st.DBPath()), "annotation"),
-		pairwiseVideoDir: "/Users/cool/work/self-project/pairwise-videos",
-		command:          runCommand,
-		verifySnapshot:   verifyRemoteSnapshot,
-		publishInitial:   publishInitial,
+		store:                   st,
+		cli:                     cli,
+		root:                    filepath.Join(filepath.Dir(st.DBPath()), "annotation"),
+		pairwiseVideoDir:        "/Users/cool/work/self-project/pairwise-videos",
+		pairwiseProjectStateDir: defaultPairwiseProjectStateDir,
+		command:                 runCommand,
+		verifySnapshot:          verifyRemoteSnapshot,
+		publishInitial:          publishInitial,
 	}
 }
 

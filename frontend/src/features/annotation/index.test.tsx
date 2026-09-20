@@ -13,6 +13,7 @@ const api = vi.hoisted(() => ({
   batchReviewPairwise: vi.fn(),
   cancelAnnotationJob: vi.fn(),
   captureAndPrepareTable: vi.fn(),
+  capturePairwiseSide: vi.fn(),
   enablePairwise: vi.fn(),
   exportCases: vi.fn(),
   getAnnotationJob: vi.fn(),
@@ -107,6 +108,27 @@ function makeCase(overrides: Partial<AnnotationCase> = {}): AnnotationCase {
     captures: [],
     revision: 1,
     updatedAt: 1,
+    ...overrides,
+  };
+}
+
+type PairwiseReviews = NonNullable<AnnotationCase['pairwise']>['reviews'];
+
+function makePairwiseCase(taskId: string, taskName: string, reviews: PairwiseReviews): AnnotationCase {
+  return makeCase({
+    taskId, taskName, mode: 'pairwise_gsb',
+    pairwise: {
+      prompt: '实现加法', language: 'Go', harness: 'Codex CLI', harnessVersion: '1', os: 'MacOS/Linux', environment: '', validity: '有效', notes: '', autoRecordEnabled: false, reviews,
+      runA: { side: 'A', branch: 'A', containerId: 'ca', containerName: 'ca', workspacePath: '/a', repoRelativePath: 'repo', sessionId: 'sa', tracePath: '/a.jsonl', turnCount: 1, captureId: 'a', captureHash: 'ha', traceHash: 'ta', deliverableSha: 'b'.repeat(40), deliverableUrl: `https://github.com/u/r/commit/${'b'.repeat(40)}`, videoStatus: 'missing', videoPath: '', videoUrl: '', recordingError: '', preparedAt: 1, capturedAt: 1, committedAt: 1 },
+      runB: { side: 'B', branch: 'B', containerId: 'cb', containerName: 'cb', workspacePath: '/b', repoRelativePath: 'repo', sessionId: 'sb', tracePath: '/b.jsonl', turnCount: 1, captureId: 'b', captureHash: 'hb', traceHash: 'tb', deliverableSha: 'c'.repeat(40), deliverableUrl: `https://github.com/u/r/commit/${'c'.repeat(40)}`, videoStatus: 'missing', videoPath: '', videoUrl: '', recordingError: '', preparedAt: 1, capturedAt: 1, committedAt: 1 },
+    },
+  });
+}
+
+function makeReview(overrides: Partial<PairwiseReviews[number]> = {}): PairwiseReviews[number] {
+  return {
+    current: true, id: 'review-1', status: 'ready', conclusion: 'A_better', reason: 'A 完成了题目要求的关键改动，B 只改了样式。',
+    model: 'Codex CLI', skillHash: 'skill', sourceHashA: 'a', sourceHashB: 'b', reviewPath: '/review', reviewHash: 'hash', createdAt: 1,
     ...overrides,
   };
 }
@@ -245,7 +267,8 @@ describe('AnnotationWorkspace', () => {
     const pairwise = makeCase({
       initialSha: 'a'.repeat(40), snapshotUrl: `https://github.com/u/r/commit/${'a'.repeat(40)}`, mode: 'pairwise_gsb',
       pairwise: {
-        prompt: '实现加法', language: 'Go', harness: 'Codex CLI', harnessVersion: '1', os: 'MacOS/Linux', environment: '', validity: '有效', notes: '', autoRecordEnabled: false, reviews: [],
+        prompt: '实现加法', language: 'Go', harness: 'Codex CLI', harnessVersion: '1', os: 'MacOS/Linux', environment: '', validity: '有效', notes: '', autoRecordEnabled: false,
+        reviews: [{ current: true, id: 'review-1', status: 'ready', conclusion: 'A_better', reason: 'A 完成了题目要求的关键改动，B 只改了样式。', model: 'Codex CLI', skillHash: 'skill', sourceHashA: 'a', sourceHashB: 'b', reviewPath: '/review', reviewHash: 'hash', createdAt: 1 }],
         runA: { side: 'A', branch: 'A', containerId: 'ca', containerName: 'ca', workspacePath: '/a', repoRelativePath: 'repo', sessionId: 'sa', tracePath: '/a.jsonl', turnCount: 1, captureId: 'a', captureHash: 'ha', traceHash: 'ta', deliverableSha: 'b'.repeat(40), deliverableUrl: `https://github.com/u/r/commit/${'b'.repeat(40)}`, videoStatus: 'missing', videoPath: '', videoUrl: '', recordingError: '', preparedAt: 1, capturedAt: 1, committedAt: 1 },
         runB: { side: 'B', branch: 'B', containerId: 'cb', containerName: 'cb', workspacePath: '/b', repoRelativePath: 'repo', sessionId: 'sb', tracePath: '/b.jsonl', turnCount: 1, captureId: 'b', captureHash: 'hb', traceHash: 'tb', deliverableSha: 'c'.repeat(40), deliverableUrl: `https://github.com/u/r/commit/${'c'.repeat(40)}`, videoStatus: 'missing', videoPath: '', videoUrl: '', recordingError: '', preparedAt: 1, capturedAt: 1, committedAt: 1 },
       },
@@ -280,6 +303,70 @@ describe('AnnotationWorkspace', () => {
     rerender(<AnnotationWorkspace projectId="project-1" taskId="task-1" />);
     await screen.findByText('GSB 对比结果');
     expect(screen.queryByRole('button', { name: '生成 GSB' })).not.toBeInTheDocument();
+  });
+
+  it('lists only generated GSB tasks for export, blocks stale ones and supports select all', async () => {
+    const ready = makePairwiseCase('task-1', '已完成 GSB 的任务', [makeReview()]);
+    const stale = makePairwiseCase('task-2', '证据已变化的 GSB 任务', [makeReview({ id: 'review-2', current: false })]);
+    const pending = makePairwiseCase('task-3', '尚未生成 GSB 的任务', []);
+    api.listCases.mockResolvedValue([ready, stale, pending]);
+    api.exportPairwise.mockResolvedValue({ id: 'pairwise-export', status: 'pending' });
+    api.getAnnotationJob.mockResolvedValue({
+      id: 'pairwise-export', status: 'done',
+      outputPayload: JSON.stringify({ outputPath: '/exports/gsb.xlsx', reportPath: '/exports/report.md', rows: 1, issues: [] }),
+    });
+    render(<AnnotationWorkspace projectId="project-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: '批量导出 GSB' }));
+
+    expect(screen.queryByRole('checkbox', { name: /导出 尚未生成 GSB 的任务/ })).not.toBeInTheDocument();
+    const staleBox = screen.getByRole('checkbox', { name: /导出 证据已变化的 GSB 任务/ });
+    expect(staleBox).toBeDisabled();
+    expect(screen.getByText('A/B 证据已变化，需重新审核')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '导出所选题目（0）' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: '全选已生成 GSB 的 1 题' }));
+    expect(screen.getByRole('checkbox', { name: /导出 已完成 GSB 的任务/ })).toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: '导出所选题目（1）' }));
+    await waitFor(() => expect(api.exportPairwise).toHaveBeenCalledWith({ projectId: 'project-1', taskIds: ['task-1'], submitter: '', submittedAt: '' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: '取消全选' }));
+    expect(screen.getByRole('checkbox', { name: /导出 已完成 GSB 的任务/ })).not.toBeChecked();
+  });
+
+  it('says so when no task has a generated GSB yet', async () => {
+    api.listCases.mockResolvedValue([makePairwiseCase('task-1', '尚未生成 GSB 的任务', [])]);
+    render(<AnnotationWorkspace projectId="project-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: '批量导出 GSB' }));
+    expect(screen.getByText('当前项目还没有已生成 GSB 的题目')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /全选/ })).not.toBeInTheDocument();
+  });
+
+  it('captures and commits both sides from the single A/B action', async () => {
+    const pairwise = makePairwiseCase('task-1', '需采集两侧的任务', []);
+    api.listCases.mockResolvedValue([pairwise]);
+    api.capturePairwiseSide.mockResolvedValue({ id: 'job-capture', status: 'pending' });
+    api.getAnnotationJob.mockResolvedValue({ id: 'job-capture', status: 'done', outputPayload: JSON.stringify(pairwise) });
+    render(<AnnotationWorkspace projectId="project-1" taskId="task-1" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '一键采集 A/B' }));
+    await waitFor(() => expect(api.capturePairwiseSide).toHaveBeenCalledTimes(2));
+    expect(api.capturePairwiseSide.mock.calls.map((call) => call[0].side)).toEqual(['A', 'B']);
+    expect(await screen.findByText(/一键采集完成：A、B/)).toBeInTheDocument();
+  });
+
+  it('reports the side that failed instead of hiding a partial A/B capture', async () => {
+    const pairwise = makePairwiseCase('task-1', '需采集两侧的任务', []);
+    api.listCases.mockResolvedValue([pairwise]);
+    api.capturePairwiseSide
+      .mockResolvedValueOnce({ id: 'job-a', status: 'pending' })
+      .mockResolvedValueOnce({ id: 'job-b', status: 'pending' });
+    api.getAnnotationJob.mockImplementation((id: string) => Promise.resolve(id === 'job-a'
+      ? { id, status: 'done', outputPayload: JSON.stringify(pairwise) }
+      : { id, status: 'error', errorMessage: 'B 侧容器未就绪' }));
+    render(<AnnotationWorkspace projectId="project-1" taskId="task-1" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '一键采集 A/B' }));
+    expect(await screen.findByText(/一键采集 A\/B 未全部完成：B 采集失败（已完成 A）/)).toBeInTheDocument();
   });
 
   it('automatically enables GSB when entering an untouched task card', async () => {

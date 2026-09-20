@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -394,6 +395,91 @@ func (s *AnnotationService) CaptureAndCommitPairwiseSide(ctx context.Context, re
 	})
 }
 
+const pairwiseVideoMaxBytes = 500 * 1024 * 1024
+
+var pairwiseVideoExtensions = map[string]bool{".mp4": true, ".mov": true, ".webm": true, ".m4v": true}
+
+// normalizePairwiseVideoSource strips wrappers that were pasted together with the
+// value, such as the shell quotes around a dragged-in path, or a shell-escaped
+// apostrophe. Only matching outer wrappers are removed, so a path that
+// legitimately contains an apostrophe is preserved.
+func normalizePairwiseVideoSource(raw string) string {
+	value := strings.TrimSpace(raw)
+	for pass := 0; pass < 3; pass++ {
+		next := strings.TrimSpace(strings.ReplaceAll(value, `'\''`, `'`))
+		for _, quote := range []string{"'", `"`, "`"} {
+			if len(next) > 1 && strings.HasPrefix(next, quote) && strings.HasSuffix(next, quote) {
+				next = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(next, quote), quote))
+			}
+		}
+		if next == value {
+			break
+		}
+		value = next
+	}
+	return value
+}
+
+func isPairwiseVideoURL(value string) bool {
+	return strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://")
+}
+
+func validatePairwiseVideoURL(raw string) (string, error) {
+	value := normalizePairwiseVideoSource(raw)
+	u, err := url.Parse(value)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
+		return "", errors.New("运行视频必须填写可访问的 HTTP(S) 链接")
+	}
+	return value, nil
+}
+
+func validatePairwiseVideoPath(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", errors.New("运行录屏文件不存在或不是本机可访问的普通文件：" + path)
+	}
+	if ext := strings.ToLower(filepath.Ext(path)); !pairwiseVideoExtensions[ext] {
+		return "", errors.New("运行录屏文件必须是 mp4、mov、webm 或 m4v 格式：" + path)
+	}
+	if info.Size() > pairwiseVideoMaxBytes {
+		return "", fmt.Errorf("运行录屏文件不能超过 500 MB（当前 %.0f MB）：%s", float64(info.Size())/(1024*1024), path)
+	}
+	return path, nil
+}
+
+// resolvePairwiseVideoPath validates the unwrapped value first and falls back to
+// the raw input, so a file whose real name is wrapped in quotes still works.
+func resolvePairwiseVideoPath(raw string) (string, error) {
+	candidates := make([]string, 0, 2)
+	for _, candidate := range []string{normalizePairwiseVideoSource(raw), strings.TrimSpace(raw)} {
+		if candidate == "" {
+			continue
+		}
+		known := false
+		for _, existing := range candidates {
+			if existing == candidate {
+				known = true
+				break
+			}
+		}
+		if !known {
+			candidates = append(candidates, candidate)
+		}
+	}
+	var lastErr error
+	for _, candidate := range candidates {
+		path, err := validatePairwiseVideoPath(candidate)
+		if err == nil {
+			return path, nil
+		}
+		lastErr = err
+	}
+	if len(candidates) > 1 {
+		return "", fmt.Errorf("%v（原始输入：%s）", lastErr, candidates[1])
+	}
+	return "", lastErr
+}
+
 func (s *AnnotationService) SavePairwiseMaterials(req PairwiseMaterialsRequest) (*domain.Case, error) {
 	unlock, err := s.lockTask(req.TaskID)
 	if err != nil {
@@ -414,18 +500,23 @@ func (s *AnnotationService) SavePairwiseMaterials(req PairwiseMaterialsRequest) 
 	currentReview := domain.CurrentPairwiseReview(*c)
 	videoURL := strings.TrimSpace(req.VideoURL)
 	videoPath := strings.TrimSpace(req.VideoPath)
+	if videoURL == "" && isPairwiseVideoURL(normalizePairwiseVideoSource(videoPath)) {
+		// A quoted HTTP(S) link arrives in the path field; classify it after unwrapping.
+		videoURL, videoPath = videoPath, ""
+	}
 	if videoURL != "" {
-		u, err := url.Parse(videoURL)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
-			return nil, errors.New("运行视频必须填写可访问的 HTTP(S) 链接")
+		value, err := validatePairwiseVideoURL(videoURL)
+		if err != nil {
+			return nil, err
 		}
+		videoURL, videoPath = value, ""
 		run.VideoStatus = domain.PairwiseVideoReady
 	} else if videoPath != "" {
-		info, err := os.Stat(videoPath)
-		ext := strings.ToLower(filepath.Ext(videoPath))
-		if err != nil || !info.Mode().IsRegular() || info.Size() > 500*1024*1024 || (ext != ".mp4" && ext != ".mov" && ext != ".webm" && ext != ".m4v") {
-			return nil, errors.New("运行录屏必须是本机可访问的 mp4、mov、webm 或 m4v 文件，且不超过 500 MB")
+		value, err := resolvePairwiseVideoPath(videoPath)
+		if err != nil {
+			return nil, err
 		}
+		videoPath, videoURL = value, ""
 		run.VideoStatus = domain.PairwiseVideoReady
 	} else if strings.TrimSpace(req.RecordingError) != "" {
 		run.VideoStatus = domain.PairwiseVideoManualRequired

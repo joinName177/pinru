@@ -32,11 +32,32 @@ type Props = {
   onRefreshContainers?: () => Promise<void>;
   onCopyPrompt?: () => Promise<unknown>;
   onStartProject?: (side: PairwiseSide) => Promise<PairwiseProjectState | null>;
+  onCaptureBoth?: () => Promise<void>;
   promptCopied?: boolean;
 };
 
 function shortSha(value: string) {
   return value ? value.slice(0, 10) : '尚未提交';
+}
+
+const VIDEO_URL_PATTERN = /^https?:\/\//;
+
+// Mirrors the backend normalization: strip wrappers pasted together with the
+// value (shell quotes, escaped apostrophes) while keeping apostrophes that are
+// part of a real file name.
+export function normalizeVideoSource(raw: string) {
+  let value = raw.trim();
+  for (let pass = 0; pass < 3; pass += 1) {
+    let next = value.replace(/'\''/g, "'").trim();
+    for (const quote of ["'", '"', '`']) {
+      if (next.length > 1 && next.startsWith(quote) && next.endsWith(quote)) {
+        next = next.slice(1, -1).trim();
+      }
+    }
+    if (next === value) break;
+    value = next;
+  }
+  return value;
 }
 
 function RunPanel({ taskId, side, run, containers, disabled, runJob, onBindContainer, onRefreshContainer, onStartProject }: {
@@ -173,8 +194,15 @@ function RunPanel({ taskId, side, run, containers, disabled, runJob, onBindConta
         </label>
         <div className="flex flex-wrap items-center gap-2">
           <button className={SECONDARY} disabled={disabled || !videoSource.trim()} onClick={() => {
-            const source = videoSource.trim();
-            return void runJob(`保存 ${side} 视频`, () => savePairwiseMaterials({ taskId, side, videoUrl: /^https?:\/\//.test(source) ? source : '', videoPath: /^https?:\/\//.test(source) ? '' : source, recordingError: '' }));
+            const source = normalizeVideoSource(videoSource);
+            setVideoSource(source);
+            return void runJob(`保存 ${side} 视频`, () => savePairwiseMaterials({
+              taskId,
+              side,
+              videoUrl: VIDEO_URL_PATTERN.test(source) ? source : '',
+              videoPath: VIDEO_URL_PATTERN.test(source) ? '' : source,
+              recordingError: '',
+            }));
           }}>
             <Save className="h-4 w-4" />保存 {side} 视频
           </button>
@@ -187,11 +215,12 @@ function RunPanel({ taskId, side, run, containers, disabled, runJob, onBindConta
   );
 }
 
-export function PairwiseWorkspace({ annotationCase, containers = [], disabled, runJob, onCopyContainerCommand, onBindContainer, onRefreshContainer, onRefreshContainers, onCopyPrompt, onStartProject, promptCopied = false }: Props) {
+export function PairwiseWorkspace({ annotationCase, containers = [], disabled, runJob, onCopyContainerCommand, onBindContainer, onRefreshContainer, onRefreshContainers, onCopyPrompt, onStartProject, onCaptureBoth, promptCopied = false }: Props) {
   const pairwise = annotationCase.pairwise;
   if (!pairwise) return null;
   const latestReview = pairwise.reviews.at(-1);
   const [refreshing, setRefreshing] = useState(false);
+  const [capturingBoth, setCapturingBoth] = useState(false);
   const [copiedContainerCommands, setCopiedContainerCommands] = useState<Record<PairwiseSide, boolean>>({ A: false, B: false });
   const reviewReady = Boolean(
     pairwise.runA.captureId && pairwise.runA.deliverableSha
@@ -224,6 +253,18 @@ export function PairwiseWorkspace({ annotationCase, containers = [], disabled, r
             setRefreshing(true);
             void Promise.resolve(onRefreshContainers?.()).finally(() => setRefreshing(false));
           }}>{refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}刷新并绑定 A/B</button>
+          <button
+            className={PRIMARY}
+            title="依次采集并提交 A、B 两侧轨迹与产物"
+            disabled={disabled || capturingBoth || !onCaptureBoth || !(pairwise.runA.containerId || pairwise.runB.containerId)}
+            onClick={() => {
+              if (!onCaptureBoth) return;
+              setCapturingBoth(true);
+              void Promise.resolve(onCaptureBoth()).finally(() => setCapturingBoth(false));
+            }}
+          >
+            {capturingBoth ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}一键采集 A/B
+          </button>
           <button className={promptCopied ? COMPLETED : SECONDARY} disabled={disabled || !onCopyPrompt} onClick={() => void onCopyPrompt?.()}>{promptCopied ? <CheckCircle2 className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}{promptCopied ? '提示词已复制' : '复制提示词'}</button>
           <label className="min-w-[240px] flex-1 sm:max-w-sm">
             <span className="mb-1 block text-xs font-semibold text-stone-500">环境可复现等级</span>

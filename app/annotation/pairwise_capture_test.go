@@ -210,6 +210,96 @@ func TestSelectPairwiseTraceRejectsMissingAndAmbiguousMatches(t *testing.T) {
 	}
 }
 
+func TestNormalizePairwiseVideoSourceKeepsRealApostrophes(t *testing.T) {
+	for _, tc := range []struct{ name, raw, want string }{
+		{"plain path", "  /tmp/a.mp4 ", "/tmp/a.mp4"},
+		{"single quoted path", "'/tmp/a b.mov'", "/tmp/a b.mov"},
+		{"double quoted path", `"/tmp/a.mov"`, "/tmp/a.mov"},
+		{"quoted url", "'https://example.com/a.mp4'", "https://example.com/a.mp4"},
+		{"nested quotes", `"'/tmp/a.mov'"`, "/tmp/a.mov"},
+		{"shell escaped apostrophe", `'/tmp/it'\''s.mov'`, "/tmp/it's.mov"},
+		{"apostrophe inside name", "/tmp/it's.mov", "/tmp/it's.mov"},
+		{"unbalanced quote", "/tmp/it's.mov'", "/tmp/it's.mov'"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizePairwiseVideoSource(tc.raw); got != tc.want {
+				t.Fatalf("normalize(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSavePairwiseMaterialsAcceptsQuotedVideoPathAndURL(t *testing.T) {
+	s, _, _ := annotationFixture(t)
+	c, err := s.EnablePairwise(EnablePairwiseRequest{TaskID: "题目-1", Language: "Python", Harness: "Codex CLI", HarnessVersion: "1", OS: "MacOS/Linux", Validity: domain.PairwiseValidityValid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	video := filepath.Join(dir, "it's demo.mov")
+	if err := os.WriteFile(video, []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := s.SavePairwiseMaterials(PairwiseMaterialsRequest{TaskID: c.TaskID, Side: domain.PairwiseSideA, VideoPath: "'" + video + "'"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Pairwise.RunA.VideoStatus != domain.PairwiseVideoReady || updated.Pairwise.RunA.VideoPath != video {
+		t.Fatalf("video state = %#v", updated.Pairwise.RunA)
+	}
+	// A quoted HTTP(S) link arrives in the path field and must still be stored as a URL.
+	updated, err = s.SavePairwiseMaterials(PairwiseMaterialsRequest{TaskID: c.TaskID, Side: domain.PairwiseSideB, VideoPath: "'https://example.com/b.mp4'"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Pairwise.RunB.VideoURL != "https://example.com/b.mp4" || updated.Pairwise.RunB.VideoPath != "" {
+		t.Fatalf("video state = %#v", updated.Pairwise.RunB)
+	}
+}
+
+func TestSavePairwiseMaterialsKeepsFileWhoseNameIsWrappedInQuotes(t *testing.T) {
+	s, _, _ := annotationFixture(t)
+	c, err := s.EnablePairwise(EnablePairwiseRequest{TaskID: "题目-1", Language: "Python", Harness: "Codex CLI", HarnessVersion: "1", OS: "MacOS/Linux", Validity: domain.PairwiseValidityValid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	video := filepath.Join(dir, "'wrapped'.mp4")
+	if err := os.WriteFile(video, []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := s.SavePairwiseMaterials(PairwiseMaterialsRequest{TaskID: c.TaskID, Side: domain.PairwiseSideA, VideoPath: video})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Pairwise.RunA.VideoPath != video {
+		t.Fatalf("video path = %q, want %q", updated.Pairwise.RunA.VideoPath, video)
+	}
+}
+
+func TestSavePairwiseMaterialsReportsWhyTheVideoWasRejected(t *testing.T) {
+	s, _, _ := annotationFixture(t)
+	c, err := s.EnablePairwise(EnablePairwiseRequest{TaskID: "题目-1", Language: "Python", Harness: "Codex CLI", HarnessVersion: "1", OS: "MacOS/Linux", Validity: domain.PairwiseValidityValid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	text := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(text, []byte("not a video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SavePairwiseMaterials(PairwiseMaterialsRequest{TaskID: c.TaskID, Side: domain.PairwiseSideA, VideoPath: filepath.Join(dir, "missing.mov")}); err == nil || !strings.Contains(err.Error(), "不存在") {
+		t.Fatalf("missing file error = %v", err)
+	}
+	if _, err := s.SavePairwiseMaterials(PairwiseMaterialsRequest{TaskID: c.TaskID, Side: domain.PairwiseSideA, VideoPath: text}); err == nil || !strings.Contains(err.Error(), "格式") {
+		t.Fatalf("wrong extension error = %v", err)
+	}
+	missing := filepath.Join(dir, "missing.mov")
+	if _, err := s.SavePairwiseMaterials(PairwiseMaterialsRequest{TaskID: c.TaskID, Side: domain.PairwiseSideA, VideoPath: "'" + missing + "'"}); err == nil || !strings.Contains(err.Error(), missing) {
+		t.Fatalf("quoted missing file error = %v", err)
+	}
+}
+
 func TestSavePairwiseMaterialsRequiresHTTPVideoURL(t *testing.T) {
 	s, _, _ := annotationFixture(t)
 	c, err := s.EnablePairwise(EnablePairwiseRequest{TaskID: "题目-1", Language: "Python", Harness: "Codex CLI", HarnessVersion: "1", OS: "MacOS/Linux", Validity: domain.PairwiseValidityValid})
