@@ -866,6 +866,7 @@ func appendProjectRequirementGenerationRules(sb *strings.Builder, req GeneratePr
 
 func appendDifficultPromptEligibilityRules(sb *strings.Builder, batch bool) {
 	sb.WriteString("困难题准入门槛：题目必须存在一条不能拆成互不影响的局部小修的联动链路，并至少命中一类真实复杂度：跨模块或跨层的数据与状态传递；状态机、异步时序、并发或失败恢复；多入口、持久化与展示之间的一致性；兼容旧数据或旧行为且需要成组回归验证。同一业务模块内多个协作部分的真实联动也可以构成困难题，不强求跨模块。独立的样式、提示或输入校验不构成困难题，不能因为边界条件写得多就判为困难。文字截断与完整名称提示、本地存储失败提示、上传文件类型或大小校验都属于典型局部小修；把几项互不关联的小修拼在一起，也不能抬成困难题。")
+	sb.WriteString("本期 Pair-wise GSB 改动量门槛：每道困难或地狱题都必须让两次独立实现各自产生至少 10 行有效源码改动，按产物快照相对初始快照的差异计算，每个新增行和删除行各计一行；依赖锁文件、node_modules 等依赖目录、构建产物和纯文档不计入。题目应要求多个相互协作的实现点，避免一侧几行微修即可完成、另一侧却需要完整重构的极端失衡，否则没有两份分量相当的产物可比。这是内部选题和自检门槛，不要把改动行数、GSB、审核或收录规则写进最终业务提示词。")
 	if batch {
 		sb.WriteString("批量生成需要补足困难题名额时，必须换题，不能硬贴【困难】标签。题目难度只能标为困难或地狱；换题后仍达不到困难门槛就继续换题，不得降级为简单或一般。\n")
 		return
@@ -1318,6 +1319,7 @@ func buildQualityRegenerationPrompt(req GeneratePromptRequest, existingPrompts [
 	sb.WriteString("质量预检未通过，必须重新生成完整提示词，不能只删除触发规则的词语。\n")
 	sb.WriteString("保留真实业务意图，重新写清当前情况、触发场景、目标行为、可核查结果和至少一个真实边界；不要加入评分、收录或诱导失败等审核规则。\n")
 	sb.WriteString("如果失败原因是难度低于困难，必须换成有真实联动链路的题目，不得靠堆砌无关边界硬贴难度，也不得输出简单或一般难度。\n")
+	sb.WriteString("重新选题时还要检查两次独立实现是否都需要至少 10 行有效源码改动，并且改动规模大致可比；不能让一侧靠几行微修完成、另一侧才需要完整重构。该检查只用于内部选题，不要写入最终业务提示词。\n")
 	if qualityErr != nil {
 		sb.WriteString("失败原因：")
 		sb.WriteString(qualityErr.Error())

@@ -58,7 +58,7 @@ func TestDecodePairwiseReviewRejectsMarkdownOrChecklistFormatting(t *testing.T) 
 
 func TestDecodePairwiseReviewStripsDecorativeQuoteBrackets(t *testing.T) {
 	for _, marks := range []string{"『筛选功能』", "「筛选功能」", "【筛选功能】", "《筛选功能》", "〔筛选功能〕", "〈筛选功能〉"} {
-		reason := "A 完成了" + marks + "并运行测试确认空数据也有反馈；B 只实现常规流程，异常输入仍会中断操作。这道题更看重用户遇到异常时能否继续使用，因此 A 更可靠。"
+		reason := "A 在 src/filter.ts 完成了" + marks + "并运行 npm test 确认空数据也有反馈；B 只读取 src/filter.ts 实现常规流程，异常输入仍会中断操作。这道题更看重用户遇到异常时能否继续使用，因此 A 更可靠。"
 		raw := []byte(`{"status":"ready","conclusion":"A_better","reason":` + quotePairwiseJSON(reason) + `}`)
 		result, err := decodePairwiseReview(raw)
 		if err != nil {
@@ -67,20 +67,47 @@ func TestDecodePairwiseReviewStripsDecorativeQuoteBrackets(t *testing.T) {
 		if strings.ContainsAny(result.Reason, "『』「」【】《》〔〕〖〗〘〙〚〛〈〉") {
 			t.Fatalf("reason still contains decorative brackets after %q: %q", marks, result.Reason)
 		}
-		if !strings.Contains(result.Reason, "A 完成了筛选功能并运行测试") {
+		if !strings.Contains(result.Reason, "A 在 src/filter.ts 完成了筛选功能并运行 npm test") {
 			t.Fatalf("stripping %q changed the sentence beyond removing brackets: %q", marks, result.Reason)
 		}
 	}
 }
 
 func TestDecodePairwiseReviewAcceptsNaturalComparisonWithDecisionBasis(t *testing.T) {
-	reason := "A 很快找到了筛选失效的原因，修改后页面在空数据和重复提交时都能正常反馈，最后也实际走完了用户操作；B 的主体功能可以使用，但只验证了常规流程，空数据时仍会留下一块没有说明的空白区域。这道题更看重用户遇到异常输入时能不能继续操作，因此 A 更可靠。"
+	reason := "A 先读取 src/filter.ts，修改后页面在空数据和重复提交时都能正常反馈，并运行 npm test 走完用户操作；B 只查看 src/filter.ts 并验证常规流程，空数据时仍会留下一块没有说明的空白区域。这道题更看重用户遇到异常输入时能不能继续操作，因此 A 更可靠。"
 	result, err := decodePairwiseReview([]byte(`{"status":"ready","conclusion":"A_better","reason":` + quotePairwiseJSON(reason) + `}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Reason != reason {
 		t.Fatalf("reason = %q", result.Reason)
+	}
+}
+
+func TestDecodePairwiseReviewRejectsResultOnlyComparison(t *testing.T) {
+	reason := "两边都实现了灵感批量生成、按能量或色相方向约束候选、载入并撤销，运行后发现 B 的候选行在点收起或选中候选后仍占据版面，A 的候选数为零但低能量和暖色标签不自洽。这道题最看重候选可收起，因此 A 更好。"
+	raw := []byte(`{"status":"ready","conclusion":"A_better","reason":` + quotePairwiseJSON(reason) + `}`)
+	if result, err := decodePairwiseReview(raw); err == nil {
+		t.Fatalf("accepted result-only comparison: %#v", result)
+	}
+}
+
+func TestDecodePairwiseReviewRequiresProcessAnchorsForBothSides(t *testing.T) {
+	reason := "A 先读取 src/main.ts 并修改候选区，执行 npm run build；B 也完成了候选功能，页面结果可以使用，但没有说明它读取、修改或验证了什么。两边产物都能生成候选并载入撤销，这道题更看重过程可核验和收起后的实际交互，因此 A 更好。"
+	raw := []byte(`{"status":"ready","conclusion":"A_better","reason":` + quotePairwiseJSON(reason) + `}`)
+	if result, err := decodePairwiseReview(raw); err == nil {
+		t.Fatalf("accepted one-sided process anchors: %#v", result)
+	}
+}
+
+func TestDecodePairwiseReviewAcceptsProcessAndProductCoverage(t *testing.T) {
+	reason := "A 先读取 src/main.ts 和 src/ui/styles.css，修改候选生成与收起处理，并执行 npm run build；B 读取相同入口后新增 src/core/inspiration.ts 和 src/core/history.ts，先修正约束测试失败，再重跑测试和 npm run build。产物上两边都能按能量和色相生成候选、载入并撤销，但 A 的标签不自洽，B 的候选网格覆盖 hidden 导致收起后仍占版面。这道题最看重候选可收起且不干扰创作，因此 A 更好。"
+	result, err := decodePairwiseReview([]byte(`{"status":"ready","conclusion":"A_better","reason":` + quotePairwiseJSON(reason) + `}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Conclusion != "A_better" {
+		t.Fatalf("result = %#v", result)
 	}
 }
 
@@ -93,7 +120,7 @@ func TestDecodePairwiseReviewRejectsInactionWithoutTriggerNode(t *testing.T) {
 }
 
 func TestDecodePairwiseReviewAcceptsInactionWithTriggerNode(t *testing.T) {
-	reason := "A 在 ClipboardShareAdapter 和 CyberCardView 中拆开复制与分享：复制按钮只写剪贴板，分享按钮按真实结果反馈，取消不再误报成功；补充的回归测试以及构建均通过。B 读完上述文件并定位到复制按钮误用 shareSlip 后，在拆分两条调用路径这一步反复重读，没有执行修改；还从 /workspace 运行 npm run build，因找不到 package.json 失败，提交仍保留原缺陷。本题最看重按钮行为与提示是否一致，因此 A 明显更好。"
+	reason := "A 修改 ClipboardShareAdapter.ts 和 CyberCardView.ts，拆开复制与分享：复制按钮只写剪贴板，分享按钮按真实结果反馈，取消不再误报成功，并补充 npm test；B 读完上述文件并定位到复制按钮误用 shareSlip 后，在拆分两条调用路径这一步反复重读，没有执行修改；还从 /workspace 运行 npm run build，因找不到 package.json 失败，提交仍保留原缺陷，产物上两边都有复制和分享按钮但行为不同。本题更看重按钮行为与提示是否一致，因此 A 明显更好。"
 	result, err := decodePairwiseReview([]byte(`{"status":"ready","conclusion":"A_better","reason":` + quotePairwiseJSON(reason) + `}`))
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +143,7 @@ func TestBuildPairwiseReviewPromptRequiresTriggerNodeForInaction(t *testing.T) {
 }
 
 func TestDecodePairwiseReviewKeepsTriggerNodeAfterStrippingBrackets(t *testing.T) {
-	reason := "A 在 ClipboardShareAdapter 和 CyberCardView 中拆开『复制』与【分享】：复制按钮只写剪贴板，分享按钮按真实结果反馈，取消不再误报成功；补充的回归测试以及构建均通过。B 读完上述文件并定位到复制按钮误用 shareSlip 后，在拆分《两条调用路径》这一步反复重读，没有执行修改；还从 /workspace 运行 npm run build，因找不到 package.json 失败，提交仍保留原缺陷。本题最看重按钮行为与提示是否一致，因此 A 明显更好。"
+	reason := "A 修改 ClipboardShareAdapter.ts 和 CyberCardView.ts，拆开『复制』与【分享】：复制按钮只写剪贴板，分享按钮按真实结果反馈，取消不再误报成功，并补充 npm test；B 读完上述文件并定位到复制按钮误用 shareSlip 后，在拆分《两条调用路径》这一步反复重读，没有执行修改；还从 /workspace 运行 npm run build，因找不到 package.json 失败，提交仍保留原缺陷，产物上两边都有复制和分享按钮但行为不同。本题最看重按钮行为与提示是否一致，因此 A 明显更好。"
 	result, err := decodePairwiseReview([]byte(`{"status":"ready","conclusion":"A_better","reason":` + quotePairwiseJSON(reason) + `}`))
 	if err != nil {
 		t.Fatal(err)

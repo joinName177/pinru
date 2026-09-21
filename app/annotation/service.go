@@ -366,6 +366,12 @@ func (s *AnnotationService) ExecuteJob(ctx context.Context, kind, payload string
 			return nil, err
 		}
 		return s.bindPairwiseContainer(ctx, r)
+	case "annotation_pairwise_clear":
+		var r PairwiseSideRequest
+		if err := json.Unmarshal([]byte(payload), &r); err != nil {
+			return nil, err
+		}
+		return s.clearPairwiseContainer(ctx, r)
 	case "annotation_pairwise_commit_side":
 		var r PairwiseCommitRequest
 		if err := json.Unmarshal([]byte(payload), &r); err != nil {

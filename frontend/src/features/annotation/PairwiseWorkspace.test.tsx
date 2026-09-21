@@ -100,6 +100,36 @@ it('lets a bound side clear its container, choose another one, and refresh only 
   await waitFor(() => expect(onBindContainer).toHaveBeenCalledWith('A', 'container-a2'));
 });
 
+it('asks the backend to remove the container and run folder when clearing a bound side', async () => {
+  const onClearContainer = vi.fn().mockResolvedValue(undefined);
+  render(<PairwiseWorkspace
+    annotationCase={pairwiseCase}
+    disabled={false}
+    runJob={vi.fn()}
+    onClearContainer={onClearContainer}
+  />);
+
+  const sideA = screen.getByRole('region', { name: '运行 A' });
+  fireEvent.click(within(sideA).getByRole('button', { name: '清除当前容器 A' }));
+  await waitFor(() => expect(onClearContainer).toHaveBeenCalledWith('A'));
+});
+
+it('keeps a side that was already cleared unbound after reload', () => {
+  const clearedCase = {
+    ...pairwiseCase,
+    pairwise: {
+      ...pairwiseCase.pairwise!,
+      runA: { ...pairwiseCase.pairwise!.runA, containerCleared: true },
+    },
+  } as AnnotationCase;
+  render(<PairwiseWorkspace annotationCase={clearedCase} disabled={false} runJob={vi.fn()} />);
+
+  const sideA = screen.getByRole('region', { name: '运行 A' });
+  expect(within(sideA).queryByRole('button', { name: '清除当前容器 A' })).not.toBeInTheDocument();
+  expect(within(sideA).getByLabelText('A 容器')).toHaveValue('');
+  expect(within(sideA).getByRole('button', { name: '采集 A' })).toBeDisabled();
+});
+
 it('marks A and B container commands as copied independently and keeps them clickable', async () => {
   const onCopyContainerCommand = vi.fn().mockResolvedValue(undefined);
   render(<PairwiseWorkspace

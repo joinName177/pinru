@@ -20,6 +20,7 @@ import {
   cancelAnnotationJob,
   captureAndPrepareTable,
   capturePairwiseSide,
+  clearPairwiseContainer,
   enablePairwise,
   exportPairwise,
   listCases,
@@ -512,6 +513,14 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     return bindPairwiseCaseToContainer(selectedCase, side, containerId);
   };
 
+  const handleClearPairwiseContainer = async (side: 'A' | 'B') => {
+    if (!selectedCase) return;
+    await runCaseJob(selectedCase.taskId, `清除 ${side} 容器`, () => clearPairwiseContainer({
+      taskId: selectedCase.taskId,
+      side,
+    }));
+  };
+
   const bindExpectedPairwiseContainer = async (
     targetCase: AnnotationCase,
     side: 'A' | 'B',
@@ -980,6 +989,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                     runJob={(label, submit) => runCaseJob(selectedCase.taskId, label, submit)}
                     onCopyContainerCommand={handleCopyPairwiseStartupCommand}
                     onBindContainer={handleBindPairwiseContainer}
+                    onClearContainer={handleClearPairwiseContainer}
                     onRefreshContainer={handleRefreshPairwiseContainer}
                     onRefreshContainers={handleRefreshPairwiseContainers}
                     onCopyPrompt={copyPairwisePrompt}

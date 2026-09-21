@@ -28,6 +28,7 @@ type Props = {
   runJob: PairwiseRunJob;
   onCopyContainerCommand?: (side: PairwiseSide) => Promise<void>;
   onBindContainer?: (side: PairwiseSide, containerId: string) => Promise<boolean>;
+  onClearContainer?: (side: PairwiseSide) => Promise<void>;
   onRefreshContainer?: (side: PairwiseSide) => Promise<void>;
   onRefreshContainers?: () => Promise<void>;
   onCopyPrompt?: () => Promise<unknown>;
@@ -60,7 +61,7 @@ export function normalizeVideoSource(raw: string) {
   return value;
 }
 
-function RunPanel({ taskId, side, run, containers, disabled, runJob, onBindContainer, onRefreshContainer, onStartProject }: {
+function RunPanel({ taskId, side, run, containers, disabled, runJob, onBindContainer, onClearContainer, onRefreshContainer, onStartProject }: {
   taskId: string;
   side: PairwiseSide;
   run: PairwiseRun;
@@ -68,6 +69,7 @@ function RunPanel({ taskId, side, run, containers, disabled, runJob, onBindConta
   disabled: boolean;
   runJob: PairwiseRunJob;
   onBindContainer?: (side: PairwiseSide, containerId: string) => Promise<boolean>;
+  onClearContainer?: (side: PairwiseSide) => Promise<void>;
   onRefreshContainer?: (side: PairwiseSide) => Promise<void>;
   onStartProject?: (side: PairwiseSide) => Promise<PairwiseProjectState | null>;
 }) {
@@ -80,13 +82,14 @@ function RunPanel({ taskId, side, run, containers, disabled, runJob, onBindConta
   const [projectCommandCopied, setProjectCommandCopied] = useState(false);
   useEffect(() => setVideoSource(run.videoPath || run.videoUrl || ''), [run.videoPath, run.videoUrl]);
   useEffect(() => {
-    setContainerId(run.containerId || '');
+    setContainerId(run.containerCleared ? '' : (run.containerId || ''));
     setContainerCleared(false);
-  }, [run.containerId]);
+  }, [run.containerId, run.containerCleared]);
   const readyVideo = run.videoStatus === 'ready';
+  const cleared = containerCleared || Boolean(run.containerCleared);
   const boundSelected = Boolean(containerId && containerId === run.containerId);
-  const showBound = boundSelected && !containerCleared;
-  const hasActiveContainer = Boolean(run.containerId) && !containerCleared;
+  const showBound = boundSelected && !cleared;
+  const hasActiveContainer = Boolean(run.containerId) && !cleared;
 
   const bindSelectedContainer = async () => {
     const completed = await onBindContainer?.(side, containerId);
@@ -123,10 +126,15 @@ function RunPanel({ taskId, side, run, containers, disabled, runJob, onBindConta
             title={`清除当前容器 ${side}`}
             className={SECONDARY}
             disabled={disabled}
-            onClick={() => {
+            onClick={() => void (async () => {
+              // 清除会同时删除 docker 容器和宿主机运行目录，交给后台任务执行并回传最新题目。
+              if (onClearContainer) {
+                await onClearContainer(side);
+                return;
+              }
               setContainerId('');
               setContainerCleared(true);
-            }}
+            })()}
           >
             <XCircle className="h-4 w-4" />清除当前容器
           </button>
@@ -215,7 +223,7 @@ function RunPanel({ taskId, side, run, containers, disabled, runJob, onBindConta
   );
 }
 
-export function PairwiseWorkspace({ annotationCase, containers = [], disabled, runJob, onCopyContainerCommand, onBindContainer, onRefreshContainer, onRefreshContainers, onCopyPrompt, onStartProject, onCaptureBoth, promptCopied = false }: Props) {
+export function PairwiseWorkspace({ annotationCase, containers = [], disabled, runJob, onCopyContainerCommand, onBindContainer, onClearContainer, onRefreshContainer, onRefreshContainers, onCopyPrompt, onStartProject, onCaptureBoth, promptCopied = false }: Props) {
   const pairwise = annotationCase.pairwise;
   if (!pairwise) return null;
   const latestReview = pairwise.reviews.at(-1);
@@ -284,8 +292,8 @@ export function PairwiseWorkspace({ annotationCase, containers = [], disabled, r
       </section>
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <RunPanel taskId={annotationCase.taskId} side="A" run={pairwise.runA} containers={containers} disabled={disabled} runJob={runJob} onBindContainer={onBindContainer} onRefreshContainer={onRefreshContainer} onStartProject={onStartProject} />
-        <RunPanel taskId={annotationCase.taskId} side="B" run={pairwise.runB} containers={containers} disabled={disabled} runJob={runJob} onBindContainer={onBindContainer} onRefreshContainer={onRefreshContainer} onStartProject={onStartProject} />
+        <RunPanel taskId={annotationCase.taskId} side="A" run={pairwise.runA} containers={containers} disabled={disabled} runJob={runJob} onBindContainer={onBindContainer} onClearContainer={onClearContainer} onRefreshContainer={onRefreshContainer} onStartProject={onStartProject} />
+        <RunPanel taskId={annotationCase.taskId} side="B" run={pairwise.runB} containers={containers} disabled={disabled} runJob={runJob} onBindContainer={onBindContainer} onClearContainer={onClearContainer} onRefreshContainer={onRefreshContainer} onStartProject={onStartProject} />
       </div>
 
       <section className="border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">

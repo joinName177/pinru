@@ -56,6 +56,19 @@ func TestBuildSystemPromptCarriesNaturalWritingRedLines(t *testing.T) {
 	}
 }
 
+func TestBuildSystemPromptIncludesPairwiseChangeVolumeGate(t *testing.T) {
+	prompt := BuildSystemPrompt()
+	for _, want := range []string{
+		"困难或地狱题必须让两次独立实现都需要至少 10 行有效源码改动",
+		"改动规模大致可比",
+		"依赖锁文件、依赖目录、构建产物和纯文档不计入",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("BuildSystemPrompt() missing pairwise gate %q: %q", want, prompt)
+		}
+	}
+}
+
 func TestValidatePromptWritingQualityRejectsMachineWriting(t *testing.T) {
 	tests := []struct {
 		name string

@@ -68,6 +68,9 @@ type PairwiseRun struct {
 	PreparedAt                int64        `json:"preparedAt"`
 	CapturedAt                int64        `json:"capturedAt"`
 	CommittedAt               int64        `json:"committedAt"`
+	// ContainerCleared 记录该侧容器和宿主机运行目录已被清除。容器绑定信息保留用于
+	// 制表和追溯，但界面按未绑定处理，需要重新绑定容器才能再次采集。
+	ContainerCleared bool `json:"containerCleared,omitempty"`
 }
 
 type PairwiseReview struct {

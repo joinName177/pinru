@@ -121,6 +121,9 @@ func TestBuildCustomProjectPromptDocumentPromptUsesActualDifficultyByDefault(t *
 		"不得出现五维评分、21分收录门槛",
 		"不能故意制造失败",
 		"困难题准入门槛",
+		"每道困难或地狱题都必须让两次独立实现各自产生至少 10 行有效源码改动",
+		"依赖锁文件、node_modules 等依赖目录、构建产物和纯文档不计入",
+		"避免一侧几行微修即可完成、另一侧却需要完整重构",
 		"不能拆成互不影响的局部小修",
 		"至少命中一类真实复杂度",
 		"同一业务模块内多个协作部分的真实联动也可以构成困难题",
@@ -553,6 +556,8 @@ func TestBuildSkillPromptAddsProjectRequirementGenerationRules(t *testing.T) {
 		"困难题准入门槛",
 		"独立的样式、提示或输入校验",
 		"不能因为边界条件写得多就判为困难",
+		"每道困难或地狱题都必须让两次独立实现各自产生至少 10 行有效源码改动",
+		"一侧几行微修即可完成、另一侧却需要完整重构",
 	} {
 		if !strings.Contains(featurePrompt, want) {
 			t.Fatalf("buildSkillPrompt(feature) missing %q in:\n%s", want, featurePrompt)
@@ -571,6 +576,25 @@ func TestBuildSkillPromptAddsProjectRequirementGenerationRules(t *testing.T) {
 	}, nil, nil)
 	if !strings.Contains(testingPrompt, "代码测试额外规则") {
 		t.Fatalf("buildSkillPrompt(testing) missing testing extra guidance:\n%s", testingPrompt)
+	}
+}
+
+func TestBuildQualityRegenerationPromptIncludesPairwiseChangeVolumeGate(t *testing.T) {
+	prompt := buildQualityRegenerationPrompt(
+		GeneratePromptRequest{TaskType: "Feature迭代"},
+		nil,
+		"上一条过于简单",
+		errors.New("生成难度为“一般”，低于困难下限"),
+		nil,
+	)
+	for _, want := range []string{
+		"两次独立实现是否都需要至少 10 行有效源码改动",
+		"改动规模大致可比",
+		"不要写入最终业务提示词",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("quality regeneration prompt missing %q:\n%s", want, prompt)
+		}
 	}
 }
 

@@ -17,16 +17,20 @@ import (
 )
 
 var (
-	pairwiseListPattern       = regexp.MustCompile(`(?m)(^|\n)\s*(?:[-*#>]|[0-9]+[.、)])\s*`)
-	pairwiseHashPattern       = regexp.MustCompile(`(?i)\b[0-9a-f]{12,64}\b`)
-	pairwiseLinePattern       = regexp.MustCompile(`(?:第\s*[0-9]+\s*行|\bL[0-9]+\b)`)
-	pairwiseVersionPattern    = regexp.MustCompile(`\b[vV]?[0-9]+\.[0-9]+(?:\.[0-9]+)?\b`)
-	pairwiseCountPattern      = regexp.MustCompile(`[0-9]+\s*(?:条)?(?:断言|测试|用例|调用)`)
-	pairwiseGeometryPattern   = regexp.MustCompile(`[0-9]+\s*[xX×]\s*[0-9]+|像素|坐标|轮廓签名`)
-	pairwiseInactionPattern   = regexp.MustCompile(`全程停在|停留在|只读未改|没有改动|未改动|没有修改|未修改|没有执行|未执行|没有运行|未运行|零改动`)
-	pairwiseFilePattern       = regexp.MustCompile(`(?i)[A-Za-z0-9_./-]+\.(?:go|ts|tsx|js|jsx|py|java|vue|rs|md|json|ya?ml|sh|html|css)\b`)
-	pairwiseCommandPattern    = regexp.MustCompile(`(?i)(?:npm|pnpm|yarn|pytest|cargo|gradle|mvn|make)(?:\s+run)?\s+[A-Za-z0-9_:./-]+|go\s+(?:test|build|run)\b`)
-	pairwiseIdentifierPattern = regexp.MustCompile(`[A-Za-z][A-Za-z0-9_]{3,}`)
+	pairwiseListPattern          = regexp.MustCompile(`(?m)(^|\n)\s*(?:[-*#>]|[0-9]+[.、)])\s*`)
+	pairwiseHashPattern          = regexp.MustCompile(`(?i)\b[0-9a-f]{12,64}\b`)
+	pairwiseLinePattern          = regexp.MustCompile(`(?:第\s*[0-9]+\s*行|\bL[0-9]+\b)`)
+	pairwiseVersionPattern       = regexp.MustCompile(`\b[vV]?[0-9]+\.[0-9]+(?:\.[0-9]+)?\b`)
+	pairwiseCountPattern         = regexp.MustCompile(`[0-9]+\s*(?:条)?(?:断言|测试|用例|调用)`)
+	pairwiseGeometryPattern      = regexp.MustCompile(`[0-9]+\s*[xX×]\s*[0-9]+|像素|坐标|轮廓签名`)
+	pairwiseInactionPattern      = regexp.MustCompile(`全程停在|停留在|只读未改|没有改动|未改动|没有修改|未修改|没有执行|未执行|没有运行|未运行|零改动`)
+	pairwiseProcessActionPattern = regexp.MustCompile(`读取|查看|检查|修改|编辑|新增|重构|接入|实现|运行|执行|构建|测试|验证|修正|排查|重跑|编译|安装|删除|拆分|定位|重读|补充|完成`)
+	pairwiseProcessTargetPattern = regexp.MustCompile(`(?i)[A-Za-z0-9_./-]+\.(?:go|ts|tsx|js|jsx|py|java|vue|rs|md|json|ya?ml|sh|html|css)\b|(?:npm|pnpm|yarn|pytest|cargo|gradle|mvn|make)(?:\s+run)?\s+[A-Za-z0-9_:./-]+|脚本|函数|组件|模块|样式|代码|命令|文件|测试|构建`)
+	pairwiseProductActionPattern = regexp.MustCompile(`能|可以|支持|仍|依旧|失效|占据|显示|收起|载入|撤销|还原|恢复|生成|产出|保持|一致|自洽|干扰|中断|丢失|完成|写|反馈|弹出|保留|误报`)
+	pairwiseProductTargetPattern = regexp.MustCompile(`候选|列表|预览|标签|撤销|重做|页面|功能|交互|版面|状态|数据|用户|结果|产物|筛选|过滤|按钮|接口|复制|分享|异常|空数据`)
+	pairwiseFilePattern          = regexp.MustCompile(`(?i)[A-Za-z0-9_./-]+\.(?:go|ts|tsx|js|jsx|py|java|vue|rs|md|json|ya?ml|sh|html|css)\b`)
+	pairwiseCommandPattern       = regexp.MustCompile(`(?i)(?:npm|pnpm|yarn|pytest|cargo|gradle|mvn|make)(?:\s+run)?\s+[A-Za-z0-9_:./-]+|go\s+(?:test|build|run)\b`)
+	pairwiseIdentifierPattern    = regexp.MustCompile(`[A-Za-z][A-Za-z0-9_]{3,}`)
 )
 
 type PairwiseReviewRequest struct {
@@ -171,8 +175,8 @@ func decodePairwiseReview(raw []byte) (*PairwiseReviewResult, error) {
 	if strings.ContainsAny(reason, "`#→✅❌") || pairwiseListPattern.MatchString(reason) || strings.Contains(reason, "\n") {
 		return nil, errors.New("GSB 理由必须是无 Markdown、编号或项目符号的单段自然中文")
 	}
-	if !containsAny(reason, []string{"步骤", "命令", "测试", "核验", "轨迹", "执行", "运行", "报错", "实现", "修改", "删除"}) || !containsAny(reason, []string{"文件", "/", ".go", ".ts", ".tsx", ".js", ".py", "接口", "页面", "功能", "未实现", "返回", "产物"}) {
-		return nil, errors.New("GSB 理由必须同时覆盖执行过程和最终产物")
+	if issue := pairwiseEvidenceCoverageIssue(reason); issue != "" {
+		return nil, errors.New(issue)
 	}
 	if looksLikePairwiseMetricInventory(reason) {
 		return nil, errors.New("GSB 理由像指标清单，请只保留影响结论的关键事实并改写为自然叙述")
@@ -187,10 +191,45 @@ func decodePairwiseReview(raw []byte) (*PairwiseReviewResult, error) {
 	return &result, nil
 }
 
-func lacksPairwiseInactionTrigger(reason string) bool {
-	for _, clause := range strings.FieldsFunc(reason, func(r rune) bool {
+func pairwiseEvidenceCoverageIssue(reason string) string {
+	processForA, processForB := false, false
+	productForA, productForB := false, false
+	sharedProcess, sharedProduct := false, false
+
+	for _, clause := range splitPairwiseReasonClauses(reason) {
+		process := pairwiseProcessActionPattern.MatchString(clause) &&
+			pairwiseProcessTargetPattern.MatchString(clause)
+		product := pairwiseProductActionPattern.MatchString(clause) &&
+			pairwiseProductTargetPattern.MatchString(clause)
+		if process {
+			processForA = processForA || strings.Contains(clause, "A")
+			processForB = processForB || strings.Contains(clause, "B")
+			sharedProcess = sharedProcess || containsAny(clause, []string{"两边都", "两侧都", "双方都"})
+		}
+		if product {
+			productForA = productForA || strings.Contains(clause, "A")
+			productForB = productForB || strings.Contains(clause, "B")
+			sharedProduct = sharedProduct || containsAny(clause, []string{"两边都", "两侧都", "双方都"})
+		}
+	}
+
+	if !(processForA && processForB) && !sharedProcess {
+		return "GSB 理由必须分别写出 A、B 的具体过程锚点，如读取或修改的文件、执行的命令、验证脚本或失败后的修正"
+	}
+	if !(productForA && productForB) && !sharedProduct {
+		return "GSB 理由必须分别写出 A、B 的最终产物行为及用户影响，不能只描述其中一侧"
+	}
+	return ""
+}
+
+func splitPairwiseReasonClauses(reason string) []string {
+	return strings.FieldsFunc(reason, func(r rune) bool {
 		return strings.ContainsRune("。！？；", r)
-	}) {
+	})
+}
+
+func lacksPairwiseInactionTrigger(reason string) bool {
+	for _, clause := range splitPairwiseReasonClauses(reason) {
 		if !pairwiseInactionPattern.MatchString(clause) {
 			continue
 		}
@@ -252,6 +291,7 @@ func buildPairwiseReviewPrompt(inputPath, previous, violation string) string {
 结合两侧轨迹和代码产物判断 A_better、same 或 B_better。不要考虑推理时长、网络波动或部署导致的无故截断。
 	理由至少 60 个汉字且不超过 320 个字符，写成一段可以直接放进表单的精炼自然中文。先说真正影响结果的差异，再把 A、B 在执行过程和最终产物上的表现连起来，最后说明这道题最看重什么以及为什么据此选择当前结论。选择 same 时要说清采用的判准，以及为什么两边差异不足以改变用户实际结果。超过上限时完整重写，不要机械截断。
 	从证据中只挑有助于理解结论的关键事实。文件、函数、命令或测试只有在能解释实际行为和影响时才写；退出码、行号、版本号、哈希、断言数量、像素坐标等定位信息留在内部证据里，不要逐项罗列。直接描述用户能感知的功能差异、验证效果和风险，不要写成检查报告。
+	过程与产物必须分别核对：A、B 每侧至少写一处真实过程锚点和一处最终产物行为。过程锚点应包含读取、修改或新增的具体文件、执行的命令或验证脚本、真实失败及修正中的至少一项，不能用“实际运行两侧构建产物”代替；产物行为要写清用户实际看到的功能、交互或可靠性结果。若两侧过程或结果相同，也要明确写出“两边都”对应的具体文件、命令或行为。
 	凡是评价某侧未修改、未执行、只读未改或停在规划阶段，必须紧跟触发节点，说明卡在具体文件、函数、命令或业务步骤；不能只写“全程没动文件”。触发节点自然写进句子，不要加标签。
 	不要使用 Markdown、编号、项目符号、反引号、箭头、Emoji、固定标签、分点模板或五维打分。禁止使用%s，需要引用名称时直接写普通文本；这些符号会被系统直接剔除，请一开始就不要写。也不要出现“作为 AI”“根据上述分析”“综合评估”等前言和机械总结。不要虚构亲身操作或证据。证据不足时 status=needs_evidence，否则 status=ready。只返回符合 schema 的 JSON。%s`, inputPath, domain.PairwiseReasonDecorationLabel, correction)
 }

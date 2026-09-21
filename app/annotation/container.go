@@ -163,6 +163,7 @@ func (s *AnnotationService) bindPairwiseContainer(ctx context.Context, req Pairw
 	run.ContainerName = d.Name
 	run.WorkspacePath = d.WorkspacePath
 	run.RepoRelativePath = filepath.Clean(req.RepoRelativePath)
+	run.ContainerCleared = false
 	run.PreparedAt = time.Now().Unix()
 	return s.store.SaveAnnotationCase(*c, c.Revision)
 }
@@ -365,6 +366,9 @@ func (s *AnnotationService) verifyBinding(ctx context.Context, c *domain.Case) (
 }
 
 func (s *AnnotationService) verifyPairwiseBinding(ctx context.Context, c *domain.Case, run *domain.PairwiseRun) (string, error) {
+	if run.ContainerCleared {
+		return "", errors.New("该侧容器已清除，请重新绑定容器")
+	}
 	if run.ContainerID == "" {
 		return c.SourcePath, nil
 	}

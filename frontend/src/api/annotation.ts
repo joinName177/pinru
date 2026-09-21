@@ -91,6 +91,7 @@ export interface PairwiseRun {
   preparedAt: number;
   capturedAt: number;
   committedAt: number;
+  containerCleared?: boolean;
 }
 
 export interface PairwiseReview {
@@ -398,6 +399,11 @@ export function preparePairwiseSide(request: PairwiseSideRequest): Promise<Backg
 
 export function bindPairwiseContainer(request: PairwiseBindRequest): Promise<BackgroundJob> {
   return submitAnnotationJob('annotation_pairwise_bind', request.taskId, request);
+}
+
+// 清除该侧容器时一并删除 docker 容器和宿主机运行目录。
+export function clearPairwiseContainer(request: PairwiseSideRequest): Promise<BackgroundJob> {
+  return submitAnnotationJob('annotation_pairwise_clear', request.taskId, request);
 }
 
 export function startPairwiseProject(request: PairwiseSideRequest): Promise<PairwiseProjectState> {
