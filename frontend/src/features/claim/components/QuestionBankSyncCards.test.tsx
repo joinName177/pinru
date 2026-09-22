@@ -48,7 +48,7 @@ describe('custom document quantities', () => {
   it('requires difficulty quantities to equal the generated task total', () => {
     setup();
     fireEvent.change(screen.getByRole('spinbutton', { name: '困难' }), { target: { value: '11' } });
-    expect(screen.getByText(/难度数量合计 11 题，与题型总数 22 题不一致/)).toBeInTheDocument();
+    expect(screen.getByText(/难度数量合计 13 题，与题型总数 22 题不一致/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '导入并生成文档' })).toBeDisabled();
   });
 });

@@ -194,13 +194,13 @@ export default function Submit() {
   const ready = !!task && !!account && !!repo && !!sourceRun && !busy;
 
   return (
-    <div className="h-full flex flex-col p-8 bg-stone-50 dark:bg-[#161615]">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-stone-900 dark:text-stone-50 tracking-tight">提交</h1>
+    <div className="h-full flex flex-col p-4 sm:p-6 md:p-8 bg-stone-50 dark:bg-[#161615]">
+      <div className="mb-4 sm:mb-6">
+        <h1 className="text-xl sm:text-2xl font-bold text-stone-900 dark:text-stone-50 tracking-tight">提交</h1>
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-lg mx-auto space-y-5">
+        <div className="max-w-lg mx-auto space-y-4 sm:space-y-5">
 
           {/* 任务选择 */}
           <label className="block">

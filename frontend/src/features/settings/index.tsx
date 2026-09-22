@@ -663,19 +663,19 @@ export default function Settings() {
   };
 
   return (
-    <div className="h-full flex flex-col p-8 bg-stone-50 dark:bg-[#161615]">
-      <div className="mb-7">
-        <h1 className="text-2xl font-bold text-stone-900 dark:text-stone-50 tracking-tight">设置</h1>
-        <p className="text-sm text-stone-500 dark:text-stone-400 mt-1">管理账号、模型和通用配置</p>
+    <div className="h-full flex flex-col p-4 sm:p-6 md:p-8 bg-stone-50 dark:bg-[#161615]">
+      <div className="mb-4 sm:mb-6">
+        <h1 className="text-xl sm:text-2xl font-bold text-stone-900 dark:text-stone-50 tracking-tight">设置</h1>
+        <p className="text-xs sm:text-sm text-stone-500 dark:text-stone-400 mt-1">管理账号、模型和通用配置</p>
       </div>
 
-      <div className="flex-1 flex gap-6 min-h-0">
-        <nav className="w-44 flex-shrink-0 flex flex-col gap-0.5">
+      <div className="flex-1 flex gap-3 sm:gap-6 min-h-0">
+        <nav className="w-36 sm:w-44 flex-shrink-0 flex flex-col gap-0.5">
           {TABS.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2.5 px-3 py-2.5 rounded-2xl text-[13px] font-medium transition-all text-left cursor-default ${
+              className={`flex items-center gap-2 sm:gap-2.5 px-2.5 sm:px-3 py-2 sm:py-2.5 rounded-2xl text-xs sm:text-[13px] font-medium transition-all text-left cursor-default ${
                 activeTab === tab.id
                   ? 'bg-[#E7EDF5] dark:bg-[#1A1F29] text-[#111827] dark:text-[#F8FBFF] shadow-sm shadow-black/[.05]'
                   : 'text-stone-500 dark:text-stone-400 hover:bg-white/70 dark:hover:bg-stone-800/50 hover:text-stone-800 dark:hover:text-stone-200'
@@ -692,7 +692,7 @@ export default function Settings() {
         </nav>
 
         <div className="flex-1 bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-3xl overflow-y-auto">
-          <div className="p-8">
+          <div className="p-4 sm:p-6 md:p-8">
             {activeTab === 'gitlab' && (
               <GitLabSettingsPanel
                 loading={loading}

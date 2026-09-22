@@ -40,6 +40,7 @@ import {
   clampSidebarWidth,
   computeSidebarBaseWidthPx,
   parseStoredSidebarWidth,
+  SIDEBAR_MIN_WIDTH_PX,
   SIDEBAR_MAX_WIDTH_PX,
   SIDEBAR_WIDTH_STORAGE_KEY,
 } from '../lib/layoutSizing';
@@ -237,8 +238,8 @@ export default function Layout() {
     [projectNameWidth],
   );
   const resolvedSidebarWidthPx = clampSidebarWidth(
-    sidebarWidthPx ?? sidebarBaseWidthPx,
-    sidebarBaseWidthPx,
+    sidebarWidthPx ?? (typeof window !== 'undefined' && window.innerWidth <= 1024 ? SIDEBAR_MIN_WIDTH_PX : sidebarBaseWidthPx),
+    SIDEBAR_MIN_WIDTH_PX,
     SIDEBAR_MAX_WIDTH_PX,
   );
   const projectTriggerWidth = `calc(${projectNameWidth}em + ${PROJECT_MENU_CHROME_WIDTH_REM}rem)`;
@@ -296,14 +297,15 @@ export default function Layout() {
     setSidebarWidthPx((currentWidth) => {
       const persistedWidth = parseStoredSidebarWidth(
         window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY),
-        sidebarBaseWidthPx,
+        SIDEBAR_MIN_WIDTH_PX,
       );
 
       if (currentWidth === null) {
-        return persistedWidth ?? sidebarBaseWidthPx;
+        const isSmallScreen = window.innerWidth <= 1024;
+        return persistedWidth ?? (isSmallScreen ? SIDEBAR_MIN_WIDTH_PX : sidebarBaseWidthPx);
       }
 
-      return clampSidebarWidth(currentWidth, sidebarBaseWidthPx, SIDEBAR_MAX_WIDTH_PX);
+      return clampSidebarWidth(currentWidth, SIDEBAR_MIN_WIDTH_PX, SIDEBAR_MAX_WIDTH_PX);
     });
   }, [sidebarBaseWidthPx]);
 
@@ -402,7 +404,7 @@ export default function Layout() {
       setSidebarWidthPx(
         clampSidebarWidth(
           resizeState.startWidth + event.clientX - resizeState.startX,
-          sidebarBaseWidthPx,
+          SIDEBAR_MIN_WIDTH_PX,
           SIDEBAR_MAX_WIDTH_PX,
         ),
       );
@@ -494,7 +496,11 @@ export default function Layout() {
   const handleSidebarResizeReset = () => {
     sidebarResizeStateRef.current = null;
     setSidebarDragging(false);
-    setSidebarWidthPx(sidebarBaseWidthPx);
+    setSidebarWidthPx(
+      typeof window !== 'undefined' && window.innerWidth <= 1024
+        ? SIDEBAR_MIN_WIDTH_PX
+        : sidebarBaseWidthPx,
+    );
   };
 
   const handleAddModel = () => {
@@ -683,7 +689,7 @@ export default function Layout() {
         className="flex-shrink-0 flex flex-col bg-[#ECEAE6] border-r border-black/[.06] dark:bg-[#1A1A19] dark:border-white/[.06]"
         style={{ width: sidebarWidth, minWidth: sidebarWidth }}
       >
-        <div className="px-5 pt-7 pb-4">
+        <div className="px-4 sm:px-5 pt-4 sm:pt-6 pb-3 sm:pb-4">
           <button
             onClick={handlePrLogoClick}
             className="block text-left px-1 py-1 transition-colors cursor-default"
@@ -696,7 +702,7 @@ export default function Layout() {
             </p>
           </button>
 
-          <div className="relative mt-4" ref={projectMenuRef} style={{ width: projectTriggerWidth }}>
+          <div className="relative mt-4" ref={projectMenuRef} style={{ width: projectTriggerWidth, maxWidth: '100%' }}>
             <button
               onClick={() => setShowProjectMenu((prev) => !prev)}
               disabled={loadingProjects || switchingProject}
@@ -720,7 +726,7 @@ export default function Layout() {
             {showProjectMenu && (
               <div
                 className="absolute left-0 z-20 mt-2 min-w-full overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-xl dark:border-stone-800 dark:bg-stone-900"
-                style={{ width: projectMenuWidth }}
+                style={{ width: projectMenuWidth, maxWidth: 'calc(100vw - 2rem)' }}
               >
                 <div className="max-h-64 overflow-y-auto p-1.5">
                   {projects.length === 0 ? (
@@ -816,7 +822,7 @@ export default function Layout() {
           ))}
         </nav>
 
-        <div className="px-3 pb-5">
+        <div className="px-3 pb-3 sm:pb-5">
           <div className="mb-2 h-px bg-black/[.06] dark:bg-white/[.07]" />
           <div className="flex items-center justify-between px-1">
             <NavLink
@@ -874,7 +880,7 @@ export default function Layout() {
       <BackgroundJobPanel />
 
       {showProjectModal && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-6 md:items-center md:p-6">
+        <div className="fixed inset-0 z-50 flex items-start justify-center p-3 pt-4 sm:p-4 sm:pt-6 md:items-center md:p-6">
           <div
             className="absolute inset-0 bg-black/20 backdrop-blur-sm dark:bg-black/45"
             onClick={() => {
@@ -883,13 +889,13 @@ export default function Layout() {
               resetProjectForm();
             }}
           />
-          <div className="relative flex w-full max-w-5xl max-h-[92vh] flex-col overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-2xl dark:border-stone-800 dark:bg-stone-900">
-            <div className="flex items-start justify-between gap-4 border-b border-stone-100 px-6 py-5 dark:border-stone-800">
+          <div className="relative flex w-full max-w-5xl max-h-[94vh] flex-col overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-2xl dark:border-stone-800 dark:bg-stone-900">
+            <div className="flex items-start justify-between gap-4 border-b border-stone-100 px-4 sm:px-6 py-4 sm:py-5 dark:border-stone-800">
               <div>
                 <h2 className="text-lg font-bold text-stone-900 dark:text-stone-50">
                   {projectModalMode === 'batch' ? '新建领题批次' : '新建项目'}
                 </h2>
-                <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
+                <p className="mt-1 text-xs sm:text-sm text-stone-500 dark:text-stone-400">
                   {projectModalMode === 'batch'
                     ? '复制当前项目配置并使用新的本地目录，后续领题序号会从 -1 重新开始'
                     : '配置项目目录、模型列表、源码来源和任务配额'}
@@ -907,8 +913,8 @@ export default function Layout() {
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-6 py-5">
-              <div className="grid gap-5 lg:grid-cols-2">
+            <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 sm:py-5">
+              <div className="grid gap-5 md:grid-cols-2">
                 <div className="space-y-5">
                   <label className="block">
                     <span className="mb-2 block text-sm font-medium text-stone-700 dark:text-stone-300">
@@ -1168,7 +1174,7 @@ function DeleteProjectDialog({
           onCancel();
         }}
       />
-      <div className="relative w-full max-w-md rounded-3xl border border-stone-200 bg-white p-6 shadow-2xl dark:border-stone-800 dark:bg-stone-900">
+      <div className="relative w-full max-w-md max-h-[90vh] overflow-y-auto rounded-3xl border border-stone-200 bg-white p-5 sm:p-6 shadow-2xl dark:border-stone-800 dark:bg-stone-900">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-lg font-bold text-stone-900 dark:text-stone-50">确认删除项目</h2>

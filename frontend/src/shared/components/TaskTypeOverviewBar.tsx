@@ -54,7 +54,7 @@ export default function TaskTypeOverviewBar({
   summaries: TaskTypeOverviewSummary[];
 }) {
   return (
-    <section className="px-8 pt-4">
+    <section className="px-4 sm:px-6 md:px-8 pt-3 sm:pt-4">
       <div className="overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="flex min-w-full gap-3">
           {summaries.map((summary) => (

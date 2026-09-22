@@ -88,10 +88,12 @@ func main() {
 	})
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:  "PinRu",
-		Width:  1280,
-		Height: 860,
-		URL:    "/",
+		Title:     "PinRu",
+		Width:     1280,
+		Height:    860,
+		MinWidth:  950,
+		MinHeight: 650,
+		URL:       "/",
 	})
 
 	if err := app.Run(); err != nil {

@@ -117,7 +117,7 @@ function isPerfectEvaluation(evaluation: AnnotationEvaluation) {
 
 function ScoreGrid({ evaluation }: { evaluation: AnnotationEvaluation }) {
   return (
-    <div className="grid gap-2 md:grid-cols-5">
+    <div className="grid gap-2 grid-cols-2 sm:grid-cols-3 xl:grid-cols-5">
       {SCORE_DIMENSIONS.map((dimension, index) => {
         const score = evaluation.scores[index] ?? null;
         return (
@@ -230,6 +230,10 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
   const [actionError, setActionError] = useState('');
   const [notice, setNotice] = useState('');
   const [caseBusy, setCaseBusy] = useState<Record<string, BusyAction>>({});
+  // Keep the last backend failure available to compound actions. React state
+  // updates are asynchronous, so reading actionError immediately after a
+  // failed child job loses the useful server-side reason.
+  const lastJobError = useRef('');
   const [saving, setSaving] = useState(false);
   const [submitter, setSubmitter] = useState('');
   const [submittedAt, setSubmittedAt] = useState('');
@@ -367,6 +371,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
   useEffect(() => {
     setNotice('');
     setActionError('');
+    lastJobError.current = '';
   }, [selectedCase?.taskId]);
 
   useEffect(() => {
@@ -429,6 +434,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
       setNotice(`${label}已完成`);
       return true;
     } catch (error) {
+      lastJobError.current = errorMessage(error);
       if (targetProjectId === activeProjectId.current) {
         setActionError(errorMessage(error));
         if (label === '采集并准备制表数据') {
@@ -584,7 +590,10 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
       }
       const completed = await runCaseJob(selectedCase.taskId, `采集 ${side}`, () => capturePairwiseSide({ taskId: selectedCase.taskId, side }));
       if (completed) captured.push(side);
-      else failures.push(`${side} 采集失败`);
+      else {
+        const reason = lastJobError.current.trim();
+        failures.push(`${side} 采集失败${reason ? `：${reason}` : ''}`);
+      }
     }
     if (failures.length > 0) {
       setActionError(`一键采集 A/B 未全部完成：${failures.join('；')}${captured.length > 0 ? `（已完成 ${captured.join('、')}）` : ''}`);
@@ -768,7 +777,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
   };
 
   return (
-    <div className="min-h-full p-5 md:p-7">
+    <div className="min-h-full p-3.5 sm:p-5 md:p-7">
       <div className="mx-auto max-w-[1500px]">
         <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
           <div>
@@ -864,7 +873,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
           </section>
         )}
 
-        <div className={taskId ? 'space-y-5' : 'grid gap-5 xl:grid-cols-[300px_minmax(0,1fr)]'}>
+        <div className={taskId ? 'space-y-5' : 'grid gap-3.5 sm:gap-5 md:grid-cols-[240px_minmax(0,1fr)] lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)]'}>
           {!taskId && <aside className="self-start rounded-3xl border border-stone-200 bg-white p-3 shadow-sm dark:border-stone-800 dark:bg-stone-900">
             <div className="flex items-center justify-between px-2 pb-3 pt-1">
               <h2 className="text-sm font-bold text-stone-800 dark:text-stone-100">题目进度</h2>
@@ -878,7 +887,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
               <div
                 aria-label="题目进度列表"
                 tabIndex={0}
-                className="max-h-[min(32rem,60dvh)] space-y-1.5 overflow-y-auto overscroll-contain p-1 [scrollbar-gutter:stable] xl:max-h-[calc(100dvh-15rem)]"
+                className="max-h-[min(24rem,55dvh)] space-y-1.5 overflow-y-auto overscroll-contain p-1 [scrollbar-gutter:stable] md:max-h-[calc(100dvh-13rem)]"
               >
                 {cases.map((item) => {
                   const active = item.taskId === selectedTaskId;
@@ -965,7 +974,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
                       {quickPromptCopied ? '提示词已复制' : '复制提示词'}
                     </button>}
                   </div>}
-                  {selectedCase.mode !== 'pairwise_gsb' && <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  {selectedCase.mode !== 'pairwise_gsb' && <div className="mt-4 grid gap-3 grid-cols-1 sm:grid-cols-3">
                     <div className="rounded-2xl bg-stone-50 p-3 dark:bg-stone-800/50">
                       <p className="text-[11px] font-semibold text-stone-400">初始 SHA</p>
                       <p className="mt-1 break-all font-mono text-xs text-stone-700 dark:text-stone-300">{selectedCase.initialSha || '尚未建立'}</p>

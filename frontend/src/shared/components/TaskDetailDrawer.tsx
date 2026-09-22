@@ -818,8 +818,8 @@ export default function TaskDetailDrawer({
           : formatRemainingToComplete(activeRemainingToComplete, 'inline');
 
     return (
-      <div className="flex h-full min-h-0 flex-col lg:flex-row">
-        <aside className="flex w-full shrink-0 flex-col border-b border-stone-200 bg-white lg:w-[320px] lg:border-b-0 lg:border-r dark:border-zinc-800/70 dark:bg-[#0c0c0f]">
+      <div className="flex h-full min-h-0 flex-col md:flex-row">
+        <aside className="flex w-full shrink-0 flex-col border-b border-stone-200 bg-white md:w-[260px] lg:w-[320px] md:border-b-0 md:border-r dark:border-zinc-800/70 dark:bg-[#0c0c0f]">
           <div className="border-b border-stone-200 px-4 py-3 dark:border-zinc-800/70">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -1556,9 +1556,9 @@ export default function TaskDetailDrawer({
   );
 
   const renderModelRunsWorkspace = () => (
-    <div className="h-full overflow-y-auto px-4 py-5 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-5xl space-y-6 pb-6">
-        <div className="grid gap-3 md:grid-cols-5">
+    <div className="h-full overflow-y-auto px-3 py-4 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-5xl space-y-4 sm:space-y-6 pb-6">
+        <div className="grid gap-2 sm:gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-5">
           <InfoTile label="模型记录">{String(safeSelectedModelRuns.length)}</InfoTile>
           <InfoTile label="执行副本">{String(executionRuns.length)}</InfoTile>
           <InfoTile label="待处理">{String(executionRuns.filter((run) => run.status === 'pending').length)}</InfoTile>
@@ -2440,10 +2440,10 @@ export default function TaskDetailDrawer({
       >
         <div
           onClick={(event) => event.stopPropagation()}
-          className="flex h-full max-h-[960px] w-full max-w-[1420px] flex-col overflow-hidden rounded-[28px] border border-stone-200 bg-white shadow-[0_30px_120px_rgba(0,0,0,0.15)] ring-1 ring-black/5 dark:border-zinc-800/80 dark:bg-[#0a0a0c]/95 dark:shadow-[0_30px_120px_rgba(0,0,0,0.55)] dark:ring-white/5"
+          className="flex h-full max-h-[calc(100vh-1rem)] sm:max-h-[calc(100vh-2rem)] lg:max-h-[960px] w-full max-w-[1420px] flex-col overflow-hidden rounded-[24px] sm:rounded-[28px] border border-stone-200 bg-white shadow-[0_30px_120px_rgba(0,0,0,0.15)] ring-1 ring-black/5 dark:border-zinc-800/80 dark:bg-[#0a0a0c]/95 dark:shadow-[0_30px_120px_rgba(0,0,0,0.55)] dark:ring-white/5"
         >
-          <header className="border-b border-stone-200 bg-white px-4 py-4 sm:px-5 lg:px-6 dark:border-zinc-800/70 dark:bg-[#0b0b0e]">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <header className="border-b border-stone-200 bg-white px-3 py-2.5 sm:px-5 sm:py-3.5 lg:px-6 dark:border-zinc-800/70 dark:bg-[#0b0b0e]">
+            <div className="flex flex-col gap-2 sm:gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <div className={clsx('h-2 w-2 rounded-full', statusMeta[selected.status].dotCls)} />
@@ -2467,7 +2467,7 @@ export default function TaskDetailDrawer({
                     提示词 {selectedPromptGenerationMeta.label}
                   </span>
                 </div>
-                <h2 className="mt-3 truncate text-xl font-semibold tracking-tight text-stone-900 dark:text-white">{selected.projectName}</h2>
+                <h2 className="mt-1.5 sm:mt-3 truncate text-lg sm:text-xl font-semibold tracking-tight text-stone-900 dark:text-white">{selected.projectName}</h2>
                 <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px] text-stone-500 dark:text-zinc-500">
                   <span className="inline-flex items-center gap-1 font-mono">
                     <Hash className="h-3.5 w-3.5" />
@@ -2480,8 +2480,8 @@ export default function TaskDetailDrawer({
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="inline-flex rounded-xl border border-stone-200 bg-stone-100/80 p-1 dark:border-zinc-800 dark:bg-zinc-900/80">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                <div className="inline-flex max-w-full overflow-x-auto rounded-xl border border-stone-200 bg-stone-100/80 p-0.5 sm:p-1 dark:border-zinc-800 dark:bg-zinc-900/80">
                   {availableTabItems.map((tab) => {
                     const Icon = tab.icon;
                     const active = effectiveActiveDrawerTab === tab.id;
@@ -2491,7 +2491,7 @@ export default function TaskDetailDrawer({
                         type="button"
                         onClick={() => handleTabSwitch(tab.id)}
                         className={clsx(
-                          'inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition',
+                          'inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 sm:px-3 sm:py-2 text-xs font-medium transition',
                           active ? 'bg-white text-stone-900 shadow-sm dark:bg-zinc-800 dark:text-white' : 'text-stone-500 hover:text-stone-700 dark:text-zinc-400 dark:hover:text-zinc-200',
                         )}
                       >
@@ -2560,7 +2560,7 @@ export default function TaskDetailDrawer({
             )}
           </div>
 
-          <footer className="border-t border-stone-200 bg-white px-4 py-4 sm:px-5 lg:px-6 dark:border-zinc-800/70 dark:bg-[#0b0b0e]">
+          <footer className="border-t border-stone-200 bg-white px-4 py-2.5 sm:px-5 sm:py-3.5 lg:px-6 dark:border-zinc-800/70 dark:bg-[#0b0b0e]">
             <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
               <button
                 type="button"

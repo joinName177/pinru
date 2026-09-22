@@ -152,8 +152,8 @@ export default function RepoPromptList({
               const isEditing = editingTaskId === entry.taskId;
               return (
                 <li key={entry.taskId} className="px-4 py-3">
-                  <div className="flex items-start gap-4">
-                    <div className="shrink-0 pt-0.5" style={{ width: 180 }}>
+                  <div className="flex flex-col sm:flex-row items-start gap-2 sm:gap-4">
+                    <div className="shrink-0 pt-0.5 w-full sm:w-[180px]">
                       <div className="flex items-center gap-1.5">
                         <span
                           className="inline-block h-1.5 w-1.5 rounded-full flex-shrink-0"

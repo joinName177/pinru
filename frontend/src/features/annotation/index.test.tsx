@@ -366,7 +366,7 @@ describe('AnnotationWorkspace', () => {
     render(<AnnotationWorkspace projectId="project-1" taskId="task-1" />);
 
     fireEvent.click(await screen.findByRole('button', { name: '一键采集 A/B' }));
-    expect(await screen.findByText(/一键采集 A\/B 未全部完成：B 采集失败（已完成 A）/)).toBeInTheDocument();
+    expect(await screen.findByText(/一键采集 A\/B 未全部完成：B 采集失败：B 侧容器未就绪（已完成 A）/)).toBeInTheDocument();
   });
 
   it('automatically enables GSB when entering an untouched task card', async () => {

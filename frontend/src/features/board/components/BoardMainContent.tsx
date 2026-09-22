@@ -13,11 +13,9 @@ import TaskGroupSection from '../../../shared/components/TaskGroupSection';
 import TaskTypeOverviewBar from '../../../shared/components/TaskTypeOverviewBar';
 import type { ReviewStatus } from '../../../api/task';
 import type { Task, TaskStatus, TaskType } from '../../../store';
-import { getTaskTypePresentation } from '../../../api/config';
 import type { TaskTypeOverviewSummary } from '../../../shared/lib/taskTypeOverview';
 import {
   type CardSize,
-  STATUS,
   TaskCard,
   type TaskCardContainerActionState,
 } from './BoardPresentation';
@@ -33,38 +31,6 @@ const CARD_SIZE_OPTIONS: Array<{
   { size: 'four', icon: LayoutGrid, title: '四列' },
   { size: 'md', icon: Grid2X2, title: '标准' },
   { size: 'lg', icon: LayoutGrid, title: '宽松' },
-];
-
-const REVIEW_STATUS_FILTERS: Array<{
-  value: ReviewStatus;
-  label: string;
-  activeClassName: string;
-  activeDotClassName: string;
-}> = [
-  {
-    value: 'none',
-    label: '未复审',
-    activeClassName: 'bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-200 border-stone-300 dark:border-stone-600',
-    activeDotClassName: 'bg-stone-500 dark:bg-stone-300',
-  },
-  {
-    value: 'running',
-    label: '复审中',
-    activeClassName: 'bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-500/20',
-    activeDotClassName: 'bg-sky-500',
-  },
-  {
-    value: 'warning',
-    label: '复审未过',
-    activeClassName: 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/20',
-    activeDotClassName: 'bg-amber-500',
-  },
-  {
-    value: 'pass',
-    label: '复审通过',
-    activeClassName: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/20',
-    activeDotClassName: 'bg-emerald-500',
-  },
 ];
 
 export function BoardMainContent({
@@ -158,9 +124,9 @@ export function BoardMainContent({
 }) {
   return (
     <>
-      <div className="sticky top-0 z-10 bg-stone-50 dark:bg-[#161615] px-8 pt-6 pb-4 border-b border-stone-200 dark:border-stone-800">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="relative flex-1 max-w-sm">
+      <div className="sticky top-0 z-10 bg-stone-50 dark:bg-[#161615] px-4 sm:px-6 md:px-8 pt-4 sm:pt-6 pb-3 sm:pb-4 border-b border-stone-200 dark:border-stone-800">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-2 sm:mb-4">
+          <div className="relative flex-1 min-w-[180px] max-w-sm">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
             <input
               type="text"
@@ -179,14 +145,14 @@ export function BoardMainContent({
             )}
           </div>
 
-          <div className="ml-auto flex items-center gap-2 rounded-2xl bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 px-3">
+          <div className="flex items-center gap-1.5 sm:gap-2 rounded-2xl bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 px-2.5 sm:px-3">
             <span className="text-[11px] font-bold uppercase tracking-widest text-stone-400">
               排序
             </span>
             <select
               value={sortBy}
               onChange={(event) => onSortChange(event.target.value as BoardSortOption)}
-              className="bg-transparent py-2 text-sm font-medium text-stone-600 dark:text-stone-300 outline-none cursor-default"
+              className="bg-transparent py-2 text-xs sm:text-sm font-medium text-stone-600 dark:text-stone-300 outline-none cursor-default"
             >
               <option value="project-desc">项目名从高到低</option>
               <option value="created-desc">最新创建</option>
@@ -196,17 +162,17 @@ export function BoardMainContent({
             </select>
           </div>
 
-          <span className="text-sm text-stone-400 dark:text-stone-500 font-medium tabular-nums">
+          <span className="text-xs sm:text-sm text-stone-400 dark:text-stone-500 font-medium tabular-nums whitespace-nowrap">
             {sortedTasks.length} / {totalTaskCount}
           </span>
 
-          <div className="flex items-center gap-0.5 bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl p-1">
+          <div className="flex items-center gap-0.5 bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl p-0.5 sm:p-1">
             {CARD_SIZE_OPTIONS.map(({ size, icon: Icon, title }) => (
               <button
                 key={size}
                 title={title}
                 onClick={() => onCardSizeChange(size)}
-                className={`p-2 rounded-xl transition-all cursor-default ${
+                className={`p-1.5 sm:p-2 rounded-xl transition-all cursor-default ${
                   cardSize === size
                     ? 'bg-[#111827] dark:bg-[#E5EAF2] text-white dark:text-[#0D1117] shadow-sm'
                     : 'text-stone-500 hover:text-stone-800 dark:hover:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-800'
@@ -239,161 +205,19 @@ export function BoardMainContent({
 
           <button
             onClick={onOpenProjectOverview}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-[#111827] hover:bg-[#1F2937] dark:bg-[#E5EAF2] dark:hover:bg-[#F3F6FB] text-white dark:text-[#0D1117] rounded-2xl text-sm font-semibold transition-colors shadow-sm cursor-default"
+            className="inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-[#111827] hover:bg-[#1F2937] dark:bg-[#E5EAF2] dark:hover:bg-[#F3F6FB] text-white dark:text-[#0D1117] rounded-2xl text-xs sm:text-sm font-semibold transition-colors shadow-sm cursor-default whitespace-nowrap"
           >
             <LayoutGrid className="w-4 h-4" />
             查看项目概况
           </button>
         </div>
-
-        <div className="flex items-center gap-2 flex-wrap mb-2">
-          <span className="text-[11px] font-bold uppercase tracking-widest text-stone-400 w-14 flex-shrink-0">
-            类型
-          </span>
-          {availableTaskTypes.map((taskType) => {
-            const presentation = getTaskTypePresentation(taskType);
-            const active = activeTypes.has(presentation.value);
-            return (
-              <button
-                key={presentation.value}
-                onClick={() => onToggleType(presentation.value)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-default ${
-                  active
-                    ? `${presentation.badge} shadow-sm scale-[1.02]`
-                    : 'bg-white dark:bg-stone-900 text-stone-500 dark:text-stone-400 border-stone-200 dark:border-stone-700 hover:border-stone-300 dark:hover:border-stone-600'
-                }`}
-              >
-                <span
-                  className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                    active ? presentation.dot : 'bg-stone-300 dark:bg-stone-600'
-                  }`}
-                />
-                {presentation.label}
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[11px] font-bold uppercase tracking-widest text-stone-400 w-14 flex-shrink-0">
-            阶段
-          </span>
-          {(['Claimed', 'Downloading', 'Downloaded', 'PromptReady', 'ExecutionCompleted', 'Submitted', 'Error'] as TaskStatus[]).map((status) => {
-            const cfg = STATUS[status];
-            const count = tasksForStageCount.filter((task) => task.status === status).length;
-            const active = activeStages.has(status);
-            return (
-              <button
-                key={status}
-                onClick={() => onToggleStage(status)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-default ${
-                  active
-                    ? `${cfg.badgeCls} shadow-sm scale-[1.02]`
-                    : 'bg-white dark:bg-stone-900 text-stone-500 dark:text-stone-400 border-stone-200 dark:border-stone-700 hover:border-stone-300 dark:hover:border-stone-600'
-                }`}
-              >
-                <span
-                  className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                    active ? cfg.dotCls : 'bg-stone-300 dark:bg-stone-600'
-                  }`}
-                />
-                {cfg.label}
-                <span
-                  className={`tabular-nums font-bold ${
-                    active ? 'opacity-75' : 'text-stone-400 dark:text-stone-500'
-                  }`}
-                >
-                  {count}
-                </span>
-              </button>
-            );
-          })}
-          {hasFilters && (
-            <button
-              onClick={onClearFilters}
-              className="ml-1 flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-stone-400 hover:text-stone-600 dark:hover:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 transition-all cursor-default"
-            >
-              <X className="w-3 h-3" />
-              清除
-            </button>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap mt-2">
-          <span className="text-[11px] font-bold uppercase tracking-widest text-stone-400 w-14 flex-shrink-0">
-            复审
-          </span>
-          {REVIEW_STATUS_FILTERS.map((item) => {
-            const count = tasksForReviewStatusCount.filter((task) => task.aiReviewStatus === item.value).length;
-            const active = activeReviewStatuses.has(item.value);
-
-            return (
-              <button
-                key={item.value}
-                onClick={() => onToggleReviewStatus(item.value)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-default ${
-                  active
-                    ? `${item.activeClassName} shadow-sm scale-[1.02]`
-                    : 'bg-white dark:bg-stone-900 text-stone-500 dark:text-stone-400 border-stone-200 dark:border-stone-700 hover:border-stone-300 dark:hover:border-stone-600'
-                }`}
-              >
-                <span
-                  className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                    active ? item.activeDotClassName : 'bg-stone-300 dark:bg-stone-600'
-                  }`}
-                />
-                {item.label}
-                <span
-                  className={`tabular-nums font-bold ${
-                    active ? 'opacity-75' : 'text-stone-400 dark:text-stone-500'
-                  }`}
-                >
-                  {count}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        {availableExecutionRounds.length > 0 && (
-          <div className="flex items-center gap-2 flex-wrap mt-2">
-            <span className="text-[11px] font-bold uppercase tracking-widest text-stone-400 w-14 flex-shrink-0">
-              轮次
-            </span>
-            {availableExecutionRounds.map((round) => {
-              const count = tasksForRoundCount.filter((task) => task.executionRounds === round).length;
-              const active = activeRounds.has(round);
-
-              return (
-                <button
-                  key={round}
-                  onClick={() => onToggleRound(round)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-default ${
-                    active
-                      ? 'bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-500/20 shadow-sm scale-[1.02]'
-                      : 'bg-white dark:bg-stone-900 text-stone-500 dark:text-stone-400 border-stone-200 dark:border-stone-700 hover:border-stone-300 dark:hover:border-stone-600'
-                  }`}
-                >
-                  第 {round} 轮
-                  <span
-                    className={`tabular-nums font-bold ${
-                      active ? 'opacity-75' : 'text-stone-400 dark:text-stone-500'
-                    }`}
-                  >
-                    {count}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        )}
       </div>
 
       {visibleProjectTaskSummaries.length > 0 && (
         <TaskTypeOverviewBar summaries={visibleProjectTaskSummaries} />
       )}
 
-      <div className="flex-1 overflow-y-auto px-8 py-5">
+      <div className="flex-1 overflow-y-auto px-4 sm:px-6 md:px-8 py-3 sm:py-5">
         {sortedTasks.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-center">
             <div className="w-12 h-12 rounded-2xl bg-stone-100 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 flex items-center justify-center mb-4">

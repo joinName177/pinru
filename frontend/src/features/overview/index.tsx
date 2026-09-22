@@ -59,7 +59,7 @@ export default function Overview() {
   const promptPercent = totals.tasks === 0 ? 0 : Math.round((totals.promptsFilled / totals.tasks) * 100);
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-8 space-y-6">
+    <div className="mx-auto max-w-6xl px-4 sm:px-6 py-4 sm:py-8 space-y-4 sm:space-y-6">
       <header className="space-y-1">
         <h1 className="text-xl font-bold tracking-tight text-stone-900 dark:text-stone-50">
           项目查看

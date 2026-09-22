@@ -475,9 +475,9 @@ export function CustomProjectPickerModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4 py-8 backdrop-blur-sm">
-      <div className="flex max-h-[82vh] w-full max-w-3xl flex-col rounded-2xl border border-stone-200 bg-white shadow-2xl dark:border-stone-800 dark:bg-stone-950">
-        <div className="flex items-start justify-between gap-4 border-b border-stone-100 px-5 py-4 dark:border-stone-850">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-3 sm:px-4 py-3 sm:py-8 backdrop-blur-sm">
+      <div className="flex max-h-[92vh] w-full max-w-3xl flex-col rounded-2xl border border-stone-200 bg-white shadow-2xl dark:border-stone-800 dark:bg-stone-950">
+        <div className="flex items-start justify-between gap-4 border-b border-stone-100 px-4 sm:px-5 py-3 sm:py-4 dark:border-stone-850">
           <div className="min-w-0">
             <h3 className="text-base font-semibold text-stone-900 dark:text-stone-100">
               选择要导入的自定义项目
@@ -500,7 +500,7 @@ export function CustomProjectPickerModal({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 sm:px-5 py-3 sm:py-4">
           {(error || promptDocError) && (
             <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
               {error || promptDocError}
@@ -587,7 +587,7 @@ export function CustomProjectPickerModal({
           )}
         </div>
 
-        <div className="flex items-center justify-between gap-3 border-t border-stone-100 px-5 py-4 dark:border-stone-850">
+        <div className="flex items-center justify-between gap-3 border-t border-stone-100 px-4 sm:px-5 py-3 sm:py-4 dark:border-stone-850">
           <span className="text-xs text-stone-500 dark:text-stone-400">
             已选 {selectedNames.length} 个
           </span>
@@ -675,9 +675,9 @@ export function CustomPromptPreviewModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4 py-8 backdrop-blur-sm">
-      <div className="flex max-h-[86vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-2xl dark:border-stone-800 dark:bg-stone-950">
-        <div className="flex items-start justify-between gap-4 border-b border-stone-100 px-5 py-4 dark:border-stone-850">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-3 sm:px-4 py-3 sm:py-8 backdrop-blur-sm">
+      <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-2xl dark:border-stone-800 dark:bg-stone-950">
+        <div className="flex items-start justify-between gap-4 border-b border-stone-100 px-4 sm:px-5 py-3 sm:py-4 dark:border-stone-850">
           <div className="min-w-0">
             <h3 className="text-base font-semibold text-stone-900 dark:text-stone-100">
               预览并确认提示词文档
@@ -697,7 +697,7 @@ export function CustomPromptPreviewModal({
           </button>
         </div>
 
-        <div className="grid min-h-0 flex-1 grid-cols-[240px_minmax(0,1fr)]">
+        <div className="grid min-h-0 flex-1 grid-cols-[180px_minmax(0,1fr)] sm:grid-cols-[220px_minmax(0,1fr)]">
           <aside className="min-h-0 overflow-y-auto border-r border-stone-100 bg-stone-50/60 p-3 dark:border-stone-850 dark:bg-stone-900/30">
             <div className="space-y-1">
               {docs.map((doc) => {
@@ -784,13 +784,13 @@ export function CustomPromptPreviewModal({
                   }));
                 }}
                 spellCheck={false}
-                className="h-full min-h-[420px] w-full resize-none rounded-xl border border-stone-200 bg-white px-4 py-3 font-mono text-xs leading-6 text-stone-800 outline-none focus:border-stone-400 focus:ring-2 focus:ring-stone-400/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100 dark:focus:border-stone-600"
+                className="h-full min-h-[160px] sm:min-h-[260px] w-full resize-none rounded-xl border border-stone-200 bg-white px-4 py-3 font-mono text-xs leading-6 text-stone-800 outline-none focus:border-stone-400 focus:ring-2 focus:ring-stone-400/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100 dark:focus:border-stone-600"
               />
             </div>
           </main>
         </div>
 
-        <div className="flex items-center justify-between gap-3 border-t border-stone-100 px-5 py-4 dark:border-stone-850">
+        <div className="flex items-center justify-between gap-3 border-t border-stone-100 px-4 sm:px-5 py-3 sm:py-4 dark:border-stone-850">
           <div className="text-xs text-stone-500 dark:text-stone-400">
             共 {docs.length} 个提示词就绪文档，确认前请保存修改。
           </div>

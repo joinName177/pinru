@@ -29,6 +29,19 @@ func TestDecodePairwiseReviewRejectsGenericOrOneSidedReason(t *testing.T) {
 	}
 }
 
+func TestDecodePairwiseReviewRejectsSpeculationAndOffstageEvidence(t *testing.T) {
+	for _, reason := range []string{
+		"A 在 internal/filter.go 中完成筛选并通过轨迹记录的测试；B 可能已经完成同样修改但看起来没有展示出来。这道题更看重稳定性，因此 A 更可靠。",
+		"A 在页面实现筛选并完成提交；B 的录屏显示按钮可用，但代码产物没有对应实现。这道题更看重可维护性，因此 A 更值得选择。",
+		"A 在 internal/filter.go 中实现筛选；B 用未提交到 Git 的临时脚本做了本地代码测试，结果不能作为交付依据。这道题更看重提交产物，因此 A 更完整。",
+	} {
+		raw := []byte(`{"status":"ready","conclusion":"A_better","reason":` + quotePairwiseJSON(reason) + `}`)
+		if result, err := decodePairwiseReview(raw); err == nil {
+			t.Fatalf("accepted speculation or offstage evidence %#v", result)
+		}
+	}
+}
+
 func TestDecodePairwiseReviewRequiresPortalLengthAndDetailedSameReason(t *testing.T) {
 	short := []byte(`{"status":"ready","conclusion":"A_better","reason":"A 修改 main.go，B 未修改 main.go，所以 A 更好。"}`)
 	if _, err := decodePairwiseReview(short); err == nil {
@@ -134,6 +147,11 @@ func TestBuildPairwiseReviewPromptRequiresTriggerNodeForInaction(t *testing.T) {
 	prompt := buildPairwiseReviewPrompt("/tmp/evidence.json", "", "")
 	if !strings.Contains(prompt, "触发节点") || !strings.Contains(prompt, "只读未改") {
 		t.Fatalf("prompt does not require a trigger node for inaction: %s", prompt)
+	}
+	for _, phrase := range []string{"轨迹文件明确记录", "与轨迹冲突", "不得猜测、补全或虚构", "禁止写录屏", "未提交到 Git"} {
+		if !strings.Contains(prompt, phrase) {
+			t.Fatalf("prompt does not contain hard GSB evidence constraint %q: %s", phrase, prompt)
+		}
 	}
 	for _, symbol := range []string{"『』", "「」", "【】", "《》", "〔〕", "〈〉"} {
 		if !strings.Contains(prompt, symbol) {

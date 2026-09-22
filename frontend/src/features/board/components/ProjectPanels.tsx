@@ -40,9 +40,9 @@ export function EmptyProjectAside({
       animate={{ x: 0 }}
       exit={{ x: '100%' }}
       transition={{ type: 'spring', damping: 26, stiffness: 220 }}
-      className={`fixed top-0 right-0 bottom-0 ${widthClass} bg-white dark:bg-stone-900 border-l border-stone-200 dark:border-stone-800 shadow-2xl z-30 flex flex-col rounded-l-3xl`}
+      className={`fixed top-0 right-0 bottom-0 ${widthClass} max-w-[calc(100vw-2rem)] bg-white dark:bg-stone-900 border-l border-stone-200 dark:border-stone-800 shadow-2xl z-30 flex flex-col rounded-l-3xl`}
     >
-      <div className="px-7 py-6 border-b border-stone-100 dark:border-stone-800 flex items-center justify-between">
+      <div className="px-5 sm:px-7 py-4 sm:py-6 border-b border-stone-100 dark:border-stone-800 flex items-center justify-between">
         <h2 className="text-lg font-bold text-stone-900 dark:text-stone-50">{title}</h2>
         <button
           onClick={onClose}
@@ -119,9 +119,9 @@ export function ProjectOverviewPanel({
       animate={{ x: 0 }}
       exit={{ x: '100%' }}
       transition={{ type: 'spring', damping: 26, stiffness: 220 }}
-      className="fixed top-0 right-0 bottom-0 w-[480px] bg-white dark:bg-stone-900 border-l border-stone-200 dark:border-stone-800 shadow-2xl z-30 flex flex-col rounded-l-3xl"
+      className="fixed top-0 right-0 bottom-0 w-[480px] max-w-[calc(100vw-2rem)] bg-white dark:bg-stone-900 border-l border-stone-200 dark:border-stone-800 shadow-2xl z-30 flex flex-col rounded-l-3xl"
     >
-      <div className="px-7 py-6 border-b border-stone-100 dark:border-stone-800 flex items-start justify-between gap-4">
+      <div className="px-5 sm:px-7 py-4 sm:py-6 border-b border-stone-100 dark:border-stone-800 flex items-start justify-between gap-4">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-stone-400 dark:text-stone-500">
             项目概况
@@ -363,9 +363,9 @@ export function ProjectPanel({
       animate={{ x: 0 }}
       exit={{ x: '100%' }}
       transition={{ type: 'spring', damping: 26, stiffness: 220 }}
-      className="fixed top-0 right-0 bottom-0 w-[480px] bg-white dark:bg-stone-900 border-l border-stone-200 dark:border-stone-800 shadow-2xl z-30 flex flex-col rounded-l-3xl"
+      className="fixed top-0 right-0 bottom-0 w-[480px] max-w-[calc(100vw-2rem)] bg-white dark:bg-stone-900 border-l border-stone-200 dark:border-stone-800 shadow-2xl z-30 flex flex-col rounded-l-3xl"
     >
-      <div className="px-7 py-6 border-b border-stone-100 dark:border-stone-800 flex items-center justify-between">
+      <div className="px-5 sm:px-7 py-4 sm:py-6 border-b border-stone-100 dark:border-stone-800 flex items-center justify-between">
         <h2 className="text-lg font-bold text-stone-900 dark:text-stone-50">项目配置</h2>
         <button
           onClick={onClose}

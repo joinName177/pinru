@@ -925,16 +925,16 @@ function SettingsModalShell({
   children: ReactNode;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6">
       <div
         className="absolute inset-0 bg-black/20 dark:bg-black/45 backdrop-blur-sm"
         onClick={onClose}
       />
-      <div className="relative w-full max-w-lg rounded-3xl bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 shadow-2xl p-6">
-        <div className="flex items-start justify-between gap-4 mb-6">
+      <div className="relative w-full max-w-lg max-h-[92vh] flex flex-col overflow-hidden rounded-3xl bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 shadow-2xl p-4 sm:p-6">
+        <div className="flex items-start justify-between gap-4 mb-4 sm:mb-6 shrink-0">
           <div>
             <h2 className="text-lg font-bold text-stone-900 dark:text-stone-50">{title}</h2>
-            <p className="text-sm text-stone-500 dark:text-stone-400 mt-1">{description}</p>
+            <p className="text-xs sm:text-sm text-stone-500 dark:text-stone-400 mt-1">{description}</p>
           </div>
           <button
             onClick={onClose}
@@ -943,7 +943,9 @@ function SettingsModalShell({
             <X className="w-4 h-4" />
           </button>
         </div>
-        {children}
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+          {children}
+        </div>
       </div>
     </div>
   );

@@ -61,8 +61,8 @@ export default function QuestionBankList({
   const hasSelectable = selectableFilteredItems.length > 0;
   return (
     <section className="space-y-3">
-      <div className="flex items-baseline justify-between gap-4">
-        <div className="flex items-baseline gap-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 sm:gap-4">
+        <div className="flex flex-wrap items-baseline gap-2 sm:gap-3">
           <h3 className="text-sm font-semibold text-stone-900 dark:text-stone-50">
             项目题库
           </h3>

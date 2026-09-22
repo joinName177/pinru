@@ -329,13 +329,13 @@ export function TaskCard({
         layout
         onClick={selectionMode ? onToggleSelect : onClick}
         onContextMenu={onContextMenu}
-        className={`group bg-white dark:bg-stone-900 border rounded-2xl p-3.5 hover:border-stone-300 dark:hover:border-stone-700 hover:shadow-sm transition-all cursor-default ${
+        className={`group bg-white dark:bg-stone-900 border rounded-2xl p-3 sm:p-3.5 hover:border-stone-300 dark:hover:border-stone-700 hover:shadow-sm transition-all cursor-default ${
           selectionMode && selected
             ? 'border-indigo-500 dark:border-indigo-500'
             : 'border-stone-200 dark:border-stone-800'
         }`}
       >
-        <div className="flex items-start justify-between gap-2 mb-2.5">
+        <div className="flex items-start justify-between gap-1.5 sm:gap-2 mb-2">
           {selectionMode ? (
             <input
               type="checkbox"
@@ -347,15 +347,15 @@ export function TaskCard({
           ) : (
             <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 mt-1 ${cfg.dotCls}`} />
           )}
-          <div className="flex items-center gap-1.5 ml-auto">
+          <div className="flex flex-wrap items-center justify-end gap-1 sm:gap-1.5 ml-auto">
             {showPromptBadge && (
               <span
-                className={`text-[10px] px-2 py-0.5 rounded-lg font-bold ${promptGenerationMeta.badgeCls}`}
+                className={`text-[10px] px-1.5 sm:px-2 py-0.5 rounded-lg font-bold ${promptGenerationMeta.badgeCls}`}
               >
                 {promptGenerationStatus === 'running' ? '出题中' : '出题失败'}
               </span>
             )}
-            <span className={`text-[10px] px-2 py-0.5 rounded-lg font-bold border ${cfg.badgeCls}`}>
+            <span className={`text-[10px] px-1.5 sm:px-2 py-0.5 rounded-lg font-bold border ${cfg.badgeCls}`}>
               {cfg.label}
             </span>
             <TaskSequenceBadge sequence={taskSequence} compact />
@@ -365,7 +365,7 @@ export function TaskCard({
                   event.stopPropagation();
                   onDelete();
                 }}
-                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-lg text-stone-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 cursor-default"
+                className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 sm:p-1 rounded-lg text-stone-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 cursor-default"
               >
                 <Trash2 className="w-3 h-3" />
               </button>
@@ -492,12 +492,12 @@ export function TaskCard({
         >
           {taskSubtitle}
         </p>
-        <div className="flex items-center justify-between text-xs text-stone-500 dark:text-stone-400">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-stone-500 dark:text-stone-400">
           <div className="flex items-center gap-1.5">
             <Clock className="w-3.5 h-3.5" />
             <span>{new Date(task.createdAt * 1000).toLocaleDateString('zh-CN')}</span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {!selectionMode && (
               <TaskCardContainerActions
                 state={containerActionState}
@@ -536,25 +536,25 @@ export function TaskCard({
       layout
       onClick={selectionMode ? onToggleSelect : onClick}
       onContextMenu={onContextMenu}
-      className={`group bg-stone-50 dark:bg-stone-800/40 border rounded-2xl p-4 hover:bg-white dark:hover:bg-stone-800 hover:border-stone-300 dark:hover:border-stone-600 hover:shadow-sm transition-all cursor-default ${
+      className={`group bg-stone-50 dark:bg-stone-800/40 border rounded-2xl p-3.5 sm:p-4 hover:bg-white dark:hover:bg-stone-800 hover:border-stone-300 dark:hover:border-stone-600 hover:shadow-sm transition-all cursor-default ${
         selectionMode && selected
           ? 'border-indigo-500 dark:border-indigo-500'
           : 'border-stone-200 dark:border-stone-700'
       }`}
     >
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-start justify-between gap-2 mb-2.5 sm:mb-3">
         {selectionMode ? (
           <input
             type="checkbox"
             checked={selected ?? false}
             onChange={onToggleSelect}
             onClick={(e) => e.stopPropagation()}
-            className="h-4 w-4 rounded accent-indigo-500 cursor-default flex-shrink-0"
+            className="h-4 w-4 rounded accent-indigo-500 cursor-default flex-shrink-0 mt-0.5"
           />
         ) : (
-          <div className={`w-1.5 h-1.5 rounded-full ${cfg.dotCls}`} />
+          <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 mt-1.5 ${cfg.dotCls}`} />
         )}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2">
           <TaskSequenceBadge sequence={taskSequence} />
           <span className="text-[11px] text-stone-400 dark:text-stone-500 flex items-center gap-1">
             <Clock className="w-3 h-3" />
@@ -582,7 +582,7 @@ export function TaskCard({
       >
         {taskSubtitle}
       </p>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+      <div className="mb-3 sm:mb-4 flex flex-wrap items-center gap-1.5 sm:gap-2">
         <span
           className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${typePresentation.badge}`}
         >
@@ -594,12 +594,12 @@ export function TaskCard({
         {(task.hasGeneratedGsb || task.hasCollectedPairwiseGsb) && <TaskGsbBadge reviewed={task.hasGeneratedGsb} />}
         <TableStatusBadge progress={tableProgress} />
       </div>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5 text-xs text-stone-500 dark:text-stone-400">
-          <GitBranch className="w-3.5 h-3.5" />
-          <span className="font-mono truncate max-w-[160px]">{formatTaskDisplayId(task)}</span>
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
+        <div className="flex min-w-0 items-center gap-1.5 text-xs text-stone-500 dark:text-stone-400">
+          <GitBranch className="w-3.5 h-3.5 flex-none" />
+          <span className="font-mono truncate max-w-[120px] sm:max-w-[160px]">{formatTaskDisplayId(task)}</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
           {!selectionMode && (
             <TaskCardContainerActions
               state={containerActionState}
