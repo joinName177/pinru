@@ -124,6 +124,17 @@ func TestDecodePairwiseReviewAcceptsProcessAndProductCoverage(t *testing.T) {
 	}
 }
 
+func TestDecodePairwiseReviewAcceptsConditionDrivenProductCoverage(t *testing.T) {
+	reason := "两侧都新增推荐服务。A 新增 StrategyRanker，自测网格里五个难度在同一周期得到相同推荐，难度只改分数不改结论；产物上用户可选 2、7、21、35 天周期，分别推荐集中复习、间隔复习、主动回忆、主动回忆，可手动切换查看。B 重写记忆模型让难度影响提取成功率，新增 StrategyAdvisor，验证脚本出现高难度长周期该选间隔复习却选中主动回忆的断言失败，收紧平局容差后全部难度与周期组合自洽；产物上考察日预设 2 天到五周，7 天低难度默认主动回忆，难度 3 以上及长周期高难度落到间隔复习。两边时间表、评分卡、洞察都跟随推荐且可手动切换，差别在难度能否改变推荐结论，题目要的正是难度与周期共同决定，故 B 更好。"
+	result, err := decodePairwiseReview([]byte(`{"status":"ready","conclusion":"B_better","reason":` + quotePairwiseJSON(reason) + `}`))
+	if err != nil {
+		t.Fatalf("rejected condition-driven product coverage: %v", err)
+	}
+	if result.Conclusion != "B_better" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
 func TestDecodePairwiseReviewRejectsInactionWithoutTriggerNode(t *testing.T) {
 	reason := "A 真正把复制与分享拆成两条路径：复制按钮只写剪贴板，分享按钮才走系统分享，并按真实结果更新提示，还补了回归测试且构建通过。B 全程停在读代码和空想阶段，没有改动任何文件，交付仍是有缺陷的原实现，复制按钮照旧弹出分享面板。本题更看重按钮行为与提示是否一致，因此 A 明显更好。"
 	raw := []byte(`{"status":"ready","conclusion":"A_better","reason":` + quotePairwiseJSON(reason) + `}`)
@@ -151,6 +162,11 @@ func TestBuildPairwiseReviewPromptRequiresTriggerNodeForInaction(t *testing.T) {
 	for _, phrase := range []string{"轨迹文件明确记录", "与轨迹冲突", "不得猜测、补全或虚构", "禁止写录屏", "未提交到 Git"} {
 		if !strings.Contains(prompt, phrase) {
 			t.Fatalf("prompt does not contain hard GSB evidence constraint %q: %s", phrase, prompt)
+		}
+	}
+	for _, phrase := range []string{"已提交的代码产物", "冻结代码树", "临时、未提交或审核助手额外生成的脚本仍不可引用"} {
+		if !strings.Contains(prompt, phrase) {
+			t.Fatalf("prompt does not distinguish committed scripts from offstage evidence %q: %s", phrase, prompt)
 		}
 	}
 	for _, symbol := range []string{"『』", "「」", "【】", "《》", "〔〕", "〈〉"} {
