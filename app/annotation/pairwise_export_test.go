@@ -52,7 +52,9 @@ func pairwiseExportCase(t *testing.T, complete bool) (*AnnotationService, *domai
 		}
 		c.Pairwise.Reviews = append(c.Pairwise.Reviews, domain.PairwiseReview{
 			ID: "review-1", Status: domain.PairwiseReviewReady, Conclusion: domain.PairwiseConclusionA,
-			Reason:      "A 保留了加法返回值并覆盖正常输入；B 删除返回值，调用方无法取得计算结果，因此 A 更完整。",
+			Reason:             "A 保留了加法返回值并覆盖正常输入；B 删除返回值，调用方无法取得计算结果，因此 A 更完整。",
+			ACompletenessScore: 5, ACompletenessDescription: "A 已交付加法返回结果，原始需求的关键功能可以使用。",
+			BCompletenessScore: 3, BCompletenessDescription: "B 缺少返回结果，原始需求的调用链仍有功能遗漏。",
 			Model:       execution.Label,
 			SourceHashA: domain.PairwiseRunSourceHash(c.Pairwise.RunA),
 			SourceHashB: domain.PairwiseRunSourceHash(c.Pairwise.RunB),

@@ -14,7 +14,9 @@ func TestReviewPairwiseStoresReviewBoundToBothEvidenceSources(t *testing.T) {
 	s, _, source := annotationFixture(t)
 	payload := map[string]any{
 		"status": "ready", "conclusion": "A_better",
-		"reason": "A 先读取 code/main.py，保留 add(a,b) 并通过静态核验；B 读取 code/main.py 后删除返回值，静态核验暴露调用方拿不到结果。产物上 A 能正常返回加法结果，B 仍无法返回调用结果，因此 A 更完整。",
+		"reason":             "A 先读取 code/main.py，保留 add(a,b) 并通过静态核验；B 读取 code/main.py 后删除返回值，静态核验暴露调用方拿不到结果。产物上 A 能正常返回加法结果，B 仍无法返回调用结果，因此 A 更完整。",
+		"aCompletenessScore": 5, "aCompletenessDescription": "A 已交付加法返回结果，原始需求的关键功能可以使用。",
+		"bCompletenessScore": 3, "bCompletenessDescription": "B 缺少返回结果，原始需求的调用链仍有功能遗漏。",
 	}
 	cli, _ := fakeReviewCLIWithEvaluation(t, payload, "")
 	s.cli = cli
@@ -77,7 +79,9 @@ func TestBatchReviewPairwiseReviewsThenReusesCurrentResult(t *testing.T) {
 	s, _, _ := annotationFixture(t)
 	payload := map[string]any{
 		"status": "ready", "conclusion": "A_better",
-		"reason": "A 先读取 code/main.py，保留 add(a,b) 并完成静态核验；B 读取同一文件后删除返回值，静态核验发现调用方无法获得结果。产物上 A 能返回加法结果，B 的调用结果为空，因此 A 的过程和产物都更完整。",
+		"reason":             "A 先读取 code/main.py，保留 add(a,b) 并完成静态核验；B 读取同一文件后删除返回值，静态核验发现调用方无法获得结果。产物上 A 能返回加法结果，B 的调用结果为空，因此 A 的过程和产物都更完整。",
+		"aCompletenessScore": 5, "aCompletenessDescription": "A 已交付加法返回结果，原始需求的关键功能可以使用。",
+		"bCompletenessScore": 3, "bCompletenessDescription": "B 缺少返回结果，原始需求的调用链仍有功能遗漏。",
 	}
 	cli, _ := fakeReviewCLIWithEvaluation(t, payload, "")
 	s.cli = cli

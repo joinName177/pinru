@@ -317,6 +317,16 @@ export function PairwiseWorkspace({ annotationCase, containers = [], disabled, r
               <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{({ A_better: 'A 更好', B_better: 'B 更好', same: 'Same' } as const)[latestReview.conclusion]}</span>
               {latestReview.current !== true && <span className="text-xs font-semibold text-amber-600">证据已变化，需重新生成</span>}
             </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div className="rounded border border-stone-200 p-3 dark:border-stone-700">
+                <div className="text-xs font-semibold text-stone-500">A-交付完整性：{latestReview.aCompletenessScore ?? '未填写'}/5</div>
+                <p className="mt-1 text-sm leading-5 text-stone-700 dark:text-stone-300">{latestReview.aCompletenessDescription || '未填写'}</p>
+              </div>
+              <div className="rounded border border-stone-200 p-3 dark:border-stone-700">
+                <div className="text-xs font-semibold text-stone-500">B-交付完整性：{latestReview.bCompletenessScore ?? '未填写'}/5</div>
+                <p className="mt-1 text-sm leading-5 text-stone-700 dark:text-stone-300">{latestReview.bCompletenessDescription || '未填写'}</p>
+              </div>
+            </div>
             <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-stone-700 dark:text-stone-300">{latestReview.reason}</p>
           </div>
         ) : <p className="mt-4 text-sm text-stone-500">A/B 都采集并提交后，可在这里审核保存；也可以返回项目列表批量审核。</p>}

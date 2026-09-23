@@ -100,6 +100,10 @@ export interface PairwiseReview {
   status: 'ready' | 'needs_evidence' | string;
   conclusion: PairwiseConclusion;
   reason: string;
+  aCompletenessScore?: number;
+  aCompletenessDescription?: string;
+  bCompletenessScore?: number;
+  bCompletenessDescription?: string;
   model: string;
   skillHash: string;
   sourceHashA: string;

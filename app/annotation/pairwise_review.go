@@ -20,7 +20,7 @@ type PairwiseReviewRequest struct {
 
 // 装饰性引号与括号的规则由生成端剔除和导出端拦截共同保证，
 // 这里不因该规则调整而作废历史 GSB 评价，避免整批重审。
-const pairwiseReviewSkillVersion = "pairwise-gsb-v8-20260921"
+const pairwiseReviewSkillVersion = "pairwise-gsb-v9-completeness-20260923"
 
 func pairwiseReviewSkillHash() string {
 	return stableKey(pairwiseReviewSkillVersion)
@@ -106,6 +106,8 @@ func (s *AnnotationService) ReviewPairwise(ctx context.Context, req PairwiseRevi
 	}
 	review := domain.PairwiseReview{
 		ID: id, Status: result.Status, Conclusion: result.Conclusion, Reason: result.Reason,
+		ACompletenessScore: result.ACompletenessScore, ACompletenessDescription: result.ACompletenessDescription,
+		BCompletenessScore: result.BCompletenessScore, BCompletenessDescription: result.BCompletenessDescription,
 		Model: execution.Label, SkillHash: pairwiseReviewSkillHash(),
 		SourceHashA: domain.PairwiseRunSourceHash(c.Pairwise.RunA),
 		SourceHashB: domain.PairwiseRunSourceHash(c.Pairwise.RunB),

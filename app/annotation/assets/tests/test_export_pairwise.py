@@ -39,6 +39,10 @@ class ExportPairwiseTests(unittest.TestCase):
                         "reviews": [{
                             "id": "review-1", "status": "ready", "conclusion": "A_better",
                             "reason": "A 保留返回值；B 删除返回值，因此 A 更完整。",
+                            "aCompletenessScore": 5,
+                            "aCompletenessDescription": "A 已交付需求中的返回值处理，产物可以完成预期调用。",
+                            "bCompletenessScore": 3,
+                            "bCompletenessDescription": "B 的提交缺少返回值处理，交付结果无法覆盖完整调用链。",
                             "sourceHashA": "source-a", "sourceHashB": "source-b",
                         }],
                         "notes": "人工复核完成",
@@ -47,6 +51,10 @@ class ExportPairwiseTests(unittest.TestCase):
                     "currentPairwiseReview": {
                         "conclusion": "A_better",
                         "reason": "A 保留返回值；B 删除返回值，因此 A 更完整。",
+                        "aCompletenessScore": 5,
+                        "aCompletenessDescription": "A 已交付需求中的返回值处理，产物可以完成预期调用。",
+                        "bCompletenessScore": 3,
+                        "bCompletenessDescription": "B 的提交缺少返回值处理，交付结果无法覆盖完整调用链。",
                     },
                 }],
             }
@@ -61,16 +69,22 @@ class ExportPairwiseTests(unittest.TestCase):
             result = json.loads(proc.stdout)
             self.assertEqual(result["rows"], 1)
             sheet = openpyxl.load_workbook(result["outputPath"]).active
-            self.assertEqual([cell.value for cell in sheet[1]], [
+            expected_headers = [
                 "User Prompt", "任务类型", "任务难度", "语言/框架", "Harness", "Harness 版本",
                 "操作系统", "环境可复现等级", "初始环境快照", "A-SessionID", "A-轨迹文件",
                 "A-产物快照", "A-运行录屏", "B-SessionID", "B-轨迹文件", "B-产物快照",
-                "B-运行录屏", "GSB 结论", "GSB 理由", "有效性", "备注",
-            ])
+                "B-运行录屏", "A-交付完整性", "A-交付完整性描述", "B-交付完整性", "B-交付完整性描述",
+                "GSB 结论", "GSB 理由", "有效性", "备注",
+            ]
+            self.assertEqual([cell.value for cell in sheet[1]][:len(expected_headers)], expected_headers)
             self.assertEqual(sheet["A2"].value, "实现加法功能")
-            self.assertEqual(sheet["R2"].value, "A 更好")
+            self.assertEqual(sheet["R2"].value, 5)
+            self.assertEqual(sheet["S2"].value, "A 已交付需求中的返回值处理，产物可以完成预期调用。")
+            self.assertEqual(sheet["T2"].value, 3)
+            self.assertEqual(sheet["U2"].value, "B 的提交缺少返回值处理，交付结果无法覆盖完整调用链。")
+            self.assertEqual(sheet["V2"].value, "A 更好")
             self.assertEqual(sheet["D2"].value, "Python, pytest")
-            self.assertEqual(sheet["T2"].value, "有效")
+            self.assertEqual(sheet["X2"].value, "有效")
 
     @staticmethod
     def pairwise_run(side, sha_char):

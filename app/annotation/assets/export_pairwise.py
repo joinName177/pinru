@@ -23,10 +23,11 @@ HEADERS = [
     "User Prompt", "任务类型", "任务难度", "语言/框架", "Harness", "Harness 版本",
     "操作系统", "环境可复现等级", "初始环境快照", "A-SessionID", "A-轨迹文件",
     "A-产物快照", "A-运行录屏", "B-SessionID", "B-轨迹文件", "B-产物快照",
-    "B-运行录屏", "GSB 结论", "GSB 理由", "有效性", "备注",
+    "B-运行录屏", "A-交付完整性", "A-交付完整性描述", "B-交付完整性", "B-交付完整性描述",
+    "GSB 结论", "GSB 理由", "有效性", "备注",
 ]
 CONCLUSIONS = {"A_better": "A 更好", "B_better": "B 更好", "same": "Same"}
-WIDTHS = [36, 18, 14, 28, 16, 16, 18, 24, 48, 24, 42, 48, 42, 24, 42, 48, 42, 14, 72, 22, 32]
+WIDTHS = [36, 18, 14, 28, 16, 16, 18, 24, 48, 24, 42, 48, 42, 24, 42, 48, 42, 14, 48, 14, 48, 14, 72, 22, 32]
 
 
 def current_review(case):
@@ -55,8 +56,11 @@ def row(case, payload):
         run_a.get("sessionId", ""), captured_trace(case, run_a), run_a.get("deliverableUrl", ""),
         run_a.get("videoPath") or run_a.get("videoUrl", ""), run_b.get("sessionId", ""),
         captured_trace(case, run_b), run_b.get("deliverableUrl", ""),
-        run_b.get("videoPath") or run_b.get("videoUrl", ""), CONCLUSIONS.get(review.get("conclusion"), ""),
-        review.get("reason", ""), pairwise.get("validity", ""), pairwise.get("notes", ""),
+        run_b.get("videoPath") or run_b.get("videoUrl", ""),
+        review.get("aCompletenessScore", ""), review.get("aCompletenessDescription", ""),
+        review.get("bCompletenessScore", ""), review.get("bCompletenessDescription", ""),
+        CONCLUSIONS.get(review.get("conclusion"), ""), review.get("reason", ""),
+        pairwise.get("validity", ""), pairwise.get("notes", ""),
     ]
 
 
@@ -80,6 +84,14 @@ def inline_cell(row_number, column, value, style):
     return cell
 
 
+def number_cell(row_number, column, value, style):
+    reference = column_name(column + 1) + str(row_number)
+    cell = ET.Element(NS + "c", {"r": reference, "s": str(style)})
+    number = ET.SubElement(cell, NS + "v")
+    number.text = str(value)
+    return cell
+
+
 def build_sheet(data, data_rows):
     root = ET.fromstring(data)
     sheet_data = root.find(NS + "sheetData")
@@ -95,7 +107,10 @@ def build_sheet(data, data_rows):
         })
         for column, value in enumerate(values):
             if value is not None and value != "":
-                xml_row.append(inline_cell(row_number, column, value, 6))
+                if column in (17, 19):
+                    xml_row.append(number_cell(row_number, column, value, 6))
+                else:
+                    xml_row.append(inline_cell(row_number, column, value, 6))
 
     last_column = column_name(len(HEADERS))
     last_row = max(1, len(data_rows) + 1)

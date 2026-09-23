@@ -74,18 +74,22 @@ type PairwiseRun struct {
 }
 
 type PairwiseReview struct {
-	Current     *bool  `json:"current,omitempty"`
-	ID          string `json:"id"`
-	Status      string `json:"status"`
-	Conclusion  string `json:"conclusion"`
-	Reason      string `json:"reason"`
-	Model       string `json:"model"`
-	SkillHash   string `json:"skillHash"`
-	SourceHashA string `json:"sourceHashA"`
-	SourceHashB string `json:"sourceHashB"`
-	ReviewPath  string `json:"reviewPath"`
-	ReviewHash  string `json:"reviewHash"`
-	CreatedAt   int64  `json:"createdAt"`
+	Current                  *bool  `json:"current,omitempty"`
+	ID                       string `json:"id"`
+	Status                   string `json:"status"`
+	Conclusion               string `json:"conclusion"`
+	Reason                   string `json:"reason"`
+	ACompletenessScore       int    `json:"aCompletenessScore"`
+	ACompletenessDescription string `json:"aCompletenessDescription"`
+	BCompletenessScore       int    `json:"bCompletenessScore"`
+	BCompletenessDescription string `json:"bCompletenessDescription"`
+	Model                    string `json:"model"`
+	SkillHash                string `json:"skillHash"`
+	SourceHashA              string `json:"sourceHashA"`
+	SourceHashB              string `json:"sourceHashB"`
+	ReviewPath               string `json:"reviewPath"`
+	ReviewHash               string `json:"reviewHash"`
+	CreatedAt                int64  `json:"createdAt"`
 }
 
 type PairwiseData struct {
@@ -302,6 +306,14 @@ func ValidatePairwiseCase(c Case, formal bool) []string {
 	}
 	if formal && CurrentPairwiseReview(c) == nil {
 		issues = append(issues, "缺少与当前 A/B 证据一致的 GSB 评价")
+	}
+	if review := CurrentPairwiseReview(c); review != nil {
+		if review.ACompletenessScore < 1 || review.ACompletenessScore > 5 || review.BCompletenessScore < 1 || review.BCompletenessScore > 5 {
+			issues = append(issues, "A/B 交付完整性评分必须是 1 到 5 的整数")
+		}
+		if strings.TrimSpace(review.ACompletenessDescription) == "" || strings.TrimSpace(review.BCompletenessDescription) == "" {
+			issues = append(issues, "A/B 交付完整性描述不能为空")
+		}
 	}
 	return issues
 }
