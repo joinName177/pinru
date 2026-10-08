@@ -14,6 +14,7 @@ import (
 	"time"
 
 	appannotation "github.com/blueship581/pinru/app/annotation"
+	appgit "github.com/blueship581/pinru/app/git"
 	appprompt "github.com/blueship581/pinru/app/prompt"
 	annotation "github.com/blueship581/pinru/internal/annotation"
 	"github.com/blueship581/pinru/internal/errs"
@@ -95,7 +96,7 @@ type managedClaimPlan struct {
 }
 
 var (
-	customPromptHeadingPattern = regexp.MustCompile(`^\s{0,3}(?:#{1,6}\s*)?(?:\*\*)?\s*(0-1代码生成|Feature迭代|代码理解|Bug修复|代码重构|工程化|代码测试|未归类)\s*(?:\*\*)?\s*$`)
+	customPromptHeadingPattern = regexp.MustCompile(`^\s{0,3}(?:#{1,6}\s*)?(?:\*\*)?\s*(0-1\s*代码\s*生成|Feature\s*迭代|代码\s*理解|Bug\s*修复|代码\s*重构|工程化|代码\s*测试|未\s*归类)\s*(?:\*\*)?\s*$`)
 	customPromptItemPattern    = regexp.MustCompile(`^\s*(?:[-*]\s+|\d+[.、)]\s+)(.*)$`)
 	customPromptDifficultyPat  = regexp.MustCompile(`^【([^】]+)】\s*(.*)$`)
 )
@@ -141,8 +142,9 @@ func (s *TaskService) CreateTasksFromCustomPromptDocumentsWithContext(ctx contex
 			return result, err
 		}
 		taskDetail := s.CreateCustomPromptTaskFromPayload(ctx, payload)
-		result.CreatedCount++
-		if taskDetail.Status != "created" {
+		if taskDetail.Status == "created" {
+			result.CreatedCount++
+		} else {
 			result.ErrorCount++
 		}
 		for detailIndex := range result.Details {
@@ -191,6 +193,13 @@ func (s *TaskService) PrepareCustomPromptTaskJobs(req CreateTasksFromCustomPromp
 		}
 		itemByName[strings.ToLower(strings.TrimSpace(item.DisplayName))] = item
 	}
+	// 手动选择提示词文档时，用户可能尚未先执行“自定义项目入库”。
+	// 只要设置中存在同名源码目录，就可以直接把它作为本次创建的源码来源。
+	if _, ok := itemByName[strings.ToLower(strings.TrimSpace(project.Name))]; !ok {
+		if item, ok := s.discoverCustomPromptSourceItem(*project, project.Name); ok {
+			itemByName[strings.ToLower(strings.TrimSpace(item.DisplayName))] = item
+		}
+	}
 
 	models := parseTaskProjectModels(project.Models, project.SourceModelFolder)
 	sourceModelName := models[0]
@@ -214,6 +223,31 @@ func (s *TaskService) PrepareCustomPromptTaskJobs(req CreateTasksFromCustomPromp
 	}
 
 	return result, nil
+}
+
+func (s *TaskService) discoverCustomPromptSourceItem(project store.Project, projectName string) (store.QuestionBankItem, bool) {
+	name := strings.TrimSpace(projectName)
+	if name == "" || s.store == nil {
+		return store.QuestionBankItem{}, false
+	}
+	root, err := s.store.GetConfig("custom_project_root_path")
+	if err != nil || strings.TrimSpace(root) == "" {
+		return store.QuestionBankItem{}, false
+	}
+	sourcePath := util.NormalizePath(filepath.Join(util.ExpandTilde(root), name))
+	info, err := os.Stat(sourcePath)
+	if err != nil || !info.IsDir() {
+		return store.QuestionBankItem{}, false
+	}
+	return store.QuestionBankItem{
+		ProjectConfigID: project.ID,
+		QuestionID:      appgit.BuildQuestionBankLocalSyntheticProjectID("custom:" + name),
+		DisplayName:     name,
+		SourceKind:      "local_directory",
+		SourcePath:      sourcePath,
+		OriginRef:       "custom:" + name,
+		Status:          "ready",
+	}, true
 }
 
 func (s *TaskService) prepareCustomPromptTaskJobsFromSingleDocument(
@@ -490,7 +524,7 @@ func parseCustomPromptDocumentEntries(content string) []customPromptEntry {
 		}
 		if matches := customPromptItemPattern.FindStringSubmatch(line); len(matches) == 2 {
 			flush()
-			difficulty, promptText := splitCustomPromptDifficulty(matches[1])
+			difficulty, promptText := splitCustomPromptDifficulty(matches[1], currentType)
 			current = &customPromptEntry{
 				TaskType:         currentType,
 				PromptDifficulty: difficulty,
@@ -506,43 +540,91 @@ func parseCustomPromptDocumentEntries(content string) []customPromptEntry {
 	return entries
 }
 
-func splitCustomPromptDifficulty(value string) (string, string) {
+func splitCustomPromptDifficulty(value, taskType string) (string, string) {
 	trimmed := strings.TrimSpace(value)
 	if matches := customPromptDifficultyPat.FindStringSubmatch(trimmed); len(matches) == 3 {
-		return strings.TrimSpace(matches[1]), strings.TrimSpace(matches[2])
+		difficulty := normalizeCustomPromptDifficulty(matches[1])
+		promptText := strings.TrimSpace(matches[2])
+		for {
+			matches := customPromptDifficultyPat.FindStringSubmatch(promptText)
+			if len(matches) != 3 {
+				break
+			}
+			promptText = strings.TrimSpace(matches[2])
+		}
+		return difficulty, promptText
+	}
+	if taskType == internalprompt.TaskTypeFeature || taskType == internalprompt.TaskTypeBugFix {
+		return "中等", trimmed
 	}
 	return store.DefaultPromptDifficulty, trimmed
 }
 
+func normalizeCustomPromptDifficulty(value string) string {
+	difficulty := strings.TrimSpace(value)
+	difficulty = strings.TrimSuffix(difficulty, "级")
+	return strings.TrimSpace(difficulty)
+}
+
+// validateCustomPromptDocumentBatch 校验整份文档。逐条收集问题而不是在第一条失败处
+// 直接返回：一份文档可能同时有多条不合格，全部列出来才能让用户一次改完，也能解释
+// 为什么本次没有创建任何题卡。
 func validateCustomPromptDocumentBatch(entries []customPromptEntry) error {
 	if len(entries) == 0 {
 		return errors.New("提示词文档至少需要一条有效提示词")
 	}
 	counts := map[string]int{}
+	issues := make([]error, 0)
 	for index, entry := range entries {
 		kind := internalprompt.NormalizeTaskType(entry.TaskType)
 		switch kind {
 		case "0-1代码生成", "Feature迭代", "Bug修复", "代码理解", "工程化", "代码测试", "代码重构":
 		default:
-			return fmt.Errorf("不支持的题型：%s", kind)
+			issues = append(issues, fmt.Errorf("第 %d 条不支持的题型：%s", index+1, kind))
+			continue
 		}
-		switch strings.TrimSpace(entry.PromptDifficulty) {
-		case "困难", "地狱":
+		difficulty := normalizeCustomPromptDifficulty(entry.PromptDifficulty)
+		switch difficulty {
+		case "中等", "困难", "地狱":
 		case "简单", "一般":
-			return fmt.Errorf("第 %d 条 %s 题难度为“%s”，低于困难下限，简单和一般难度不再接收", index+1, kind, strings.TrimSpace(entry.PromptDifficulty))
+			issues = append(issues, fmt.Errorf("第 %d 条 %s 题难度为“%s”，低于中等下限，简单和一般难度不再接收", index+1, kind, strings.TrimSpace(entry.PromptDifficulty)))
+			continue
 		default:
-			return fmt.Errorf("第 %d 条 %s 题难度不支持：%s", index+1, kind, entry.PromptDifficulty)
+			issues = append(issues, fmt.Errorf("第 %d 条 %s 题难度不支持：%s", index+1, kind, entry.PromptDifficulty))
+			continue
+		}
+		if kind == "0-1代码生成" && difficulty == "中等" {
+			issues = append(issues, fmt.Errorf("第 %d 条 0-1代码生成题必须使用困难或地狱难度", index+1))
+			continue
+		}
+		if (kind == "Feature迭代" || kind == "Bug修复") && difficulty != "困难" {
+			issues = append(issues, fmt.Errorf("第 %d 条 %s 题必须使用困难标签，内容须具备 G19 的全部三项证据", index+1, kind))
+			continue
+		}
+		if kind == "0-1代码生成" || kind == "Feature迭代" || kind == "Bug修复" {
+			runes := internalprompt.PromptBodyRuneCount(entry.PromptText)
+			if runes < internalprompt.MinGeneratedPromptRunes {
+				issues = append(issues, fmt.Errorf("第 %d 条提示词只有 %d 个有效字符，低于 %d 字下限，属于简单需求，请改选有真实联动链路的题目", index+1, runes, internalprompt.MinGeneratedPromptRunes))
+				continue
+			}
+			// 文档导入只校验可确定的结构约束。固定词表不能裁定 G16/G19，
+			// 将生成阶段的关键词初筛用作硬门槛，会误拒其他领域的有效题面。
+			// 真实难度由生成与内容复核环节判断，导入成功不代表审核通过。
 		}
 		if kind == "代码理解" && !strings.Contains(strings.ToLower(entry.PromptText), "readme") {
-			return errors.New("代码理解题必须明确要求生成 README 文档")
+			issues = append(issues, fmt.Errorf("第 %d 条代码理解题必须明确要求生成 README 文档", index+1))
+			continue
 		}
 		counts[kind]++
 		switch kind {
 		case "代码理解", "工程化", "代码测试", "代码重构":
 			if counts[kind] > 1 {
-				return fmt.Errorf("%s 每份文档最多 1 条", kind)
+				issues = append(issues, fmt.Errorf("%s 每份文档最多 1 条", kind))
 			}
 		}
+	}
+	if len(issues) > 0 {
+		return errors.Join(issues...)
 	}
 	return nil
 }
@@ -611,6 +693,14 @@ func inferCustomPromptDocumentProjectName(path string) string {
 	marker := "_提示词_"
 	if idx := strings.LastIndex(base, marker); idx > 0 {
 		return strings.TrimSpace(base[:idx])
+	}
+	// 手动整理的文档通常会把难度和题型写在项目名之后，例如
+	// "zqq-06_困难bug修复提示词.md"。这类文件没有生成器的标准标记，
+	// 但第一个下划线仍然明确分隔了项目名和文档说明。
+	if strings.Contains(base, "提示词") {
+		if idx := strings.IndexByte(base, '_'); idx > 0 {
+			return strings.TrimSpace(base[:idx])
+		}
 	}
 	return strings.TrimSpace(base)
 }

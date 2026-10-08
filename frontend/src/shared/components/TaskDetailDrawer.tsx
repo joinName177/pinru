@@ -30,7 +30,7 @@ import {
 import { useAppStore, type Task, type TaskStatus } from '../../store';
 import type { CodePushRecord } from '../../api/codePush';
 import type { AiReviewPayload, AiReviewResult, BackgroundJob } from '../../api/job';
-import type { AiReviewRoundFromDB, ModelRunFromDB, PromptGenerationStatus, TaskFromDB } from '../../api/task';
+import type { AiReviewRoundFromDB, ModelRunFromDB, PromptDifficulty, PromptGenerationStatus, TaskFromDB } from '../../api/task';
 import { saveAiReviewRoundDissatisfactionSummary, saveAiReviewRoundNotes } from '../../api/task';
 import type { GeneratePromptRequest, LlmProviderConfig } from '../../api/llm';
 import { isDeepSeekFlashProvider, polishText as polishTextApi } from '../../api/llm';
@@ -263,6 +263,7 @@ export default function TaskDetailDrawer({
     { value: 'medium', label: '中' },
     { value: 'high', label: '高' },
   ];
+  const DIFFICULTY_OPTIONS = ['中等', '困难', '地狱'] as const;
 
   const [runContextMenu, setRunContextMenu] = useState<{
     run: ModelRunFromDB;
@@ -272,6 +273,7 @@ export default function TaskDetailDrawer({
 
   const [genProviderId, setGenProviderId] = useState<string>('');
   const [genThinking, setGenThinking] = useState('');
+  const [genDifficulty, setGenDifficulty] = useState<PromptDifficulty>('困难');
   const [genTaskType, setGenTaskType] = useState(() =>
     normalizeTaskTypeName(selected.taskType) || '',
   );
@@ -366,6 +368,18 @@ export default function TaskDetailDrawer({
       setGenTaskType(preferred);
     }
   }, [sessionTaskTypeOptions, selected.taskType]);
+
+  const availableDifficultyOptions: readonly PromptDifficulty[] =
+    genTaskType === 'Feature迭代' || genTaskType === 'Bug修复'
+      ? ['中等']
+      : genTaskType === '0-1代码生成'
+        ? ['困难', '地狱']
+        : DIFFICULTY_OPTIONS;
+
+  useEffect(() => {
+    if (availableDifficultyOptions.includes(genDifficulty)) return;
+    setGenDifficulty(availableDifficultyOptions[0]);
+  }, [availableDifficultyOptions, genDifficulty]);
 
   useEffect(() => {
     setDeletingAiReviewJobId(null);
@@ -483,6 +497,7 @@ export default function TaskDetailDrawer({
       constraints: genConstraints.size > 0 ? [...genConstraints] : ['无约束'],
       additionalNotes: genNotes.trim() || null,
       thinkingBudget: genThinking,
+      promptDifficulty: genDifficulty,
     });
     setShowRegenForm(false);
     setSubmitToast(true);
@@ -1249,6 +1264,27 @@ export default function TaskDetailDrawer({
               )}
             >
               {t}
+            </button>
+          ))}
+        </div>
+      </fieldset>
+
+      <fieldset className="space-y-2">
+        <legend className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">难度档位</legend>
+        <div className="flex flex-wrap gap-1.5">
+          {availableDifficultyOptions.map((difficulty) => (
+            <button
+              key={difficulty}
+              type="button"
+              onClick={() => setGenDifficulty(difficulty)}
+              className={clsx(
+                'rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all duration-150',
+                genDifficulty === difficulty
+                  ? 'border-indigo-500/60 bg-indigo-500/15 text-indigo-300'
+                  : 'border-stone-200 bg-stone-100 text-stone-600 hover:border-stone-300 dark:border-zinc-700/60 dark:bg-zinc-900/80 dark:text-zinc-400',
+              )}
+            >
+              {difficulty}
             </button>
           ))}
         </div>
@@ -2879,22 +2915,33 @@ function PromptDifficultyBadge({
 }: {
   difficulty: string | null | undefined;
 }) {
-  const normalized = normalizePromptDifficultyLabel(difficulty);
-  const tone =
-    normalized === '简单'
-      ? 'success'
-      : normalized === '困难'
-        ? 'warning'
-        : normalized === '地狱'
-          ? 'danger'
-          : 'blue';
+	const normalized = normalizePromptDifficultyLabel(difficulty);
+	const tone =
+		normalized === '简单'
+			? 'success'
+			: normalized === '中等'
+				? 'blue'
+				: normalized === '较难'
+					? 'blue'
+					: normalized === '困难'
+						? 'warning'
+						: normalized === '地狱'
+							? 'danger'
+							: 'blue';
 
   return <WorkspaceBadge tone={tone}>难度：{normalized}</WorkspaceBadge>;
 }
 
 function normalizePromptDifficultyLabel(value: string | null | undefined) {
-  const trimmed = value?.trim();
-  if (trimmed === '简单' || trimmed === '困难' || trimmed === '地狱') {
+	const trimmed = value?.trim();
+	if (
+		trimmed === '简单' ||
+		trimmed === '一般' ||
+		trimmed === '中等' ||
+		trimmed === '较难' ||
+		trimmed === '困难' ||
+		trimmed === '地狱'
+	) {
     return trimmed;
   }
   return '一般';

@@ -135,6 +135,58 @@ func TestBuildGitAuthEnvCanDisableTLSVerification(t *testing.T) {
 	}
 }
 
+func TestPushBranchForceReplacesExistingRemoteBranch(t *testing.T) {
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	if err := os.MkdirAll(remote, 0o755); err != nil {
+		t.Fatalf("create bare remote directory: %v", err)
+	}
+	if err := runGit(remote, "init", "--bare"); err != nil {
+		t.Fatalf("init bare remote: %v", err)
+	}
+
+	oldRepo := filepath.Join(t.TempDir(), "old")
+	if err := os.MkdirAll(oldRepo, 0o755); err != nil {
+		t.Fatalf("create old repo directory: %v", err)
+	}
+	if err := runGit(oldRepo, "init", "-b", "A"); err != nil {
+		t.Fatalf("init old repo: %v", err)
+	}
+	gitInDir(t, oldRepo, "config", "user.name", "Test User")
+	gitInDir(t, oldRepo, "config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(oldRepo, "result.txt"), []byte("old result"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitInDir(t, oldRepo, "add", "result.txt")
+	gitInDir(t, oldRepo, "commit", "-m", "old result")
+	gitInDir(t, oldRepo, "remote", "add", "origin", remote)
+	gitInDir(t, oldRepo, "push", "origin", "A:A")
+
+	newRepo := filepath.Join(t.TempDir(), "new")
+	if err := os.MkdirAll(newRepo, 0o755); err != nil {
+		t.Fatalf("create new repo directory: %v", err)
+	}
+	if err := runGit(newRepo, "init", "-b", "A"); err != nil {
+		t.Fatalf("init new repo: %v", err)
+	}
+	gitInDir(t, newRepo, "config", "user.name", "Test User")
+	gitInDir(t, newRepo, "config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(newRepo, "result.txt"), []byte("new result"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitInDir(t, newRepo, "add", "result.txt")
+	gitInDir(t, newRepo, "commit", "-m", "new result")
+	gitInDir(t, newRepo, "remote", "add", "origin", remote)
+
+	if err := PushBranch(newRepo, "A", "", ""); err != nil {
+		t.Fatalf("PushBranch() error = %v", err)
+	}
+	got := gitOutput(t, remote, "rev-parse", "refs/heads/A")
+	want := gitOutput(t, newRepo, "rev-parse", "HEAD")
+	if got != want {
+		t.Fatalf("remote A = %s, want new commit %s", got, want)
+	}
+}
+
 func TestFormatGitCommandErrorIncludesOutputAndMasksSecrets(t *testing.T) {
 	err := formatGitCommandError(
 		errors.New("exit status 128"),

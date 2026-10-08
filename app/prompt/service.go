@@ -23,12 +23,13 @@ import (
 
 // Service handles prompt generation and storage for tasks.
 type PromptService struct {
-	store                   *store.Store
-	cliSvc                  *appcli.CliService
-	promptGenerator         func(context.Context, string, string, string) (generatedPromptResult, error)
-	promptHumanizer         func(context.Context, string, string, string) (string, error)
-	duplicateJudge          func(context.Context, string, string, string) (semanticDuplicateDecision, error)
-	requirementDocGenerator func(context.Context, string, string, string) (string, error)
+	store                             *store.Store
+	cliSvc                            *appcli.CliService
+	promptGenerator                   func(context.Context, string, string, string) (generatedPromptResult, error)
+	promptHumanizer                   func(context.Context, string, string, string) (string, error)
+	duplicateJudge                    func(context.Context, string, string, string) (semanticDuplicateDecision, error)
+	requirementDocGenerator           func(context.Context, string, string, string) (string, error)
+	requirementDocGeneratorWithPrompt func(context.Context, string, string, string, string) (string, error)
 }
 
 // NewService creates a new prompt service.
@@ -38,13 +39,14 @@ func New(store *store.Store, cliSvc *appcli.CliService) *PromptService {
 
 // GeneratePromptRequest carries parameters for prompt generation.
 type GeneratePromptRequest struct {
-	TaskID          string   `json:"taskId"`
-	ProviderID      *string  `json:"providerId"`
-	TaskType        string   `json:"taskType"`
-	Scopes          []string `json:"scopes"`
-	Constraints     []string `json:"constraints"`
-	AdditionalNotes *string  `json:"additionalNotes"`
-	ThinkingBudget  string   `json:"thinkingBudget"`
+	TaskID           string   `json:"taskId"`
+	ProviderID       *string  `json:"providerId"`
+	TaskType         string   `json:"taskType"`
+	Scopes           []string `json:"scopes"`
+	Constraints      []string `json:"constraints"`
+	AdditionalNotes  *string  `json:"additionalNotes"`
+	ThinkingBudget   string   `json:"thinkingBudget"`
+	PromptDifficulty string   `json:"promptDifficulty"`
 }
 
 // PromptGenerationResult is returned after a successful generation.
@@ -73,13 +75,14 @@ type CustomProjectPromptDocumentDetail struct {
 }
 
 type GenerateCustomProjectPromptDocumentsResult struct {
-	ProjectID      string                              `json:"projectId"`
-	RootPath       string                              `json:"rootPath"`
-	ProviderName   string                              `json:"providerName"`
-	Model          string                              `json:"model"`
-	GeneratedCount int                                 `json:"generatedCount"`
-	ErrorCount     int                                 `json:"errorCount"`
-	Details        []CustomProjectPromptDocumentDetail `json:"details"`
+	ProjectID        string                              `json:"projectId"`
+	RootPath         string                              `json:"rootPath"`
+	ProviderName     string                              `json:"providerName"`
+	Model            string                              `json:"model"`
+	GeneratedCount   int                                 `json:"generatedCount"`
+	ErrorCount       int                                 `json:"errorCount"`
+	NeedsReviewCount int                                 `json:"needsReviewCount"`
+	Details          []CustomProjectPromptDocumentDetail `json:"details"`
 }
 
 type CustomProjectPromptDocumentProgress struct {
@@ -99,12 +102,13 @@ type CustomProjectPromptDocumentRequest struct {
 }
 
 const (
-	defaultPromptGenerationModel = "deepseek-v4-flash"
-	deepSeekFlashModel           = "deepseek-v4-flash"
-	deepSeekFlashCanonicalModel  = "deepseek-flash"
-	deepSeekAPIBaseURL           = "https://api.deepseek.com"
-	promptDuplicateRetryLimit    = 2
-	promptQualityRetryLimit      = 2
+	defaultPromptGenerationModel   = "deepseek-v4-flash"
+	deepSeekFlashModel             = "deepseek-v4-flash"
+	deepSeekFlashCanonicalModel    = "deepseek-flash"
+	deepSeekAPIBaseURL             = "https://api.deepseek.com"
+	promptDuplicateRetryLimit      = 2
+	promptQualityRetryLimit        = 2
+	customPromptDocumentRetryLimit = 3
 )
 
 func (s *PromptService) GenerateTaskPrompt(req GeneratePromptRequest) (*PromptGenerationResult, error) {
@@ -146,6 +150,8 @@ func (s *PromptService) GenerateTaskPromptWithContext(ctx context.Context, req G
 	if strings.TrimSpace(req.TaskType) == "" {
 		return nil, errors.New(errs.MsgTaskTypeRequired)
 	}
+	req.TaskType = internalprompt.NormalizeTaskType(req.TaskType)
+	req.PromptDifficulty = normalizePromptDifficultyForTaskType(req.TaskType, req.PromptDifficulty)
 
 	task, err := s.store.GetTask(req.TaskID)
 	if err != nil {
@@ -286,7 +292,7 @@ func (s *PromptService) GenerateTaskPromptWithContext(ctx context.Context, req G
 			promptText = rawGeneratedPrompt
 		}
 	}
-	qualityErr := generatedPromptQualityError(promptText, modelDifficulty)
+	qualityErr := generatedPromptQualityError(promptText, modelDifficulty, req.PromptDifficulty, req.TaskType)
 	for qualityAttempt := 0; qualityErr != nil && qualityAttempt < promptQualityRetryLimit; qualityAttempt++ {
 		slog.Warn("generated prompt failed quality precheck, regenerating",
 			"task_id", task.ID,
@@ -307,7 +313,7 @@ func (s *PromptService) GenerateTaskPromptWithContext(ctx context.Context, req G
 
 		promptText = strings.TrimSpace(regenerated.PromptText)
 		modelDifficulty = regenerated.PromptDifficulty
-		qualityErr = generatedPromptQualityError(promptText, modelDifficulty)
+		qualityErr = generatedPromptQualityError(promptText, modelDifficulty, req.PromptDifficulty, req.TaskType)
 		if qualityErr != nil {
 			continue
 		}
@@ -334,6 +340,7 @@ func (s *PromptService) GenerateTaskPromptWithContext(ctx context.Context, req G
 	if promptDifficulty == "" {
 		promptDifficulty = estimatePromptDifficulty(req, promptText)
 	}
+	promptDifficulty = normalizePromptDifficultyForTaskType(req.TaskType, promptDifficulty)
 
 	if err := s.store.CompleteTaskPromptGenerationWithDifficulty(task.ID, promptText, promptDifficulty, startedAt); err != nil {
 		return nil, err
@@ -483,6 +490,25 @@ func (s *PromptService) GenerateCustomProjectPromptDocumentsWithOptions(
 		emitProgress(projectName, progressIndex, "generating")
 		content, genErr := s.generateCustomProjectPromptDocumentWithProvider(ctx, sourcePath, item.DisplayName, selection, counts)
 		if genErr != nil {
+			if strings.TrimSpace(content) != "" {
+				// 保留最后一版内容供人工修正，避免模型最终未通过时整份文档被丢弃。
+				emitProgress(projectName, progressIndex, "writing")
+				if writeErr := os.WriteFile(util.ExpandTilde(outputPath), []byte(strings.TrimSpace(content)+"\n"), 0o644); writeErr != nil {
+					detail.Message = writeErr.Error()
+					result.Details = append(result.Details, detail)
+					result.ErrorCount++
+					emitProgress(projectName, progressIndex, "error")
+					continue
+				}
+				detail.Content = strings.TrimSpace(content)
+				detail.Status = "needs_review"
+				detail.Message = fmt.Sprintf("自动重试 %d 次后仍未通过校验，请修正后再创建任务：%s", customPromptDocumentRetryLimit, genErr)
+				result.Details = append(result.Details, detail)
+				result.ErrorCount++
+				result.NeedsReviewCount++
+				emitProgress(projectName, progressIndex, "needs_review")
+				continue
+			}
 			detail.Message = genErr.Error()
 			result.Details = append(result.Details, detail)
 			result.ErrorCount++
@@ -577,36 +603,113 @@ func (s *PromptService) generateCustomProjectPromptDocumentWithProvider(ctx cont
 	if len(requested) > 0 {
 		counts = requested[0]
 	}
-	var output string
-	var err error
-	if s.requirementDocGenerator != nil {
-		output, err = s.requirementDocGenerator(ctx, workDir, projectName, selection.Model)
-	} else {
-		projectProfile, profileErr := s.resolveProjectProfile(ctx, workDir)
+	var (
+		projectProfile *promptProjectProfile
+		profileErr     error
+	)
+	if s.requirementDocGenerator == nil && s.requirementDocGeneratorWithPrompt == nil {
+		projectProfile, profileErr = s.resolveProjectProfile(ctx, workDir)
 		if profileErr != nil {
 			slog.Warn("custom project profile cache unavailable, falling back to live repository reading",
 				"project", projectName,
 				"error", profileErr,
 			)
 		}
-		prompt := buildCustomProjectPromptDocumentPrompt(projectName, projectProfile, counts)
-		output, err = s.executeCliRaw(ctx, workDir, prompt, selection.Model, selection.EnvOverrides)
 	}
-	if err != nil {
-		return "", err
-	}
-	content := cleanCustomProjectPromptDocument(output)
-	if strings.TrimSpace(content) == "" {
-		trimmedOutput := strings.TrimSpace(output)
-		if trimmedOutput == "" {
-			return "", errors.New("模型未返回可写入的提示词文档")
+
+	generationPrompt := buildCustomProjectPromptDocumentPrompt(projectName, projectProfile, counts)
+	var lastContent string
+	var lastErr error
+	for attempt := 0; attempt <= customPromptDocumentRetryLimit; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return lastContent, err
 		}
-		return "", fmt.Errorf("模型未返回有效的提示词需求文档: %s", trimmedOutput)
+		if attempt > 0 {
+			generationPrompt = buildCustomProjectPromptDocumentRegenerationPrompt(
+				projectName,
+				projectProfile,
+				counts,
+				lastContent,
+				lastErr,
+				attempt,
+			)
+			slog.Warn("custom project prompt document failed validation, regenerating",
+				"project", projectName,
+				"attempt", attempt,
+				"max_retries", customPromptDocumentRetryLimit,
+				"error", lastErr,
+			)
+		}
+
+		output, err := s.generateCustomProjectPromptDocumentOutput(ctx, workDir, projectName, selection, generationPrompt)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return lastContent, err
+			}
+			lastErr = err
+			continue
+		}
+
+		content := cleanCustomProjectPromptDocument(output)
+		if strings.TrimSpace(content) == "" {
+			trimmedOutput := strings.TrimSpace(output)
+			if trimmedOutput == "" {
+				lastErr = errors.New("模型未返回可写入的提示词文档")
+			} else {
+				lastErr = fmt.Errorf("模型未返回有效的提示词需求文档: %s", trimmedOutput)
+			}
+			continue
+		}
+
+		lastContent = content
+		if err := counts.ValidateDocument(content); err != nil {
+			if !looksLikeCustomProjectPromptDocument(content) {
+				lastContent = ""
+			}
+			lastErr = err
+			continue
+		}
+		return content, nil
 	}
-	if err := counts.ValidateDocument(content); err != nil {
-		return "", err
+
+	if lastErr == nil {
+		lastErr = errors.New("提示词文档生成失败")
 	}
-	return content, nil
+	return lastContent, fmt.Errorf("提示词文档连续校验未通过：%w", lastErr)
+}
+
+func looksLikeCustomProjectPromptDocument(content string) bool {
+	heading := regexp.MustCompile(`(?m)^\s{0,3}(?:#{1,6}\s*)?(?:\*\*)?\s*(?:0-1代码生成|Feature迭代|Bug修复|代码理解|工程化|代码测试|代码重构)\s*(?:\*\*)?\s*$`)
+	item := regexp.MustCompile(`(?m)^\s*(?:[-*]\s+|\d+[.、)]\s+)【(?:简单|一般|中等|较难|困难|地狱)】\s*\S+`)
+	return heading.MatchString(content) && item.MatchString(content)
+}
+
+func (s *PromptService) generateCustomProjectPromptDocumentOutput(ctx context.Context, workDir, projectName string, selection promptProviderSelection, prompt string) (string, error) {
+	if s.requirementDocGeneratorWithPrompt != nil {
+		return s.requirementDocGeneratorWithPrompt(ctx, workDir, projectName, selection.Model, prompt)
+	}
+	if s.requirementDocGenerator != nil {
+		return s.requirementDocGenerator(ctx, workDir, projectName, selection.Model)
+	}
+	return s.executeCliRaw(ctx, workDir, prompt, selection.Model, selection.EnvOverrides)
+}
+
+func buildCustomProjectPromptDocumentRegenerationPrompt(projectName string, projectProfile *promptProjectProfile, counts internalprompt.DocumentCounts, previousContent string, validationErr error, attempt int) string {
+	base := buildCustomProjectPromptDocumentPrompt(projectName, projectProfile, counts)
+	var sb strings.Builder
+	sb.WriteString(base)
+	fmt.Fprintf(&sb, "\n这是第 %d 次修正生成。上一轮文档没有通过自动校验，必须重新生成整份完整文档，不能只解释原因、只输出修改片段或沿用不合格条目。\n", attempt+1)
+	if validationErr != nil {
+		sb.WriteString("上一轮校验失败原因：")
+		sb.WriteString(validationErr.Error())
+		sb.WriteString("\n请针对这个具体原因处理对应题目；G16/G19 难度不足的条目必须作废并重新选题，不得仅改措辞或难度字段，并在输出前再次逐条检查数量、难度、长度、难度证据和重复度。\n")
+	}
+	if trimmed := strings.TrimSpace(previousContent); trimmed != "" {
+		sb.WriteString("上一轮输出仅供定位问题，不能原样复用：\n")
+		sb.WriteString(trimmed)
+		sb.WriteString("\n")
+	}
+	return sb.String()
 }
 
 func (s *PromptService) bestEffortPolishPrompt(ctx context.Context, workDir, promptText string, selection promptProviderSelection) string {
@@ -712,14 +815,23 @@ func (s *PromptService) executeCliRaw(ctx context.Context, workDir, prompt, mode
 		env = envOverrides[0]
 	}
 
-	resp, err := s.cliSvc.StartClaude(appcli.StartClaudeRequest{
+	request := appcli.StartClaudeRequest{
 		WorkDir:        workDir,
 		Prompt:         prompt,
 		Model:          claudeCLIModel(model, env),
 		PermissionMode: "bypassPermissions",
 		AdditionalDirs: additionalDirs,
 		EnvOverrides:   env,
-	})
+	}
+	// Batch document jobs have an outer timeout (currently 30 minutes). Let the
+	// CLI use that remaining budget instead of the legacy 10-minute default.
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining > 10*time.Minute {
+			request.TimeoutSeconds = int((remaining + time.Second - 1) / time.Second)
+		}
+	}
+	resp, err := s.cliSvc.StartClaude(request)
 	if err != nil {
 		return "", fmt.Errorf(errs.FmtClaudeStartFail, err)
 	}
@@ -792,6 +904,8 @@ func (s *PromptService) waitForCliCompletion(ctx context.Context, sessionID stri
 // XML 标签格式（<command-name>）在非交互模式下不会触发 skill 展开。
 func buildSkillPrompt(req GeneratePromptRequest, siblingPrompts []siblingPrompt, projectProfile *promptProjectProfile) string {
 	const skillName = "评审项目提示词生成"
+	req.TaskType = internalprompt.NormalizeTaskType(req.TaskType)
+	req.PromptDifficulty = normalizePromptDifficultyForTaskType(req.TaskType, req.PromptDifficulty)
 	var sb strings.Builder
 	sb.WriteString("/")
 	sb.WriteString(skillName)
@@ -824,9 +938,30 @@ func buildSkillPrompt(req GeneratePromptRequest, siblingPrompts []siblingPrompt,
 	appendProjectProfilePrompt(&sb, projectProfile)
 
 	sb.WriteString("\n输出要求：请返回结构化 JSON，不要包裹 Markdown 代码块。字段必须包含 version、prompt、promptDifficulty。")
-	sb.WriteString("promptDifficulty 只能取 困难 或 地狱，难度下限为困难，不允许输出简单或一般。")
-	sb.WriteString("难度按最终 prompt 的真实实现成本判断：跨模块/跨系统多文件、多约束、需要联动验证为困难；只有高耦合、高不确定、验证成本极高才用地狱。")
-	sb.WriteString("如果按题目真实成本达不到困难，必须换一个有真实联动链路的题目重新出题，不得降级输出简单或一般，也不得靠堆砌无关边界硬贴难度。\n")
+	targetDifficulty := NormalizePromptDifficultyLabel(req.PromptDifficulty)
+	if targetDifficulty == "" {
+		targetDifficulty = "困难"
+	}
+	labels := "中等、困难 或 地狱"
+	switch internalprompt.NormalizeTaskType(req.TaskType) {
+	case internalprompt.TaskTypeFeature, internalprompt.TaskTypeBugFix:
+		labels = "困难"
+	case internalprompt.TaskTypeCodeGen:
+		labels = "困难 或 地狱"
+	}
+	fmt.Fprintf(&sb, "promptDifficulty 只能取 %s，本次出题标签为%s，内容门槛按题型规则校验。", labels, targetDifficulty)
+	sb.WriteString("中等题也必须是中等难度的真实研发任务：至少牵动多个源码文件并产生不少于20行有效代码改动，且题面必须同时具备以下三项特征，缺一项都不行：调用/数据流理解、实现决策、边界条件与约束。每项都必须有可独立验收的具体证据：调用/数据流要写清输入或用户动作经过哪些业务环节并影响哪些数据或展示结果；实现决策要写清处理策略的选择，以及正常、失败或冲突时分别怎么处理；边界条件与约束要写清具体触发条件、边界输入/旧数据/重复操作/失败场景和预期行为。只写“统一展示”“兼容旧数据”“保持一致”“补充校验”或其他抽象结论不算命中，三项缺任何一项都必须换题。困难题必须是跨多文件且总修改代码行数不低于20行，且题面必须至少体现以下三项特征中的一项：多模块整合、关键设计取舍、复杂技术关注点；多模块整合要写清至少两个业务环节如何汇合及结果，关键设计取舍要写清冲突目标和选择后的行为，复杂技术关注点要写清并发、异步、兼容、恢复或异常的触发过程和结果。只罗列模块或技术名词不算命中，三项都没有完整证据时必须换题；只有高耦合、高不确定、验证成本极高才用地狱。")
+	sb.WriteString(internalprompt.BuildHardDifficultyRule())
+	sb.WriteString("\n")
+	sb.WriteString(internalprompt.BuildHardDifficultyChecklistRule())
+	sb.WriteString("\n")
+	sb.WriteString(internalprompt.BuildBoundaryExpressionRule())
+	sb.WriteString("\n")
+	sb.WriteString(internalprompt.BuildMediumAcceptanceChecklistRule())
+	sb.WriteString("\n")
+	sb.WriteString(internalprompt.BuildMediumDifficultyReferenceRule())
+	sb.WriteString("\n")
+	sb.WriteString("如果题目真实内容达不到对应题型的 G16/G19 门槛，必须换一个真实联动题目重新出题，不得靠堆砌无关边界硬贴难度。\n")
 
 	if len(siblingPrompts) > 0 {
 		sb.WriteString("\n---\n")
@@ -845,13 +980,25 @@ func buildSkillPrompt(req GeneratePromptRequest, siblingPrompts []siblingPrompt,
 
 func appendProjectRequirementGenerationRules(sb *strings.Builder, req GeneratePromptRequest) {
 	normalizedTaskType := internalprompt.NormalizeTaskType(req.TaskType)
+	req.PromptDifficulty = normalizePromptDifficultyForTaskType(normalizedTaskType, req.PromptDifficulty)
 	sb.WriteString("\n通用出题规则：必须先基于当前仓库的真实项目结构、已有功能、主要用户路径、状态流和工程约束生成提示词，不要写泛泛产品想法。提示词要像真实项目排期里的研发任务，包含业务背景、触发场景、用户可感知行为、影响范围和交付边界，但不要出现代码片段、文件路径、类名、方法名、接口名、变量名或具体实现步骤；不要在末尾固定追加“验收时...”“验证时...”这类模板句。\n")
 	sb.WriteString("可验收性规则：正文必须自然写清当前情况、触发场景、目标行为和可核查的交付结果，并明确至少一个真实边界、异常场景或旧行为兼容要求。验收结果要能从页面反馈、状态变化、数据结果、接口行为或测试产物中确认，不能只写“优化体验”“完善逻辑”“增强稳定性”。\n")
 	sb.WriteString("审核隔离规则：题目不得出现五维评分、21分收录门槛、审核通过率、压分或扣分暗示，也不能故意制造失败、保留缺陷、设置不可完成条件或用模糊要求诱导模型出错。题目只描述项目真实需要解决的问题。\n")
 	sb.WriteString("文案红线：直接写需求正文，不加“以下是”“作为 AI”等AI式前言，不写总结式收尾，不使用箭头、Emoji、反引号或装饰符号。语句完整通顺，避免重复句式、同义词堆叠和只替换少量名词的语义换皮；必要事实不得为了调整文风而删减或改名。\n")
 	sb.WriteString("任务类型边界：0-1代码生成必须是此前不存在、且必须与现有角色、数据、状态或流程深度衔接的完整模块、新子系统或新主流程，不接受空白项目脚手架或只有增删改查的孤立实现；Feature迭代必须是在已有功能基础上的规则增强、流程延展或能力补齐，并牵动上下游数据、状态或校验链路；Bug修复必须是当前项目中真实存在或由代码迹象支撑的缺陷，写清触发条件、异常表现和业务后果；代码理解聚焦梳理链路和风险；代码重构强调业务结果不变；工程化聚焦构建、依赖、发布或协作稳定性；代码测试围绕高风险流程、边界和回归风险补验证。\n")
 	sb.WriteString("质量自检：最终提示词不能只写“优化体验”“完善逻辑”“增强稳定性”这类空话；如果任务涉及导出、统计、预约、状态流转、权限、缓存、异步或跨页面流程，要优先体现数据一致性、异常恢复、边界值、前后端契约或验证链路。难度按理解成本、决策成本和约束复杂度判断，不按文件数量机械判断。\n")
-	sb.WriteString("难度下限：本批只接受困难与地狱。严禁生成简单需求：单文件局部改动、单个判断或字段调整、单个按钮或文案调整、只补一个校验或提示、只做样式微调这类题目一律不得输出；如果某个切入点只能做成这类小修，必须放弃并改选有真实联动链路的题目，不得靠堆砌无关边界把小题硬贴成难题。\n")
+	appendDifficultyCalibrationRules(sb)
+	targetDifficulty := NormalizePromptDifficultyLabel(req.PromptDifficulty)
+	if targetDifficulty == "" {
+		targetDifficulty = "困难"
+	}
+	fmt.Fprintf(sb, "难度要求：本题展示标签为%s，内容按题型门槛验收。中等题必须跨多文件、预计产生不少于20行有效代码改动，并且题面必须同时具备调用/数据流理解、实现决策、边界条件与约束三项证据，缺一项都不行：调用/数据流对应输入到结果的业务链路，实现决策对应处理策略的选择及其正常、失败或冲突结果，边界条件与约束必须是一个真正改变实现路径的特例，写清它发生时用户看到什么、数据最终结果是什么；困难题必须跨多文件、总修改代码行数不低于20行，并且题面至少体现多模块整合、关键设计取舍、复杂技术关注点中的一项，同时写出对应的模块汇合、冲突取舍或复杂技术触发证据。只写抽象结论或罗列名词不算命中，三项缺任何一项都必须换题，不能只靠文件数量、代码行数或泛泛的业务描述贴标签。单文件局部改动、单个判断或字段调整、单个按钮或文案调整、只补一个校验或提示、只做样式微调一律不得输出。\n", targetDifficulty)
+	sb.WriteString(internalprompt.BuildBoundaryExpressionRule())
+	sb.WriteString("\n")
+	sb.WriteString(internalprompt.BuildMediumAcceptanceChecklistRule())
+	sb.WriteString("\n")
+	sb.WriteString(internalprompt.BuildMediumDifficultyReferenceRule())
+	sb.WriteString("\n")
 	appendDifficultPromptEligibilityRules(sb, false)
 
 	switch normalizedTaskType {
@@ -865,13 +1012,24 @@ func appendProjectRequirementGenerationRules(sb *strings.Builder, req GeneratePr
 }
 
 func appendDifficultPromptEligibilityRules(sb *strings.Builder, batch bool) {
-	sb.WriteString("困难题准入门槛：题目必须存在一条不能拆成互不影响的局部小修的联动链路，并至少命中一类真实复杂度：跨模块或跨层的数据与状态传递；状态机、异步时序、并发或失败恢复；多入口、持久化与展示之间的一致性；兼容旧数据或旧行为且需要成组回归验证。同一业务模块内多个协作部分的真实联动也可以构成困难题，不强求跨模块。独立的样式、提示或输入校验不构成困难题，不能因为边界条件写得多就判为困难。文字截断与完整名称提示、本地存储失败提示、上传文件类型或大小校验都属于典型局部小修；把几项互不关联的小修拼在一起，也不能抬成困难题。")
-	sb.WriteString("本期 Pair-wise GSB 改动量门槛：每道困难或地狱题都必须让两次独立实现各自产生至少 10 行有效源码改动，按产物快照相对初始快照的差异计算，每个新增行和删除行各计一行；依赖锁文件、node_modules 等依赖目录、构建产物和纯文档不计入。题目应要求多个相互协作的实现点，避免一侧几行微修即可完成、另一侧却需要完整重构的极端失衡，否则没有两份分量相当的产物可比。这是内部选题和自检门槛，不要把改动行数、GSB、审核或收录规则写进最终业务提示词。")
+	sb.WriteString(internalprompt.TaskTypeDifficultyRule)
+	sb.WriteString("\n")
+	sb.WriteString("严禁简单需求：单文件局部改动、单个判断或字段调整、单个按钮或文案调整、只补一个校验或提示、只做样式微调不得输出。")
+	sb.WriteString("困难题准入门槛：必须跨多文件，预计总修改代码行数不低于20行，并且存在一条不能拆成互不影响的局部小修的联动链路；困难题面还必须至少体现以下三项特征中的一项，并写出可独立验收的证据：多模块整合要说明至少两个业务环节如何汇合及结果，关键设计取舍要说明冲突目标、选择的策略及后果，复杂技术关注点要说明并发、异步、兼容、恢复或异常的触发过程及结果。只罗列模块或技术名词不算命中，三项都没有完整证据时必须换题；独立的样式、提示或输入校验不构成困难题，把几项互不关联的小修拼在一起也不能抬成困难题。特别注意：审核按题面里能否看见这三项特征判定真实难度，只写“新增入口 + 边界提示”会被直接判成中等；困难题必须把取舍或复杂链路写进正文，调高难度字段无效。")
+	sb.WriteString("中等题准入门槛：Feature迭代和 Bug修复必须跨多文件，预计产生不少于20行有效代码改动，围绕已有业务流程产生真实联动；中等题面还必须同时具备以下三项证据，缺一项都不算达标：调用/数据流要说明输入或动作经过的业务环节及最终影响，实现决策要说明处理策略的选择及正常/失败/冲突结果，边界条件与约束要说明具体触发条件、边界输入或旧数据以及预期行为，而且这个边界必须真正改变实现路径，只写“超过上限就提示”“重复提交要处理”这类复述正常路径的擦边写法不算命中。只写“统一展示”“兼容旧数据”“保持一致”“补充校验”等抽象结论不算命中，三项缺任何一项都必须换题；不要求具备困难题的多模块整合或复杂设计取舍。单文件局部改动、单个判断或字段调整、单个按钮或文案调整、只补一个校验或提示、只做样式微调一律不得输出。")
+	sb.WriteString("改动行数只用于内部选题校准：按有效源码新增或实质改写计算，不计依赖锁文件、依赖目录、构建产物和纯文档；不能让题目靠几行微修就能完成，也不能用无关边界堆砌长度。")
 	if batch {
-		sb.WriteString("批量生成需要补足困难题名额时，必须换题，不能硬贴【困难】标签。题目难度只能标为困难或地狱；换题后仍达不到困难门槛就继续换题，不得降级为简单或一般。\n")
+		sb.WriteString("批量生成需要补足难度名额时，必须换题，不能硬贴标签；三类题的出题标签只能为困难或地狱，Feature/Bug 固定为困难，换题后仍达不到对应门槛就继续换题，不得降级为简单、一般或较难。\n")
 		return
 	}
-	sb.WriteString("达不到门槛时必须换一个有真实联动链路的题目，不得降级输出简单或一般，也不得为了满足预期难度虚构链路。\n")
+	sb.WriteString("达不到门槛时必须换一个有真实联动链路的题目，不得降级输出简单、一般或较难，也不得为了满足预期难度虚构链路。\n")
+}
+
+// appendDifficultyCalibrationRules keeps "困难" grounded in the reference
+// question bank: one coherent business chain with a few linked rules, not a
+// pile of unrelated technical constraints.
+func appendDifficultyCalibrationRules(sb *strings.Builder) {
+	sb.WriteString("难度文字校准：参考题库中的困难题采用一条清晰的业务主线，正文通常 3-5 句、约 100-220 字，先说明用户当前遇到的具体摩擦，再提出一个完整能力或一次真实修复，并补充 2-4 个会影响主流程的业务规则、边界或旧数据兼容要求。困难来自这条链路中多个页面、数据对象、状态或操作结果必须保持一致，而不是来自堆叠无关模块、角色、权限、并发、事务和技术名词。不要把多个独立小需求拼成一题，也不要为了显得困难强行加入跨系统、异步或高风险约束；如果一个自然的业务链路已经达到困难，就保持描述克制、具体、像真实用户提出的需求。\n")
 }
 
 func appendTaskSpecificGenerationRules(sb *strings.Builder, req GeneratePromptRequest) {
@@ -881,7 +1039,7 @@ func appendTaskSpecificGenerationRules(sb *strings.Builder, req GeneratePromptRe
 
 	switch promptScopeDifficultyLevel(req.Scopes) {
 	case 0, 1:
-		sb.WriteString("\nBug修复出题规则：当前范围允许单文件或局部修复，但仍必须基于代码中真实存在、用户可观察的缺陷，不能写成新增功能或泛泛优化。\n")
+		sb.WriteString("\nBug修复出题规则：即使当前范围选择单文件，也必须选择需要追踪已有调用/数据流、作出影响结果对错的实现决策并处理真实边界的缺陷；若只能定位到单点小修则换题，不能写成新增功能或泛泛优化。\n")
 	case 2:
 		sb.WriteString("\nBug修复出题规则：当前范围是模块内多文件，必须选择需要同一业务模块内多个协作部分一起修复的真实缺陷，例如页面交互、状态计算、数据读写、校验或展示链路不一致。不要生成只改一个判断、一个字段、一个按钮状态或一处文案就能解决的简单 bug。\n")
 	default:
@@ -912,9 +1070,19 @@ func buildCustomProjectPromptDocumentPrompt(projectName string, projectProfile *
 	sb.WriteString("角色要求：请以有实际研发排期经验的产品经理视角生成提示词，同时理解工程实现约束。输出要像真实业务交付任务，复杂度以项目真实链路为准，不要写成概念 PRD、营销文案或课堂作业。\n")
 	sb.WriteString("请基于当前项目一次性生成提示词需求文档，不要逐条调用单题出题逻辑。\n")
 	fmt.Fprintf(&sb, "数量要求：只生成 %d 条，其中 0-1代码生成 %d 条，Feature迭代 %d 条，Bug修复 %d 条。仅允许生成这三类题，数量为 0 的分类不生成。严格按数量生成，不擅自增减。\n", counts.Total(), counts.CodeGen, counts.Feature, counts.BugFix)
-	fmt.Fprintf(&sb, "难度数量：整批严格生成【困难】%d 条、【地狱】%d 条，只允许使用【困难】和【地狱】两种标签，不能输出简单或一般。题型数量与难度数量是两套独立约束，由你结合每条任务的真实实现工作量把难度名额分配到各题型，但两项合计必须与总题数完全一致。\n", counts.Difficult, counts.Hell)
+	fmt.Fprintf(&sb, "难度数量：整批严格生成【困难】%d 条、【地狱】%d 条。0-1代码生成 %d 条可用困难或地狱，其中地狱 %d 条；Feature迭代 %d 条和 Bug修复 %d 条固定标为【困难】，不得输出【中等】标签。内容门槛按题型校验，达不到门槛必须换题。\n", counts.Difficult, counts.Hell, counts.CodeGen, counts.Hell, counts.Feature, counts.BugFix)
+	appendDifficultyCalibrationRules(&sb)
 	appendDifficultPromptEligibilityRules(&sb, true)
-	sb.WriteString("严禁简单需求：单文件局部改动、单个判断或字段调整、单个按钮或文案调整、只补一个校验或提示、只做样式微调这类题目一律不得出现；如果某个切入点只能做成这类小修，必须放弃并改选有真实联动链路的题目。每条提示词必须存在一条不能拆成互不影响的局部小修的联动链路，并至少命中一类真实复杂度：跨模块或跨层的数据与状态传递；状态机、异步时序、并发或失败恢复；多入口、持久化与展示之间的一致性；兼容旧数据或旧行为且需要成组回归验证。\n")
+	sb.WriteString(internalprompt.BuildHardDifficultyRule())
+	sb.WriteString("\n")
+	sb.WriteString(internalprompt.BuildHardDifficultyChecklistRule())
+	sb.WriteString("\n")
+	sb.WriteString(internalprompt.BuildBoundaryExpressionRule())
+	sb.WriteString("\n")
+	sb.WriteString(internalprompt.BuildMediumAcceptanceChecklistRule())
+	sb.WriteString("\n")
+	sb.WriteString(internalprompt.BuildMediumDifficultyReferenceRule())
+	sb.WriteString("\n")
 	sb.WriteString("复杂度必须以代码事实为依据：先结合项目画像和必要的源码检查确认现有能力边界，再指出当前流程真实缺什么、改动会牵动哪些角色、数据或状态；不能编造 Bug、虚构链路或无依据堆叠复杂度，也不能为了抬高难度堆砌与项目无关的权限、事务、异步或多角色要求。\n")
 	sb.WriteString("去重要求：所有提示词之间不得重复或换皮，也要避免对项目已经具备的功能重复出题。先结合项目画像和必要的源码检查确认能力边界，不得只替换对象名、页面名、状态名后复用同一类需求。每条必须在业务目标、用户路径、状态链路、数据对象、交付边界中至少有两个维度明显不同，语义和句式都要明显不同。输出前逐条交叉检查，发现文字重复比例偏高、语义相近或同义改写时，必须换成真实的不同切入点。\n")
 	sb.WriteString("可验收性要求：每条都要自然写清当前情况、触发场景、目标行为和可核查的交付结果，并明确至少一个真实边界、异常场景或旧行为兼容要求；单条正文不少于 80 字。结果应能从页面反馈、状态变化、数据结果、接口行为或测试产物中确认，不能只写抽象目标。\n")
@@ -924,7 +1092,7 @@ func buildCustomProjectPromptDocumentPrompt(projectName string, projectProfile *
 	sb.WriteString("文风要求：参考 PINRU 历史提示词的自然写法，每条像真实领题描述的一段中文。严禁模板化表达、AI式前言、机械总结、同义词堆叠、语病和未写完的句子；不要使用箭头、Emoji、反引号或装饰符号。不要固定写成“小标题：正文”，不要每条都用冒号切分，也不要先起一个功能名再解释；可以自然使用“当前...”“现在...”“希望...”“新增...”“需要...”等开头，但整批不要同一种句式。不要在每条末尾固定追加“验收时...”“验证时...”“需要确保...”这类验收句；如果必须表达交付结果，要自然融入业务描述里。\n")
 	sb.WriteString("0-1代码生成要求：应是此前不存在、且必须与现有角色、页面、数据流或业务链路深度衔接的完整模块、新页面组或新主流程；写明目标用户、关键闭环、状态变化和与现有系统的衔接，不允许写成孤立脚手架、空白项目的从零搭建或只有增删改查的简单模块。\n")
 	sb.WriteString("Feature迭代要求：在已有功能基础上扩展规则、延展流程或补齐能力，说明现有流程哪里不够、扩展后解决什么摩擦，以及新旧行为如何共存；改动必须牵动上下游数据、状态或校验链路，不允许只加一个筛选、一个字段或一处提示。\n")
-	sb.WriteString("输出格式：只返回 Markdown 正文，不要包裹代码块，不要解释生成过程。分类标题按顺序只使用 **0-1代码生成**、**Feature迭代**、**Bug修复**，数量为 0 的分类省略。每条格式只保留序号、难度标签和自然正文，建议每条 100-220 字且不少于 80 字。例如：1. 【困难】当前会员预约后到场情况不清楚，管理员无法知道实际到课率。需要补一个签到核销入口，把预约状态和到场结果记录下来，并在取消、迟到和重复核销时给出清楚反馈，方便后续查看课程运营情况。不要输出成“会员签到核销子系统：...”这类固定标题格式。\n")
+	sb.WriteString("输出格式：只返回 Markdown 正文，不要包裹代码块，不要解释生成过程。分类标题按顺序只使用 **0-1代码生成**、**Feature迭代**、**Bug修复**，数量为 0 的分类省略。每条格式只保留序号、难度标签和自然正文，建议每条 100-220 字且不少于 80 字。例如：1. 【困难】课程预约需要接入候补补位流程，取消预约后先释放名额，再按候补顺序确认补位并通知学员；并发取消与签到时以已确认的到场记录为准，不能重复释放名额；通知失败保留补位结果并只重试通知，课表和名单始终对应同一份预约状态。不要输出成“会员签到核销子系统：...”这类固定标题格式。\n")
 
 	if projectProfile == nil || strings.TrimSpace(projectProfile.ProfileText) == "" {
 		sb.WriteString("\n项目分析方式：当前没有可用项目画像缓存，请先快速阅读项目结构和关键文件，再生成文档；只在必要时读取源码，不要无目的全量扫描。\n")
@@ -1318,8 +1486,9 @@ func buildQualityRegenerationPrompt(req GeneratePromptRequest, existingPrompts [
 	sb.WriteString("\n---\n")
 	sb.WriteString("质量预检未通过，必须重新生成完整提示词，不能只删除触发规则的词语。\n")
 	sb.WriteString("保留真实业务意图，重新写清当前情况、触发场景、目标行为、可核查结果和至少一个真实边界；不要加入评分、收录或诱导失败等审核规则。\n")
-	sb.WriteString("如果失败原因是难度低于困难，必须换成有真实联动链路的题目，不得靠堆砌无关边界硬贴难度，也不得输出简单或一般难度。\n")
-	sb.WriteString("重新选题时还要检查两次独立实现是否都需要至少 10 行有效源码改动，并且改动规模大致可比；不能让一侧靠几行微修完成、另一侧才需要完整重构。该检查只用于内部选题，不要写入最终业务提示词。\n")
+	sb.WriteString("如果失败原因是难度低于目标档位，必须换成有真实多文件联动的题目，不得靠堆砌无关边界硬贴难度，也不得输出简单、一般或较难难度。\n")
+	sb.WriteString("重新选题时还要检查目标题型是否满足对应门槛：中等题和困难题都要跨多文件并产生不少于20行有效代码改动；中等题面必须同时具备调用/数据流理解、实现决策、边界条件与约束三项证据，缺一项都不行，分别对应输入到结果的业务链路、处理策略的选择及正常/失败/冲突结果、具体触发条件及预期行为；困难题面至少体现多模块整合、关键设计取舍、复杂技术关注点中的一项，并留下模块汇合、冲突取舍或复杂技术触发的完整证据。只写抽象结论或罗列名词不算命中，中等题三项缺任何一项、困难题对应特征没有完整证据时都必须换题。")
+	sb.WriteString("如果失败原因指向边界条件与约束，注意常见的擦边写法是把正常路径再说一遍（例如只写“超过上限就提示”“重复提交要处理”），或者只点出特例名称却没写清最终行为；这类不算命中。必须换成真正会改变实现路径的特例：给出超限或冲突时以哪一处为准、重复操作如何处理、旧数据或未保存内容被替换时的兜底，并写清用户看到什么、数据最终结果是什么。\n")
 	if qualityErr != nil {
 		sb.WriteString("失败原因：")
 		sb.WriteString(qualityErr.Error())
@@ -1331,30 +1500,76 @@ func buildQualityRegenerationPrompt(req GeneratePromptRequest, existingPrompts [
 	return sb.String()
 }
 
-// generatedPromptQualityError 汇总单题生成的质量门禁：文案质量加上难度下限。
-// 难度低于困难时按质量不通过处理，触发重新生成而不是保存简单需求。
-func generatedPromptQualityError(promptText, difficulty string) error {
+// generatedPromptQualityError 汇总单题生成的质量门禁：文案质量、难度下限和难度证据。
+// 难度低于目标档位时按质量不通过处理，触发重新生成而不是保存简单需求。
+func generatedPromptQualityError(promptText, difficulty, target, taskType string) error {
 	if err := internalprompt.ValidatePromptWritingQuality(promptText); err != nil {
 		return err
 	}
-	if !meetsGeneratedPromptDifficultyFloor(difficulty) {
-		return fmt.Errorf("生成难度为“%s”，低于困难下限，禁止输出简单或一般需求，请换一个有真实联动链路的题目重新生成", strings.TrimSpace(difficulty))
+	normalizedTaskType := internalprompt.NormalizeTaskType(taskType)
+	if normalizedTaskType == internalprompt.TaskTypeCodeGen || normalizedTaskType == internalprompt.TaskTypeFeature || normalizedTaskType == internalprompt.TaskTypeBugFix {
+		if runes := internalprompt.PromptBodyRuneCount(promptText); runes < internalprompt.MinGeneratedPromptRunes {
+			return fmt.Errorf("生成的%s题只有%d个有效字符，低于%d字下限，属于简单需求，请换一个有真实联动链路的题目重新生成", normalizedTaskType, runes, internalprompt.MinGeneratedPromptRunes)
+		}
+	}
+	// G19 accepts medium content even when its persisted label is difficult.
+	if normalizedTaskType == internalprompt.TaskTypeFeature || normalizedTaskType == internalprompt.TaskTypeBugFix {
+		target = "中等"
+	}
+	if !meetsGeneratedPromptDifficultyFloor(difficulty, target) {
+		return fmt.Errorf("生成难度为“%s”，低于目标难度“%s”，请换一个有真实联动链路的题目重新生成", strings.TrimSpace(difficulty), normalizedDifficultyTarget(target))
+	}
+	actualDifficulty := strings.TrimSpace(difficulty)
+	if actualDifficulty == "" {
+		actualDifficulty = normalizedDifficultyTarget(target)
+	}
+	if err := internalprompt.ValidatePromptDifficultyEvidence(promptText, taskType, normalizePromptDifficultyForTaskType(taskType, actualDifficulty)); err != nil {
+		return err
 	}
 	return nil
 }
 
-// meetsGeneratedPromptDifficultyFloor 判断模型给出的难度是否达到困难下限。
+// meetsGeneratedPromptDifficultyFloor 判断模型给出的难度是否达到目标档位。
 // 空值表示模型未返回难度，后续按困难兜底，因此同样视为通过。
-func meetsGeneratedPromptDifficultyFloor(difficulty string) bool {
-	switch strings.TrimSpace(difficulty) {
-	case "", "困难", "地狱":
+func meetsGeneratedPromptDifficultyFloor(difficulty, target string) bool {
+	rank := map[string]int{"简单": 0, "一般": 1, "中等": 2, "较难": 2, "困难": 3, "地狱": 4}
+	actual := strings.TrimSpace(difficulty)
+	if actual == "" {
 		return true
+	}
+	return rank[actual] >= rank[normalizedDifficultyTarget(target)]
+}
+
+func normalizedDifficultyTarget(value string) string {
+	target := NormalizePromptDifficultyLabel(value)
+	if target == "简单" || target == "一般" || target == "较难" || target == "" {
+		return "困难"
+	}
+	return target
+}
+
+// normalizePromptDifficultyForTaskType keeps the task-type contract stronger
+// than an arbitrary client-supplied label. Feature and BugFix are always
+// labelled difficult; code generation is always difficult or hell.
+func normalizePromptDifficultyForTaskType(taskType, value string) string {
+	difficulty := NormalizePromptDifficultyLabel(value)
+	switch internalprompt.NormalizeTaskType(taskType) {
+	case internalprompt.TaskTypeFeature, internalprompt.TaskTypeBugFix:
+		return "困难"
+	case internalprompt.TaskTypeCodeGen:
+		if difficulty == "地狱" {
+			return "地狱"
+		}
+		return "困难"
 	default:
-		return false
+		if difficulty == "" || difficulty == "简单" || difficulty == "一般" {
+			return "困难"
+		}
+		return difficulty
 	}
 }
 
-// estimatePromptDifficulty 是模型未返回难度时的兜底估算，下限固定为困难。
+// estimatePromptDifficulty 是模型未返回难度时的兜底估算，兼容旧调用时默认困难。
 func estimatePromptDifficulty(req GeneratePromptRequest, promptText string) string {
 	scopeLevel := promptScopeDifficultyLevel(req.Scopes)
 	meaningfulConstraints := countMeaningfulPromptConstraints(req.Constraints)
@@ -1363,6 +1578,13 @@ func estimatePromptDifficulty(req GeneratePromptRequest, promptText string) stri
 
 	if scopeLevel >= 3 && (meaningfulConstraints >= 3 || (hasNotes && length > 180) || length > 300) {
 		return "地狱"
+	}
+	target := normalizedDifficultyTarget(req.PromptDifficulty)
+	if target == "中等" {
+		return "中等"
+	}
+	if target == "较难" {
+		return "较难"
 	}
 	return store.DefaultPromptDifficulty
 }
@@ -1410,8 +1632,13 @@ func NormalizePromptDifficultyLabel(value string) string {
 	case "一般":
 		// 保留原始标签，让难度下限校验能识别并触发重新生成。
 		return "一般"
+	case "中等":
+		return "中等"
 	case "困难":
 		return "困难"
+	case "较难":
+		// The temporary 较难 tier is now treated as the supported 中等 tier.
+		return "中等"
 	case "地狱":
 		return "地狱"
 	default:

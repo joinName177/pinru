@@ -158,6 +158,8 @@ type StartClaudeRequest struct {
 	// These are applied on top of the current process environment.
 	// Use this instead of --model to bypass CLI argument normalization (e.g. 4-6 → 4.6).
 	EnvOverrides map[string]string `json:"envOverrides,omitempty"`
+	// TimeoutSeconds overrides the default CLI execution timeout. Zero keeps the default.
+	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
 }
 
 // StartClaudeResponse holds the session ID for output polling.
@@ -214,7 +216,11 @@ func (s *CliService) StartClaude(req StartClaudeRequest) (*StartClaudeResponse, 
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	timeout := 10 * time.Minute
+	if req.TimeoutSeconds > 0 {
+		timeout = time.Duration(req.TimeoutSeconds) * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 
 	cmd := exec.CommandContext(ctx, claudePath, args...)
 	cmd.Dir = req.WorkDir

@@ -108,10 +108,14 @@ func (s *AnnotationService) bindPairwiseContainer(ctx context.Context, req Pairw
 	if err := requirePairwiseCase(c); err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(c.InitialSHA) == "" || strings.TrimSpace(c.SnapshotURL) == "" {
+		return nil, errors.New("尚未初始化 Git 初始快照地址，请先准备并发布初始快照后再绑定容器")
+	}
 	run, err := pairwiseRun(c.Pairwise, req.Side)
 	if err != nil {
 		return nil, err
 	}
+	run.ModelName = domain.PairwiseModelForSide(req.Side)
 	if run.SessionID != "" || run.CaptureID != "" {
 		return nil, errors.New("该侧已有采集证据，不能更换容器")
 	}
@@ -176,6 +180,9 @@ func (s *AnnotationService) bindContainer(ctx context.Context, req BindRequest) 
 	c, err := s.loadCase(req.TaskID)
 	if err != nil {
 		return nil, err
+	}
+	if strings.TrimSpace(c.InitialSHA) == "" || strings.TrimSpace(c.SnapshotURL) == "" {
+		return nil, errors.New("尚未初始化 Git 初始快照地址，请先准备并发布初始快照后再绑定容器")
 	}
 	d, err := s.inspectContainer(ctx, req.ContainerID)
 	if err != nil {

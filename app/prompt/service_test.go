@@ -51,11 +51,11 @@ func TestGenerateCustomProjectPromptDocumentsWritesMarkdownToCustomRoot(t *testi
 	expectedDoc := strings.Join([]string{
 		"**0-1代码生成**",
 		"",
-		"1. 【困难】新增完整地址簿能力，让用户维护常用地址并在发布流程中复用；地址要和现有账号、订单和通知链路打通，保存失败时保留草稿并给出可重试的反馈。",
+		"1. 【困难】新增订单地址快照能力，用户保存地址后可在下单时引用，系统先冻结地址版本再创建订单和配送通知；地址并发修改不能覆盖已确认订单，重试下单不能重复创建订单，通知失败只重试通知并保留订单结果。",
 		"",
 		"**Feature迭代**",
 		"",
-		"1. 【地狱】在已有列表里补充状态筛选，并保证筛选条件、分页位置、批量操作结果和导出数据始终一致；切换筛选或刷新后不能出现列表与统计口径对不上的情况。",
+		"1. 【困难】在已有列表里补充状态筛选，并保证筛选条件、分页位置、批量操作结果和导出数据始终一致；切换筛选后系统先按新条件查询再刷新列表，如果列表与统计口径对不上就以列表查询结果为准，同时保留筛选条件和分页位置，刷新后不能出现列表与统计口径对不上的情况。",
 	}, "\n")
 	svc := &PromptService{
 		store:  testStore,
@@ -74,7 +74,7 @@ func TestGenerateCustomProjectPromptDocumentsWritesMarkdownToCustomRoot(t *testi
 	result, err := svc.GenerateCustomProjectPromptDocuments(GenerateCustomProjectPromptDocumentsRequest{
 		ProjectID:    "project-custom-doc",
 		ProjectNames: []string{"zw-001"},
-		Counts:       &internalprompt.DocumentCounts{CodeGen: 1, Feature: 1, Difficult: 1, Hell: 1},
+		Counts:       &internalprompt.DocumentCounts{CodeGen: 1, Feature: 1, Difficult: 2},
 	})
 	if err != nil {
 		t.Fatalf("GenerateCustomProjectPromptDocuments() error = %v", err)
@@ -109,8 +109,14 @@ func TestBuildCustomProjectPromptDocumentPromptUsesActualDifficultyByDefault(t *
 
 	requiredSnippets := []string{
 		"只生成 22 条，其中 0-1代码生成 10 条，Feature迭代 10 条，Bug修复 2 条",
-		"整批严格生成【困难】20 条、【地狱】2 条",
-		"只允许使用【困难】和【地狱】两种标签",
+		"整批严格生成【困难】22 条、【地狱】0 条",
+		"Feature迭代 10 条和 Bug修复 2 条固定标为【困难】",
+		"出题标签固定为困难",
+		"内容门槛按题型校验",
+		"0-1代码生成 10 条可用困难或地狱",
+		"一条清晰的业务主线",
+		"不要把多个独立小需求拼成一题",
+		"保持描述克制、具体、像真实用户提出的需求",
 		"避免对项目已经具备的功能重复出题",
 		"严禁简单需求",
 		"不允许写成孤立脚手架、空白项目的从零搭建",
@@ -120,17 +126,23 @@ func TestBuildCustomProjectPromptDocumentPromptUsesActualDifficultyByDefault(t *
 		"至少一个真实边界",
 		"不得出现五维评分、21分收录门槛",
 		"不能故意制造失败",
+		"中等题准入门槛",
 		"困难题准入门槛",
-		"每道困难或地狱题都必须让两次独立实现各自产生至少 10 行有效源码改动",
-		"依赖锁文件、node_modules 等依赖目录、构建产物和纯文档不计入",
-		"避免一侧几行微修即可完成、另一侧却需要完整重构",
+		"不少于20行有效代码改动",
+		"改动行数只用于内部选题校准",
+		"不计依赖锁文件、依赖目录、构建产物和纯文档",
+		"不能让题目靠几行微修就能完成",
 		"不能拆成互不影响的局部小修",
-		"至少命中一类真实复杂度",
-		"同一业务模块内多个协作部分的真实联动也可以构成困难题",
-		"文字截断与完整名称提示",
-		"本地存储失败提示",
-		"上传文件类型或大小校验",
-		"必须换题，不能硬贴【困难】标签",
+		"中等题面还必须同时具备以下三项证据，缺一项都不算达标：调用/数据流要说明输入或动作经过的业务环节及最终影响",
+		"困难题面还必须至少体现以下三项特征中的一项，并写出可独立验收的证据：多模块整合要说明至少两个业务环节如何汇合及结果",
+		"边界条件与约束要说明具体触发条件、边界输入或旧数据以及预期行为",
+		"三项缺任何一项都必须换题",
+		"边界条件与约束的写法",
+		"数值或口径冲突",
+		"重复或并发操作",
+		"中等题交付前逐条打钩",
+		internalprompt.MediumDifficultyReferencePrompt,
+		"只写“统一展示”“兼容旧数据”“保持一致”“补充校验”等抽象结论不算命中",
 	}
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(prompt, snippet) {
@@ -164,8 +176,8 @@ func TestBuildCustomProjectPromptDocumentPromptUsesActualDifficultyByDefault(t *
 }
 
 func TestBuildCustomProjectPromptDocumentPromptAppliesExactDifficultyAllocation(t *testing.T) {
-	prompt := buildCustomProjectPromptDocumentPrompt("zw-001", nil, internalprompt.DocumentCounts{Feature: 3, BugFix: 2, Difficult: 2, Hell: 3})
-	for _, want := range []string{"难度数量：整批严格生成【困难】2 条、【地狱】3 条", "只允许使用【困难】和【地狱】", "题型数量与难度数量是两套独立约束"} {
+	prompt := buildCustomProjectPromptDocumentPrompt("zw-001", nil, internalprompt.DocumentCounts{Feature: 3, BugFix: 2, Difficult: 5})
+	for _, want := range []string{"难度数量：整批严格生成【困难】5 条、【地狱】0 条", "Feature迭代 3 条和 Bug修复 2 条固定标为【困难】", "出题标签固定为困难"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("difficulty allocation prompt missing %q:\n%s", want, prompt)
 		}
@@ -226,16 +238,153 @@ func TestGenerateCustomProjectPromptDocumentsRejectsInvalidCliOutput(t *testing.
 	}
 }
 
+func TestGenerateCustomProjectPromptDocumentRetriesAfterValidationFailure(t *testing.T) {
+	testStore := testutil.OpenTestStore(t)
+	defer testStore.Close()
+
+	customRoot := t.TempDir()
+	if err := testStore.SetConfig("custom_project_root_path", customRoot); err != nil {
+		t.Fatalf("SetConfig(custom_project_root_path) error = %v", err)
+	}
+	if err := testStore.CreateProject(store.Project{ID: "project-custom-retry", Name: "Demo", CloneBasePath: t.TempDir()}); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	sourcePath := filepath.Join(t.TempDir(), "zw-retry")
+	if err := os.MkdirAll(sourcePath, 0o755); err != nil {
+		t.Fatalf("MkdirAll(sourcePath) error = %v", err)
+	}
+	if err := testStore.UpsertQuestionBankItem(store.QuestionBankItem{
+		ProjectConfigID: "project-custom-retry",
+		QuestionID:      803,
+		DisplayName:     "zw-retry",
+		SourceKind:      "local_directory",
+		SourcePath:      sourcePath,
+		OriginRef:       "custom:zw-retry",
+		Status:          "ready",
+	}); err != nil {
+		t.Fatalf("UpsertQuestionBankItem() error = %v", err)
+	}
+
+	counts := internalprompt.DocumentCounts{Feature: 1, Difficult: 1}
+	valid := strings.Join([]string{
+		"**Feature迭代**",
+		"1. 【困难】运营切换订单状态筛选后，系统先按新条件查询再刷新列表和汇总数量；筛选条件变化时如果列表、统计和导出结果对不上就以列表查询结果为准，并保留筛选条件和分页位置，没有符合条件的订单时保留筛选条件并显示空态，不能回到上一轮数据。",
+	}, "\n")
+	callCount := 0
+	var prompts []string
+	svc := &PromptService{
+		store:  testStore,
+		cliSvc: appcli.NewWithResolver(func(string) (string, error) { return "/tmp/fake-claude", nil }),
+		requirementDocGeneratorWithPrompt: func(ctx context.Context, workDir, projectName, model, prompt string) (string, error) {
+			callCount++
+			prompts = append(prompts, prompt)
+			if callCount == 1 {
+				return strings.Join([]string{
+					"**Feature迭代**",
+					"1. 【困难】运营切换订单状态筛选后，系统先按新条件查询再刷新列表和汇总数量；筛选条件变化时如果列表、统计和导出结果对不上就以列表查询结果为准，并保留筛选条件和分页位置，没有符合条件的订单时保留筛选条件并显示空态，不能回到上一轮数据。",
+					"2. 【困难】客服修改退款状态后，系统先保存退款记录，再刷新详情、列表和汇总数量；保存失败时保留原状态并提示重试，重新打开详情仍要展示数据库中的最新结果，避免页面继续展示旧数据。",
+				}, "\n"), nil
+			}
+			return valid, nil
+		},
+	}
+
+	result, err := svc.GenerateCustomProjectPromptDocuments(GenerateCustomProjectPromptDocumentsRequest{
+		ProjectID:    "project-custom-retry",
+		ProjectNames: []string{"zw-retry"},
+		Counts:       &counts,
+	})
+	if err != nil {
+		t.Fatalf("GenerateCustomProjectPromptDocuments() error = %v", err)
+	}
+	if callCount != 2 || len(prompts) != 2 {
+		t.Fatalf("generation calls = %d, prompts = %d, want two calls", callCount, len(prompts))
+	}
+	if !strings.Contains(prompts[1], "上一轮校验失败原因") || !strings.Contains(prompts[1], "数量不符") {
+		t.Fatalf("retry prompt did not include validation feedback: %q", prompts[1])
+	}
+	if result.GeneratedCount != 1 || result.ErrorCount != 0 || result.NeedsReviewCount != 0 {
+		t.Fatalf("unexpected retry result: %+v", result)
+	}
+	if result.Details[0].Status != "generated" || result.Details[0].Content != valid {
+		t.Fatalf("unexpected generated detail: %+v", result.Details[0])
+	}
+}
+
+func TestGenerateCustomProjectPromptDocumentKeepsLastCandidateAfterRetryLimit(t *testing.T) {
+	testStore := testutil.OpenTestStore(t)
+	defer testStore.Close()
+
+	customRoot := t.TempDir()
+	if err := testStore.SetConfig("custom_project_root_path", customRoot); err != nil {
+		t.Fatalf("SetConfig(custom_project_root_path) error = %v", err)
+	}
+	if err := testStore.CreateProject(store.Project{ID: "project-custom-review", Name: "Demo", CloneBasePath: t.TempDir()}); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	sourcePath := filepath.Join(t.TempDir(), "zw-review")
+	if err := os.MkdirAll(sourcePath, 0o755); err != nil {
+		t.Fatalf("MkdirAll(sourcePath) error = %v", err)
+	}
+	if err := testStore.UpsertQuestionBankItem(store.QuestionBankItem{
+		ProjectConfigID: "project-custom-review",
+		QuestionID:      804,
+		DisplayName:     "zw-review",
+		SourceKind:      "local_directory",
+		SourcePath:      sourcePath,
+		OriginRef:       "custom:zw-review",
+		Status:          "ready",
+	}); err != nil {
+		t.Fatalf("UpsertQuestionBankItem() error = %v", err)
+	}
+
+	lastCandidate := "**Feature迭代**\n1. 【困难】运营切换订单状态筛选后，系统先按新条件查询再刷新列表；筛选条件变化时如果列表和统计对不上就以列表查询结果为准，并保留筛选条件和分页位置，刷新后不能回到上一轮数据。"
+	callCount := 0
+	svc := &PromptService{
+		store:  testStore,
+		cliSvc: appcli.NewWithResolver(func(string) (string, error) { return "/tmp/fake-claude", nil }),
+		requirementDocGeneratorWithPrompt: func(context.Context, string, string, string, string) (string, error) {
+			callCount++
+			return lastCandidate, nil
+		},
+	}
+
+	result, err := svc.GenerateCustomProjectPromptDocuments(GenerateCustomProjectPromptDocumentsRequest{
+		ProjectID:    "project-custom-review",
+		ProjectNames: []string{"zw-review"},
+		Counts:       &internalprompt.DocumentCounts{Feature: 2, Difficult: 2},
+	})
+	if err != nil {
+		t.Fatalf("GenerateCustomProjectPromptDocuments() error = %v", err)
+	}
+	if callCount != customPromptDocumentRetryLimit+1 {
+		t.Fatalf("generation calls = %d, want %d", callCount, customPromptDocumentRetryLimit+1)
+	}
+	if result.GeneratedCount != 0 || result.ErrorCount != 1 || result.NeedsReviewCount != 1 {
+		t.Fatalf("unexpected needs-review result: %+v", result)
+	}
+	if result.Details[0].Status != "needs_review" || result.Details[0].Content != lastCandidate {
+		t.Fatalf("last candidate was not preserved: %+v", result.Details[0])
+	}
+	content, err := os.ReadFile(result.Details[0].OutputPath)
+	if err != nil {
+		t.Fatalf("ReadFile(output) error = %v", err)
+	}
+	if strings.TrimSpace(string(content)) != lastCandidate {
+		t.Fatalf("saved candidate = %q, want %q", strings.TrimSpace(string(content)), lastCandidate)
+	}
+}
+
 func TestCustomDocumentUsesRequestedCountsAndAllowsNoCodeGeneration(t *testing.T) {
-	counts := internalprompt.DocumentCounts{Feature: 2, BugFix: 1, Difficult: 2, Hell: 1}
+	counts := internalprompt.DocumentCounts{Feature: 2, BugFix: 1, Difficult: 3}
 	prompt := buildCustomProjectPromptDocumentPrompt("cyc-05", nil, counts)
 	if !strings.Contains(prompt, "只生成 3 条，其中 0-1代码生成 0 条，Feature迭代 2 条，Bug修复 1 条") {
 		t.Fatal("generation prompt did not use configured counts")
 	}
-	featureOne := "在现有列表里补充状态筛选，并保证筛选条件、分页位置和刷新后的结果保持一致，切换筛选时不能残留上一轮的数据，批量处理之后汇总数量和空态提示也要同步更新。"
-	featureTwo := "扩展审核流程的多状态流转，把撤回、驳回和重新提交串起来，并保证列表摘要、详情内容和历史记录三处状态始终一致，任一环节失败都要保留可回退的上一步状态。"
-	bugFix := "修复商品下架后仍出现在搜索结果里的问题，同时刷新相关缓存，缓存刷新失败时列表要回退到数据库结果而不是继续展示旧数据，重试成功后搜索结果和商品详情要保持一致。"
-	content := "**Feature迭代**\n1. 【困难】" + featureOne + "\n2. 【地狱】" + featureTwo + "\n**Bug修复**\n1. 【困难】" + bugFix
+	featureOne := "运营切换订单状态筛选后，系统先按新条件查询再刷新列表、汇总数量和导出结果；筛选条件变化时如果列表和统计对不上就以列表查询结果为准，没有符合条件的订单时保留筛选条件和分页位置并显示空态，刷新后不能回到上一轮数据。"
+	featureTwo := "审核员撤回申请后，系统先更新审核记录，再刷新列表摘要、详情内容和历史记录；任一环节失败时保留上一步状态并提示重试，重新提交后才能继续审核。"
+	bugFix := "商品下架后搜索结果仍显示可售，系统先刷新缓存再展示最新的可售状态；缓存刷新失败时列表回退到数据库结果并提示重试，重试成功后搜索结果和商品详情都不能继续展示旧状态。"
+	content := "**Feature迭代**\n1. 【困难】" + featureOne + "\n2. 【困难】" + featureTwo + "\n**Bug修复**\n1. 【困难】" + bugFix
 	svc := &PromptService{requirementDocGenerator: func(context.Context, string, string, string) (string, error) { return "生成说明\n" + content, nil }}
 	got, err := svc.generateCustomProjectPromptDocument(context.Background(), t.TempDir(), "cyc-05", "", counts)
 	if err != nil || got != content {
@@ -522,7 +671,7 @@ func TestBuildSkillPromptAddsBugFixScopeRules(t *testing.T) {
 		TaskType: "Bug修复",
 		Scopes:   []string{"单文件"},
 	}, nil, nil)
-	if !strings.Contains(singleFilePrompt, "当前范围允许单文件或局部修复") {
+	if !strings.Contains(singleFilePrompt, "即使当前范围选择单文件") {
 		t.Fatalf("buildSkillPrompt(single file bugfix) missing single-file guidance:\n%s", singleFilePrompt)
 	}
 	if strings.Contains(singleFilePrompt, "必须选择需要多文件、多层链路联动修复的真实缺陷") {
@@ -555,9 +704,13 @@ func TestBuildSkillPromptAddsProjectRequirementGenerationRules(t *testing.T) {
 		"不能故意制造失败",
 		"困难题准入门槛",
 		"独立的样式、提示或输入校验",
-		"不能因为边界条件写得多就判为困难",
-		"每道困难或地狱题都必须让两次独立实现各自产生至少 10 行有效源码改动",
-		"一侧几行微修即可完成、另一侧却需要完整重构",
+		"中等题准入门槛",
+		"改动行数只用于内部选题校准",
+		"中等题面还必须同时具备以下三项证据，缺一项都不算达标",
+		"三项缺任何一项都必须换题",
+		"可独立验收的证据",
+		"边界条件与约束的写法",
+		"中等题交付前逐条打钩",
 	} {
 		if !strings.Contains(featurePrompt, want) {
 			t.Fatalf("buildSkillPrompt(feature) missing %q in:\n%s", want, featurePrompt)
@@ -588,9 +741,10 @@ func TestBuildQualityRegenerationPromptIncludesPairwiseChangeVolumeGate(t *testi
 		nil,
 	)
 	for _, want := range []string{
-		"两次独立实现是否都需要至少 10 行有效源码改动",
-		"改动规模大致可比",
-		"不要写入最终业务提示词",
+		"中等题和困难题都要跨多文件并产生不少于20行有效代码改动",
+		"中等题面必须同时具备调用/数据流理解、实现决策、边界条件与约束三项证据，缺一项都不行",
+		"困难题面至少体现多模块整合、关键设计取舍、复杂技术关注点中的一项",
+		"只写抽象结论或罗列名词不算命中",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("quality regeneration prompt missing %q:\n%s", want, prompt)
@@ -717,7 +871,7 @@ func TestGenerateTaskPromptWithContextRegeneratesDuplicatePrompt(t *testing.T) {
 		t.Fatalf("CreateTask(task) error = %v", err)
 	}
 
-	nextPrompt := "退款审核通过后页面仍停留在待审核状态，需要保证审核结果返回后详情、列表和统计数量都同步刷新。"
+	nextPrompt := "运营提交退款审核后，结果会先写入退款记录，再刷新详情、列表和统计数量；审核失败时保留待审核状态并提示重试，避免页面展示和实际记录不一致。"
 	callCount := 0
 	svc := &PromptService{
 		store:  testStore,
@@ -772,7 +926,7 @@ func TestGenerateTaskPromptWithContextRegeneratesDuplicateFromAnotherProject(t *
 	currentProjectID := "project-global-dedup-current"
 	historyProjectID := "project-global-dedup-history"
 	existingPrompt := "订单支付成功后仍显示待支付，需要让支付结果及时同步到订单详情和列表。"
-	nextPrompt := "退款申请提交后补充进度查询，让用户能看到审核状态和退款到账结果。"
+	nextPrompt := "用户提交退款申请后，系统先保存申请记录，再把审核状态和到账结果展示在进度页；查询不到历史记录时保留申请入口并提示重新加载，到账结果以服务端返回为准，避免列表和详情显示不同状态。"
 	task := store.Task{
 		ID: "global-dedup-current", GitLabProjectID: 4101, ProjectName: "Current Project", TaskType: "Feature迭代",
 		LocalPath: &workDir, ProjectConfigID: &currentProjectID,
@@ -918,7 +1072,7 @@ func TestGenerateTaskPromptWithContextKeepsVerifiedRawPromptWhenPolishBecomesSem
 	workDir := t.TempDir()
 	projectID := "project-polish-duplicate"
 	existingPrompt := "评论区需要支持针对评论继续回复，回复内容按层级展示在原评论下面。"
-	rawPrompt := "车辆详情页增加保养记录，让车主能查看最近维修时间和下次保养提醒。"
+	rawPrompt := "车主提交保养记录后，系统先保存维修时间和下次提醒，再刷新车辆列表与详情页；保存失败时保留原内容并提示重试，避免两处显示不同结果。"
 	polishedDuplicate := "评论列表补充逐条回复功能，并将回复按父子层级展示在对应评论下方。"
 	task := store.Task{ID: "polish-duplicate-current", GitLabProjectID: 8101, ProjectName: "Current", TaskType: "Feature迭代", LocalPath: &workDir, ProjectConfigID: &projectID}
 	history := store.Task{ID: "polish-duplicate-history", GitLabProjectID: 8101, ProjectName: "History", TaskType: "Feature迭代", PromptText: &existingPrompt, ProjectConfigID: &projectID}
@@ -968,7 +1122,7 @@ func TestGenerateTaskPromptWithContextRegeneratesSemanticDuplicatePrompt(t *test
 	projectID := "project-semantic-duplicate-prompt"
 	existingPrompt := "现在管理员查床位，只能看到现在谁在住，之前的情况完全看不到。想加个功能，点进某个床位，能看到这个床位从开始到现在的所有入住记录，最新的排在最上面。每条记录要能看到对应是哪个学生住的，什么时候入住的，什么时候退宿的。另外给管理员加个时间筛选，比如只想看去年9月到今年1月的记录，能快速找到。"
 	semanticDuplicatePrompt := "目前学生退宿后，床位上原有的入住记录就消失了，无法追溯历史情况。我们希望在床位管理中加入入住历史功能：宿管老师的每一次分配、调整、退宿等操作都能自动留痕，并且可以在床位页面直接查看过往的入住流水，方便日常管理和回溯。"
-	nextPrompt := "现在宿舍批量导入前缺少校验预览，管理员上传后应先看到错误行和字段问题，确认无误后再正式写入数据库。"
+	nextPrompt := "管理员上传宿舍名单后，系统先读取并校验每一行，再展示错误行和字段问题，确认无误后才正式写入记录；存在重复学号或缺少必填信息时拒绝提交并保留原名单，修正后可以重新导入。"
 
 	task := store.Task{
 		ID:              "pproject-semantic-duplicate-prompt__feat__label-00764-12",
@@ -1057,7 +1211,7 @@ func TestGenerateTaskPromptWithContextRegeneratesMenuStockSemanticDuplicatePromp
 	projectID := "project-menu-stock-duplicate-prompt"
 	existingPrompt := "现在商家没办法限制每道菜最多卖多少份，热门菜品经常超卖，顾客点完单才发现已经没了，体验不太好。需要给菜品加上库存管理：商家可以给每道菜设置可售数量，卖完后顾客端自动显示\"已售罄\"，按钮置灰、点不了。顾客下单时实时检查库存，不够的话当场提示，避免超卖。整体风格和现有系统保持一致，前后端需要双重校验，确保库存扣得准、不会多卖。"
 	semanticDuplicatePrompt := "目前商家只能手动把菜品上架或下架，没办法管理每道菜还剩多少份。遇到热销菜品，卖超了才知道。需要给菜品管理加上库存设置，让商家能填每道菜还剩多少份；顾客加购物车时，如果点的份数超过了库存，要给出提示并拦住；库存卖完了就自动下架。页面风格和后端技术保持不变。"
-	nextPrompt := "商家端订单列表现在只能按时间查看，增加按订单状态和配送方式筛选，并保留原有分页。"
+	nextPrompt := "商家切换订单状态和配送方式筛选后，列表先按新条件查询，再同步更新分页和汇总数量；没有符合条件的订单时显示空结果并保留筛选条件，刷新后不能回到上一轮数据。"
 
 	task := store.Task{
 		ID:              "pproject-menu-stock-duplicate-prompt__feat__label-00800-11",
@@ -1144,7 +1298,7 @@ func TestGenerateTaskPromptWithContextRegeneratesCrossBatchCommentReplySemanticD
 	historyProjectID := "project-old-comment-reply-duplicate-prompt"
 	existingPrompt := "现在评论区有个问题，大家只能发表评论，没法针对某条评论直接回复。想回应别人的话，只能再发一条新评论，这样一来整个讨论串就显得很乱，看不出谁在回复谁。每条评论下面新增加个回复按钮，点了就能直接回复那条评论。回复的内容需要缩进一点，显示在原评论下面，这样一眼就能看出对应的层级关系。考虑到有些评论可能会有很多回复，为了不让页面太长，如果回复数超过3条，我们先只展示前3条回复，如果还有更多，用户可以点\"展开\"查看全部。"
 	semanticDuplicatePrompt := "目前评论区是平铺展示的，用户看到评论后没法针对性地回复某一条，大家之间形不成对话。需要给评论加上回复能力：每条评论下面可以展开看到针对它的回复列表，已经登录的用户可以对任意一条评论进行回复，回复还能继续被回复，形成多层嵌套。后端在现有技术能力上实现，前端不再引入新的依赖。"
-	nextPrompt := "车辆详情页现在只能看到基础参数，增加一块维护记录区域，展示最近保养时间、维修次数和下次保养提醒，保持现有详情页布局。"
+	nextPrompt := "车主进入车辆详情后，系统读取维护记录并计算最近保养时间、维修次数和下次提醒，同时在车辆列表显示最新维护状态；没有维护记录时展示明确空态，新增记录保存失败则保留原数据并提示重试。"
 
 	task := store.Task{
 		ID:              "pproject-new-comment-reply-duplicate-prompt__feat__label-00926-3",
@@ -1331,7 +1485,7 @@ func TestBuildSemanticDuplicateJudgePromptTruncatesExcerptCandidates(t *testing.
 	}
 }
 
-func TestGenerateTaskPromptWithContextUsesModelDifficulty(t *testing.T) {
+func TestGenerateTaskPromptWithContextLabelsAcceptedMediumBugAsDifficult(t *testing.T) {
 	testStore := testutil.OpenTestStore(t)
 	defer testStore.Close()
 
@@ -1347,17 +1501,17 @@ func TestGenerateTaskPromptWithContextUsesModelDifficulty(t *testing.T) {
 		t.Fatalf("CreateTask() error = %v", err)
 	}
 
-	promptText := "保存备注后列表没有立即刷新，需要补齐单文件内的状态更新。"
+	promptText := "用户保存备注后，数据先经过校验再写入记录并刷新列表；保存失败时保留原内容并提示重试，刷新后详情页也要显示本次保存结果，避免状态继续停留在旧值。"
 	svc := &PromptService{
 		store:  testStore,
 		cliSvc: appcli.NewWithResolver(func(string) (string, error) { return "/tmp/fake-claude", nil }),
 		promptGenerator: func(ctx context.Context, workDir, prompt, model string) (generatedPromptResult, error) {
-			if !strings.Contains(prompt, "promptDifficulty 只能取 困难 或 地狱") {
+			if !strings.Contains(prompt, "promptDifficulty 只能取 困难") {
 				t.Fatalf("promptGenerator prompt missing difficulty output contract: %q", prompt)
 			}
 			return generatedPromptResult{
 				PromptText:       promptText,
-				PromptDifficulty: "困难",
+				PromptDifficulty: "中等",
 			}, nil
 		},
 		promptHumanizer: func(ctx context.Context, workDir, prompt, model string) (string, error) {
@@ -1375,6 +1529,13 @@ func TestGenerateTaskPromptWithContextUsesModelDifficulty(t *testing.T) {
 	}
 	if result.PromptDifficulty != "困难" {
 		t.Fatalf("GenerateTaskPromptWithContext().PromptDifficulty = %q, want 困难", result.PromptDifficulty)
+	}
+	savedTask, err := testStore.GetTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	if savedTask == nil || savedTask.PromptDifficulty != "困难" {
+		t.Fatalf("saved PromptDifficulty = %q, want 困难", savedTask.PromptDifficulty)
 	}
 }
 
@@ -1502,8 +1663,8 @@ func TestGenerateTaskPromptWithContextPersistsPolishedPrompt(t *testing.T) {
 		t.Fatalf("CreateTask() error = %v", err)
 	}
 
-	rawPrompt := "现在线索录入之后只能看到一条基础记录，销售想继续跟进时还得翻很多页面。请基于现有 CRM 补一个完整的商机跟进模块，让负责人能创建跟进计划、记录每次沟通结果、设置下次回访时间，并在列表里直接看到最近一次跟进状态和是否超期，避免客户长期无人跟进。"
-	polishedPrompt := "现在录入线索后只能看到一条基础记录，销售后续跟进还得来回翻页面，效率很差。请基于现有 CRM 补齐一个完整的商机跟进模块，让负责人能安排跟进计划、记录每次沟通结果、设置下次回访时间，并在列表里直接看到最近一次跟进状态和是否已经超期，避免客户长期没人继续跟。"
+	rawPrompt := "现在线索录入之后只能看到一条基础记录，销售想继续跟进时还得翻很多页面。请基于现有 CRM 补一个完整的商机跟进模块，录入线索后先创建跟进计划并保存沟通结果，再在列表和详情里显示最近一次跟进状态及回访时间；负责人设置的离线记录先保留本地，联网后按版本同步，冲突时保留双方记录等待确认，不能覆盖服务端新版本。"
+	polishedPrompt := "现在录入线索后只能看到一条基础记录，销售后续跟进还得来回翻页面，效率很差。请基于现有 CRM 补齐一个完整的商机跟进模块，录入线索后先安排跟进计划并保存沟通结果，再在列表和详情里显示最近一次跟进状态及回访时间；离线记录先保留本地，联网后按版本同步，冲突时保留双方记录等待确认，不能覆盖服务端新版本。"
 
 	svc := &PromptService{
 		store:  testStore,
@@ -1619,7 +1780,7 @@ func TestGenerateTaskPromptWithContextRegeneratesPromptThatFailsQualityPrecheck(
 	}
 
 	invalidPrompt := "新增订单导出能力，并让五维评分不超过21分，方便后续收录。"
-	validPrompt := "运营现在只能逐页查看订单，月底核对时很容易漏掉跨页数据。请在现有订单列表增加按时间和状态导出的能力，导出内容要与页面筛选结果一致；没有符合条件的记录时给出清楚提示，原有分页和查询方式保持不变。"
+	validPrompt := "运营现在只能逐页查看订单，月底核对时很容易漏掉跨页数据。请在现有订单列表增加按时间和状态导出的能力，导出之后内容要与页面筛选结果保持一致；没有符合条件的记录时给出清楚提示，原有分页和查询方式保持不变。"
 	callCount := 0
 	svc := &PromptService{
 		store:  testStore,
@@ -1723,6 +1884,31 @@ func TestEstimatePromptDifficultyByScopeAndConstraints(t *testing.T) {
 	}
 }
 
+func TestNormalizePromptDifficultyForTaskType(t *testing.T) {
+	tests := []struct {
+		name     string
+		taskType string
+		input    string
+		expected string
+	}{
+		{name: "feature keeps difficult", taskType: "Feature迭代", input: "困难", expected: "困难"},
+		{name: "feature defaults to difficult", taskType: "Feature迭代", input: "", expected: "困难"},
+		{name: "bugfix hell downgrades to difficult", taskType: "Bug修复", input: "地狱", expected: "困难"},
+		{name: "legacy easier stays medium", taskType: "Bug修复", input: "较难", expected: "困难"},
+		{name: "feature keeps medium when requested", taskType: "Feature迭代", input: "中等", expected: "困难"},
+		{name: "codegen defaults to difficult", taskType: "0-1代码生成", input: "中等", expected: "困难"},
+		{name: "codegen keeps hell", taskType: "0-1代码生成", input: "地狱", expected: "地狱"},
+		{name: "other tasks keep supported difficulty", taskType: "代码重构", input: "中等", expected: "中等"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizePromptDifficultyForTaskType(tc.taskType, tc.input); got != tc.expected {
+				t.Fatalf("normalizePromptDifficultyForTaskType(%q, %q) = %q, want %q", tc.taskType, tc.input, got, tc.expected)
+			}
+		})
+	}
+}
+
 func TestGenerateTaskPromptWithContextFallsBackToOriginalWhenPolishFails(t *testing.T) {
 	testStore := testutil.OpenTestStore(t)
 	defer testStore.Close()
@@ -1739,7 +1925,7 @@ func TestGenerateTaskPromptWithContextFallsBackToOriginalWhenPolishFails(t *test
 		t.Fatalf("CreateTask() error = %v", err)
 	}
 
-	rawPrompt := "商品列表页现在只能按单一条件筛选，运营切换不同活动和渠道时要来回重选，很容易漏看数据。请在现有筛选能力上补一个组合筛选面板，支持同时按活动、渠道、状态和时间范围筛选，并让列表、汇总数据和导出结果始终和最后一次筛选条件保持一致。"
+	rawPrompt := "商品列表页现在只能按单一条件筛选，运营切换不同活动和渠道时要来回重选，很容易漏看数据。请在现有筛选能力上补一个组合筛选面板，运营切换条件后先按新条件查询，再同步刷新列表、汇总数据和导出结果；没有符合条件的商品时保留筛选条件并显示空态。"
 
 	svc := &PromptService{
 		store:  testStore,

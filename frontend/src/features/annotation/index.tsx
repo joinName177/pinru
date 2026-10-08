@@ -516,6 +516,10 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
 
   const handleBindPairwiseContainer = async (side: 'A' | 'B', containerId: string) => {
     if (!selectedCase) return false;
+    if (!selectedCase.initialSha || !selectedCase.snapshotUrl) {
+      setActionError('尚未初始化 Git 初始快照地址，请先准备并发布初始快照后再绑定容器');
+      return false;
+    }
     return bindPairwiseCaseToContainer(selectedCase, side, containerId);
   };
 
@@ -542,7 +546,7 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     if (matches.length !== 1) return `${side}：未找到唯一匹配的 ${expectedName}`;
     const matched = matches[0];
     if (matched.state !== 'running') return `${side}：${matched.name} 尚未运行`;
-    if (!targetCase.initialSha) return `${side}：题目尚未准备初始快照`;
+    if (!targetCase.initialSha || !targetCase.snapshotUrl) return `${side}：尚未初始化 Git 初始快照地址，请先准备并发布初始快照`;
     if (!await bindPairwiseCaseToContainer(targetCase, side, matched.id)) return `${side}：绑定失败`;
     return '';
   };
@@ -567,6 +571,10 @@ export function AnnotationWorkspace({ projectId, projectName, taskId, view = 'ca
     if (!refreshed) return;
     const targetCase = refreshed.cases.find((item) => item.taskId === currentTaskId);
     if (!targetCase) return;
+    if (!targetCase.initialSha || !targetCase.snapshotUrl) {
+      setActionError('尚未初始化 Git 初始快照地址，请先准备并发布初始快照后再刷新并绑定容器');
+      return;
+    }
     setPairwisePromptCopied(false);
     const failures: string[] = [];
     for (const side of ['A', 'B'] as const) {

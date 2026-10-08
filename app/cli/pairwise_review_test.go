@@ -42,6 +42,15 @@ func TestDecodePairwiseReviewRejectsSpeculationAndOffstageEvidence(t *testing.T)
 	}
 }
 
+func TestDecodePairwiseReviewAllowsConcretePossibleUniverseLabel(t *testing.T) {
+	reason := "两边都处理了空结果和异常回退。A 按实际分支数显示标题，B 固定写成五个可能的宇宙，空结果时标题与页面内容冲突；A 的重试读取当前输入，B 仍使用上一次选择。本题更看重故障状态是否自洽，因此 A 更可靠。"
+	if result, err := decodePairwiseReview([]byte(`{"status":"ready","conclusion":"A_better","reason":` + quotePairwiseJSON(reason) + `}`)); err != nil {
+		t.Fatalf("rejected concrete UI label: %v", err)
+	} else if result.Conclusion != "A_better" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
 func TestDecodePairwiseReviewRequiresPortalLengthAndDetailedSameReason(t *testing.T) {
 	short := []byte(`{"status":"ready","conclusion":"A_better","reason":"A 修改 main.go，B 未修改 main.go，所以 A 更好。"}`)
 	if _, err := decodePairwiseReview(short); err == nil {
@@ -97,19 +106,19 @@ func TestDecodePairwiseReviewAcceptsNaturalComparisonWithDecisionBasis(t *testin
 	}
 }
 
-func TestDecodePairwiseReviewRejectsResultOnlyComparison(t *testing.T) {
+func TestDecodePairwiseReviewAcceptsResultOnlyComparison(t *testing.T) {
 	reason := "两边都实现了灵感批量生成、按能量或色相方向约束候选、载入并撤销，运行后发现 B 的候选行在点收起或选中候选后仍占据版面，A 的候选数为零但低能量和暖色标签不自洽。这道题最看重候选可收起，因此 A 更好。"
 	raw := []byte(`{"status":"ready","conclusion":"A_better","reason":` + quotePairwiseJSON(reason) + `}`)
-	if result, err := decodePairwiseReview(raw); err == nil {
-		t.Fatalf("accepted result-only comparison: %#v", result)
+	if _, err := decodePairwiseReview(raw); err != nil {
+		t.Fatalf("result-only comparison should be accepted: %v", err)
 	}
 }
 
-func TestDecodePairwiseReviewRequiresProcessAnchorsForBothSides(t *testing.T) {
+func TestDecodePairwiseReviewAllowsMissingProcessAnchorWhenProductEvidenceExists(t *testing.T) {
 	reason := "A 先读取 src/main.ts 并修改候选区，执行 npm run build；B 也完成了候选功能，页面结果可以使用，但没有说明它读取、修改或验证了什么。两边产物都能生成候选并载入撤销，这道题更看重过程可核验和收起后的实际交互，因此 A 更好。"
 	raw := []byte(`{"status":"ready","conclusion":"A_better","reason":` + quotePairwiseJSON(reason) + `}`)
-	if result, err := decodePairwiseReview(raw); err == nil {
-		t.Fatalf("accepted one-sided process anchors: %#v", result)
+	if _, err := decodePairwiseReview(raw); err != nil {
+		t.Fatalf("missing process anchor should not block product comparison: %v", err)
 	}
 }
 
@@ -162,6 +171,11 @@ func TestBuildPairwiseReviewPromptRequiresTriggerNodeForInaction(t *testing.T) {
 	for _, phrase := range []string{"轨迹文件明确记录", "与轨迹冲突", "不得猜测、补全或虚构", "禁止写录屏", "未提交到 Git"} {
 		if !strings.Contains(prompt, phrase) {
 			t.Fatalf("prompt does not contain hard GSB evidence constraint %q: %s", phrase, prompt)
+		}
+	}
+	for _, phrase := range []string{"最后一句必须明确写出裁决标准和取舍", "本题更看重", "两边等价/优缺点相互抵消"} {
+		if !strings.Contains(prompt, phrase) {
+			t.Fatalf("prompt does not contain explicit decision guidance %q: %s", phrase, prompt)
 		}
 	}
 	for _, phrase := range []string{"已提交的代码产物", "冻结代码树", "临时、未提交或审核助手额外生成的脚本仍不可引用"} {

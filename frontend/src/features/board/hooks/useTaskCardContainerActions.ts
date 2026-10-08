@@ -170,6 +170,9 @@ export function useTaskCardContainerActions({
     'bind',
     async (targetProjectId) => {
       const loaded = await loadCase(task.id, targetProjectId);
+      if (!loaded.initialSha.trim() || !loaded.snapshotUrl.trim()) {
+        throw new Error('尚未初始化 Git 初始快照地址，请先准备并发布初始快照后再刷新并绑定容器');
+      }
       const annotationCase = await ensureSnapshot(loaded, 'bind', targetProjectId);
       if (!annotationCase) return '';
 

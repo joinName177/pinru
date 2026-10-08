@@ -198,6 +198,7 @@ func BuildSystemPrompt() string {
 		fmt.Sprintf("   - 正文描述控制在 1 段 3-6 句话内，完整表达业务背景、用户现象、目标结果和必要边界"),
 		fmt.Sprintf("   - 全文建议控制在 %d-%d 个字之间（空白字符不计入），最多不超过 %d 个字", PreferredPromptBodyMinRunes, MaxPromptBodyRunes, MaxPromptBodyRunes),
 		"   - 去掉空话和套话，但不要为了压短而丢掉关键业务信息",
+		"   - 中等题必须写出一个真正改变实现路径的边界：不是把正常路径再说一遍，而是补上超限、重复、冲突、空值或旧数据这类特例发生时该怎么处理，并写清用户看到的提示和数据的最终结果",
 		"",
 		"4. 约束要求必须融入正文",
 		"   - 所有约束要求（技术栈、架构、代码风格、业务规则等）必须作为正文的自然组成部分写出，和需求描述合在同一段里",
@@ -215,7 +216,13 @@ func BuildSystemPrompt() string {
 		"",
 		"6. 输出前自检",
 		fmt.Sprintf("   - 如果正文部分超过 %d 个字，先自行压缩语言，再输出最终版本", MaxPromptBodyRunes),
-		"   - 仅供内部选题自检：困难或地狱题必须让两次独立实现都需要至少 10 行有效源码改动，且改动规模大致可比；依赖锁文件、依赖目录、构建产物和纯文档不计入，不能一侧是几行微修、另一侧才是完整重构",
+		"   - 仅供内部选题自检：中等题必须跨多文件并产生不少于 20 行有效代码改动，且题面必须同时具备调用/数据流理解、实现决策、边界条件与约束三项证据，缺一项都不行：调用/数据流要写出输入或动作经过的业务环节及最终影响，实现决策要写出处理策略的选择及其正常、失败或冲突结果，边界条件与约束要写出具体触发条件、边界输入或旧数据及预期行为；困难或地狱题还必须跨多文件并产生不少于 20 行有效代码改动，且题面至少体现多模块整合、关键设计取舍、复杂技术关注点中的一项，并留下模块汇合、冲突取舍或复杂技术触发的完整证据。只写抽象结论、兼容性口号或技术名词不算命中。改动规模大致可比，不能一侧是几行微修、另一侧才是完整重构；依赖锁文件、依赖目录、构建产物和纯文档不计入",
+		"",
+		"   " + BuildMediumDifficultyReferenceRule(),
+		"",
+		"   " + BuildBoundaryExpressionRule(),
+		"",
+		"   " + BuildMediumAcceptanceChecklistRule(),
 		"",
 		"直接输出提示词正文，不要加任何前言、解释或标注。",
 	}, "\n")
@@ -322,17 +329,78 @@ func BuildUserPrompt(task TaskInfo, req PromptRequest, summary analysis.Summary,
 	sb.WriteString("=== 参考信息结束 ===\n\n")
 
 	// ── 6. 最终输出要求 ──
+	sb.WriteString(TaskTypeDifficultyRule)
 	sb.WriteString("现在请生成一道符合上述要求的评测提示词。")
 	if len(constraintDescs) > 0 {
 		sb.WriteString("所有约束要求必须和需求描述融合在同一段文字中，严禁单独分段或加任何标签前缀。")
 	}
 	sb.WriteString(fmt.Sprintf("输出前请自检：全文建议控制在 %d-%d 个字之间，最多不超过 %d 个字，且必须是一整段连贯的文字。", PreferredPromptBodyMinRunes, MaxPromptBodyRunes, MaxPromptBodyRunes))
+	sb.WriteString("中等题还要同时具备调用/数据流理解、实现决策、边界条件与约束三项证据，缺一项都不算达标：写清输入到结果的业务链路、处理策略的选择及正常/失败/冲突结果、真实触发条件及预期行为；困难题还要至少体现多模块整合、关键设计取舍、复杂技术关注点中的一项，并写出模块汇合、冲突取舍或复杂技术触发的完整证据。只写抽象结论或技术名词、三项缺任何一项时必须换题。")
+	sb.WriteString(BuildBoundaryExpressionRule())
+	sb.WriteString(BuildMediumAcceptanceChecklistRule())
+	sb.WriteString(BuildMediumDifficultyReferenceRule())
 	sb.WriteString("直接输出提示词内容，不加任何前言或说明。")
 
 	return sb.String()
 }
 
 // ── 辅助函数 ──────────────────────────────────────────────────────────────────
+
+// TaskTypeDifficultyRule separates generation labels from G16/G19 content gates.
+const TaskTypeDifficultyRule = "题型与标签规则（优先于通用难度措辞）：0-1代码生成按 G16 选择真实困难题，标签为困难或地狱；Feature迭代和 Bug修复按 G19 至少达到中等的真实难度，调用/数据流理解、实现决策、边界条件与约束三项必须全部具备，出题标签固定为困难。下文中等题门槛用于 Feature/Bug 内容验收，困难题门槛用于 0-1 内容验收，不能依据展示标签混用。G16/G19 不合格题作废，必须重新选题，不得只润色措辞或调高难度字段。内部逐题记录源码依据、用户动作到结果的调用链、影响结果对错的策略选择、边界触发及预期行为；三项须分别核对，不能用一句空态提示充当全部证据，也不能凭“重复提交、不重复、沿用、展示”等关键词判定达标；0-1 另记录至少一项困难特征的完整证据。正文只保留自然业务场景，不输出审核术语或自检记录。"
+
+// MediumDifficultyReferencePrompt 是已通过审核的中等题范例（c2c-001-2，Feature迭代）。
+// 三项中等难度证据在同一段话里自然表达：调用/数据流是“点击建议后带参数预填并跳转、
+// 入账后组合与建议立即刷新”；实现决策是“已经补过仓的类别对应的建议不再重复出现”；
+// 边界条件是“已经补过仓”“避免照着旧提示重复入账”。它只作为写法参照，禁止照抄其中的
+// 业务对象。
+const MediumDifficultyReferencePrompt = "分析页给出的补仓建议目前只是一句文字，用户看完还得自己切到记录页手动选类别填小时，来回折腾几趟就容易忘。需要把建议做成能直接执行的入口，点击低配资产的建议后带着推荐的类别和小时数预填到入账表单并跳转到记录页，入账后建议和组合数据立即按新情况刷新，已经补过仓的类别对应的低配建议不再重复出现，避免用户照着旧提示重复入账"
+
+// BoundaryExpressionPatterns 是中等题“边界条件与约束”这一项的写法模式，提炼自已通过
+// 审核的题库：边界句必须改变实现路径，说明特例发生时用户看到什么、数据最终是什么。
+// 只点名词（超额、重复）或只喊“保持一致”不算命中。
+const BoundaryExpressionPatterns = "边界条件与约束的写法（只用模式，不要照抄业务对象）：一、数值或口径冲突：写出同一时刻出现的互相矛盾的数值或口径，说明以哪一处为准，并交代剩余额度、已配置、健康度这类数字最终按同一套口径对齐，例如超出上限入账时明确提示差额并阻止入账或让用户确认，不能让两处各算各的。二、重复或并发操作：写清重复提交、连续点击、撤销超时后再次操作时系统怎么处理，是保留首次、合并还是拒绝第二次，并保证重复操作不会重复累计。三、历史数据或状态被替换：写清旧记录、已失效配置或未保存内容被重置、回滚、覆盖时的兜底，给出默认值、迁移或回退方式，说明用户会看到什么提示。反例（这样写不算命中）：只写“超过上限就提示”或“重复提交要处理”，只列正常分支不说异常分支走哪条路；边界句只是把正常路径再说一遍；只喊“保持一致”却不说明以哪一处为准。"
+
+// HardDifficultyEvidencePatterns 是困难题“必须被审核方看见”的三项特征写法。审核按
+// G16 判定：题面里看不到多模块整合、关键设计取舍或复杂技术关注点，就按真实难度打回，
+// 调高难度字段无效。因此困难题必须主动写出取舍或复杂链路，而不是罗列功能与边界。
+const HardDifficultyEvidencePatterns = "困难题三项特征必须至少写实一项，而且要写到审核方一眼能看见（只罗列功能和边界会被判成中等）：一、多模块整合：写清至少两个业务环节如何汇合，谁产生数据、谁消费数据、以哪一处为准，最后哪些页面或统计同时变化；两个对象各有自己的状态时也要交代冲突怎么对齐。二、关键设计取舍：写清两个都说得通的方案，本题选哪个、为什么，以及另一个方案会带来什么后果；例如整体回滚还是保留已成功的部分、先写本地再同步还是等确认、同一份数据多处共享还是各自快照。三、复杂技术关注点：写清并发、重复提交、离线、异步回调、版本兼容、旧数据迁移、权限差异、性能退化或异常链路中的至少一个触发过程，并给出该场景下系统必须保证的结果。反例（这样写会被打回）：只写“超限就提示”“保存失败要重试”这类单点边界；只把新增入口、新页面、新统计列一遍；把几个互不相关的小改拼成一题。"
+
+// HardDifficultyChecklist 是困难题交付前的逐条打钩清单，用来对齐审核口径。
+const HardDifficultyChecklist = "困难题交付前逐条打钩（勾不上就换题重写，不是改措辞）：一、本题有没有一条贯穿两个以上业务环节的链路，能说清数据从哪产生、被谁消费、冲突时以哪一处为准、最后哪些页面同时变化。二、本题有没有一个真正的设计岔路口，两个方案都合理而本题只选一个，并写出了选择后的后果。三、本题有没有一个复杂技术场景（并发、重复提交、离线、异步、版本兼容、旧数据迁移、权限、性能、异常恢复），并写清该场景下必须保证的结果。三项至少要有一项写实；如果只能写出“新增入口 + 边界提示”，说明这题是中等题，必须换题。"
+
+// BuildHardDifficultyRule 生成给 LLM 的困难题写法说明，供单题出题、技能文档与批量
+// 出题共用，避免三处规则漂移。
+func BuildHardDifficultyRule() string {
+	return HardDifficultyEvidencePatterns
+}
+
+// BuildHardDifficultyChecklistRule 生成给 LLM 的困难题打钩清单。
+func BuildHardDifficultyChecklistRule() string {
+	return HardDifficultyChecklist
+}
+
+// BuildBoundaryExpressionRule 生成给 LLM 的边界写法说明，供单题出题和批量出题共用。
+func BuildBoundaryExpressionRule() string {
+	return BoundaryExpressionPatterns
+}
+
+// MediumAcceptanceChecklist 是中等题交付前的逐条打钩清单。它把“三项证据齐全”
+// 拆成可执行的自检动作：调用/数据流要能追出链路，实现决策要能指出标准路径和特殊
+// 情况下的取舍，边界条件要是一个真正改变实现路径的特例而不是复述需求。
+const MediumAcceptanceChecklist = "中等题交付前逐条打钩（任何一条没打上钩都必须重写题目，不是修改措辞）：一、调用/数据流：能否追出用户的一次操作经过哪些处理、哪些校验、哪些计算，最后落在哪些页面的哪些数字上，并用同时或一起体现多处联动。二、实现决策：能否指出系统在哪一步做了取舍，标准情况下怎么处理、出现异常或冲突时走哪条路，有没有明确写出以哪一处为准。三、边界条件：是否补上了一个会改变实现的特例，例如超出上限、重复操作、两项口径冲突、空值或旧数据、操作被撤销或恢复，而不是把正常路径再说一遍；这个特例发生时用户看到什么，数据最终结果是什么，能否直接对照验收。"
+
+// BuildMediumAcceptanceChecklistRule 生成给 LLM 的中等题验收清单说明，供单题出题和
+// 批量出题共用，避免两处规则漂移。
+func BuildMediumAcceptanceChecklistRule() string {
+	return MediumAcceptanceChecklist
+}
+
+// BuildMediumDifficultyReferenceRule 生成给 LLM 的中等题范例说明，供单题出题和批量
+// 出题共用，避免两处规则漂移。
+func BuildMediumDifficultyReferenceRule() string {
+	return "中等题写法范例（该题已通过审核，三项证据必须像它一样融在同一段话里，不得照抄其中的业务对象）：" + MediumDifficultyReferencePrompt + "。这条题里，点击建议后带参数预填并跳转到入账、入账后组合与建议立即刷新是调用/数据流；已经补过仓的类别不再重复出现是明确的实现决策；已经补过仓、避免照着旧提示重复入账是边界条件与约束。三项缺一不可。"
+}
 
 func NormalizeTaskType(value string) string {
 	trimmed := strings.TrimSpace(value)

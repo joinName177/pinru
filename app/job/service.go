@@ -721,10 +721,41 @@ func (s *JobService) executeCustomPromptDocumentGenerate(
 
 	outputJSON, _ := json.Marshal(res)
 	outputStr := string(outputJSON)
+	message := fmt.Sprintf("提示词文档生成完成：成功 %d，失败 %d", res.GeneratedCount, res.ErrorCount)
+	if reason := customPromptDocumentFailureReason(res); reason != "" {
+		message = fmt.Sprintf("%s；%s", message, reason)
+	}
 	return jobExecutionResult{
 		outputPayload: &outputStr,
-		finalMessage:  strPtr(fmt.Sprintf("提示词文档生成完成：成功 %d，失败 %d", res.GeneratedCount, res.ErrorCount)),
+		finalMessage:  strPtr(message),
 	}, nil
+}
+
+// customPromptDocumentFailureReason 把首个失败项目的具体原因带进作业结束语，
+// 避免网络或鉴权类瞬时失败只显示“成功 0，失败 1”，让人以为生成没有触发。
+func customPromptDocumentFailureReason(res *appprompt.GenerateCustomProjectPromptDocumentsResult) string {
+	if res == nil {
+		return ""
+	}
+	for _, detail := range res.Details {
+		if strings.TrimSpace(detail.Message) == "" || detail.Status == "generated" || detail.Status == "done" {
+			continue
+		}
+		name := strings.TrimSpace(detail.ProjectName)
+		if name == "" {
+			name = "当前项目"
+		}
+		return truncateJobDetail(fmt.Sprintf("%s：%s", name, strings.TrimSpace(detail.Message)), 240)
+	}
+	return ""
+}
+
+func truncateJobDetail(value string, limit int) string {
+	runes := []rune(strings.TrimSpace(value))
+	if limit <= 0 || len(runes) <= limit {
+		return string(runes)
+	}
+	return string(runes[:limit]) + "…"
 }
 
 func customPromptDocumentProgressView(progress appprompt.CustomProjectPromptDocumentProgress) (int, string) {
@@ -766,6 +797,9 @@ func customPromptDocumentProgressView(progress appprompt.CustomProjectPromptDocu
 	case "error":
 		stageOffset = step
 		stageText = "生成失败"
+	case "needs_review":
+		stageOffset = step
+		stageText = "待修正"
 	}
 	value := start + stageOffset
 	if value > 95 {
@@ -813,7 +847,7 @@ func (s *JobService) executeCustomPromptTaskCreate(
 	outputStr := string(outputJSON)
 	return jobExecutionResult{
 		outputPayload: &outputStr,
-		finalMessage:  strPtr(fmt.Sprintf("自定义任务创建完成：成功 %d，失败 %d", res.CreatedCount-res.ErrorCount, res.ErrorCount)),
+		finalMessage:  strPtr(fmt.Sprintf("自定义任务创建完成：成功 %d，失败 %d", res.CreatedCount, res.ErrorCount)),
 	}, nil
 }
 

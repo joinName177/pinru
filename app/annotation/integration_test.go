@@ -49,6 +49,10 @@ func annotationFixture(t *testing.T) (*AnnotationService, string, string) {
 	if err != nil || len(prepared.InitialSHA) != 40 {
 		t.Fatalf("prepare: %+v %v", prepared, err)
 	}
+	prepared.SnapshotURL = "https://github.com/example/project/commit/" + prepared.InitialSHA
+	if _, err := s.store.SaveAnnotationCase(*prepared, prepared.Revision); err != nil {
+		t.Fatalf("save initial snapshot URL: %v", err)
+	}
 	trace := filepath.Join(dir, "session.jsonl")
 	writeFixtureTrace(t, trace, source, 1)
 	return s, trace, source

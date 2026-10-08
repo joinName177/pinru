@@ -68,6 +68,7 @@ export type PairwiseConclusion = 'A_better' | 'same' | 'B_better';
 
 export interface PairwiseRun {
   side: PairwiseSide;
+  modelName?: string;
   branch: string;
   containerId: string;
   containerName: string;

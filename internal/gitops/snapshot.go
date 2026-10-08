@@ -93,3 +93,62 @@ func PublishSnapshotCommit(ctx context.Context, path, sha, username, token strin
 	}
 	return nil
 }
+
+// PublishPairwiseSnapshotCommit publishes the baseline as main. Pair-wise GSB
+// repositories must contain exactly main plus the later A/B result branches;
+// retaining a second initial/<sha> branch makes the baseline ambiguous.
+func PublishPairwiseSnapshotCommit(ctx context.Context, path, sha, username, token string) error {
+	if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(sha) {
+		return fmt.Errorf("初始提交 SHA 无效")
+	}
+	origin, err := runGitOutput(path, "remote", "get-url", "origin")
+	if err != nil {
+		return err
+	}
+	run := func(args ...string) (string, error) {
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = path
+		cmd.Env = append(os.Environ(), buildGitAuthEnv(origin, username, token, false)...)
+		cmd.WaitDelay = 5 * time.Second
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return "", formatGitCommandError(err, out, username, token)
+		}
+		return strings.TrimSpace(string(out)), nil
+	}
+	head, err := run("rev-parse", "HEAD")
+	if err != nil {
+		return err
+	}
+	if head != sha {
+		return fmt.Errorf("发布副本 HEAD 与登记的初始提交不一致")
+	}
+	mainRef := "refs/heads/main"
+	remoteMain, err := run("ls-remote", "--heads", "origin", mainRef)
+	if err != nil {
+		return fmt.Errorf("读取初始快照仓库失败：%w", err)
+	}
+	mainSHA := ""
+	for _, line := range strings.Split(remoteMain, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[1] == mainRef {
+			mainSHA = fields[0]
+		}
+	}
+	if mainSHA != sha {
+		lease := "--force-with-lease=" + mainRef + ":" + mainSHA
+		if _, err := run("push", lease, "origin", sha+":"+mainRef); err != nil {
+			return fmt.Errorf("发布 Pair-wise 初始快照到 main 失败：%w", err)
+		}
+	}
+	// Clean the legacy branch created by the history-preserving publisher.
+	legacyRef := "initial/" + sha
+	if _, err := run("push", "origin", ":"+legacyRef); err != nil {
+		// Deleting a branch that does not exist is harmless for the desired state.
+		if strings.Contains(err.Error(), "remote ref does not exist") || strings.Contains(err.Error(), "unable to delete") {
+			return nil
+		}
+		return fmt.Errorf("清理旧初始快照分支失败：%w", err)
+	}
+	return nil
+}

@@ -70,6 +70,14 @@ func TestReviewPairwiseStoresReviewBoundToBothEvidenceSources(t *testing.T) {
 	if review.SkillHash != pairwiseReviewSkillHash() {
 		t.Fatalf("skill hash = %q", review.SkillHash)
 	}
+	persisted, err := s.loadCase(c.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistedReview := domain.CurrentPairwiseReview(*persisted)
+	if persistedReview == nil || persistedReview.Current == nil || !*persistedReview.Current {
+		t.Fatalf("persisted review = %#v", persistedReview)
+	}
 	if _, err := os.Stat(source); err != nil {
 		t.Fatal(err)
 	}

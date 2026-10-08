@@ -68,29 +68,33 @@ class ExportPairwiseTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             result = json.loads(proc.stdout)
             self.assertEqual(result["rows"], 1)
+            self.assertEqual(Path(result["outputPath"]).name, "加法题.xlsx")
             sheet = openpyxl.load_workbook(result["outputPath"]).active
             expected_headers = [
                 "User Prompt", "任务类型", "任务难度", "语言/框架", "Harness", "Harness 版本",
-                "操作系统", "环境可复现等级", "初始环境快照", "A-SessionID", "A-轨迹文件",
+                "操作系统", "环境可复现等级", "初始环境快照", "A-模型", "A-SessionID", "A-轨迹文件",
                 "A-产物快照", "A-运行录屏", "B-SessionID", "B-轨迹文件", "B-产物快照",
-                "B-运行录屏", "A-交付完整性", "A-交付完整性描述", "B-交付完整性", "B-交付完整性描述",
+                "B-运行录屏", "B-模型", "A-交付完整性", "A-交付完整性描述", "B-交付完整性", "B-交付完整性描述",
                 "GSB 结论", "GSB 理由", "有效性", "备注",
             ]
             self.assertEqual([cell.value for cell in sheet[1]][:len(expected_headers)], expected_headers)
             self.assertEqual(sheet["A2"].value, "实现加法功能")
-            self.assertEqual(sheet["R2"].value, 5)
-            self.assertEqual(sheet["S2"].value, "A 已交付需求中的返回值处理，产物可以完成预期调用。")
-            self.assertEqual(sheet["T2"].value, 3)
-            self.assertEqual(sheet["U2"].value, "B 的提交缺少返回值处理，交付结果无法覆盖完整调用链。")
-            self.assertEqual(sheet["V2"].value, "A 更好")
+            self.assertEqual(sheet["T2"].value, 5)
+            self.assertEqual(sheet["U2"].value, "A 已交付需求中的返回值处理，产物可以完成预期调用。")
+            self.assertEqual(sheet["V2"].value, 3)
+            self.assertEqual(sheet["W2"].value, "B 的提交缺少返回值处理，交付结果无法覆盖完整调用链。")
+            self.assertEqual(sheet["X2"].value, "A 更好")
             self.assertEqual(sheet["D2"].value, "Python, pytest")
-            self.assertEqual(sheet["X2"].value, "有效")
+            self.assertEqual(sheet["Z2"].value, "有效")
+            self.assertEqual(sheet["J2"].value, "auto_model/urm")
+            self.assertEqual(sheet["S2"].value, "ark/urm-03")
 
     @staticmethod
     def pairwise_run(side, sha_char):
         return {
             "side": side,
             "branch": side,
+            "modelName": "auto_model/urm" if side == "A" else "ark/urm-03",
             "sessionId": "session-" + side.lower(),
             "tracePath": "/evidence/" + side + "/session.jsonl",
             "turnCount": 1,

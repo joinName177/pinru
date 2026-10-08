@@ -45,6 +45,7 @@ const (
 
 type PairwiseRun struct {
 	Side                      PairwiseSide `json:"side"`
+	ModelName                 string       `json:"modelName"`
 	Branch                    string       `json:"branch"`
 	ContainerID               string       `json:"containerId"`
 	ContainerName             string       `json:"containerName"`
@@ -134,6 +135,12 @@ func NormalizeCase(c *Case) {
 		if c.Pairwise.RunA.Side == "" {
 			c.Pairwise.RunA.Side = PairwiseSideA
 		}
+		if c.Pairwise.RunA.ModelName == "" {
+			c.Pairwise.RunA.ModelName = PairwiseModelForSide(PairwiseSideA)
+		}
+		if c.Pairwise.RunB.ModelName == "" {
+			c.Pairwise.RunB.ModelName = PairwiseModelForSide(PairwiseSideB)
+		}
 		if c.Pairwise.RunB.Side == "" {
 			c.Pairwise.RunB.Side = PairwiseSideB
 		}
@@ -158,15 +165,24 @@ func NormalizeCase(c *Case) {
 func NewPairwiseData(prompt string) *PairwiseData {
 	p := &PairwiseData{
 		Prompt:  strings.TrimSpace(prompt),
-		RunA:    PairwiseRun{Side: PairwiseSideA, Branch: "A", VideoStatus: PairwiseVideoMissing},
-		RunB:    PairwiseRun{Side: PairwiseSideB, Branch: "B", VideoStatus: PairwiseVideoMissing},
+		RunA:    PairwiseRun{Side: PairwiseSideA, ModelName: PairwiseModelForSide(PairwiseSideA), Branch: "A", VideoStatus: PairwiseVideoMissing},
+		RunB:    PairwiseRun{Side: PairwiseSideB, ModelName: PairwiseModelForSide(PairwiseSideB), Branch: "B", VideoStatus: PairwiseVideoMissing},
 		Reviews: []PairwiseReview{},
 	}
 	return p
 }
 
+func PairwiseModelForSide(side PairwiseSide) string {
+	if side == PairwiseSideB {
+		// return "ark/urm-03"
+		return "auto_model/urm"
+	}
+	return "auto_model/urm"
+}
+
 func PairwiseRunSourceHash(run PairwiseRun) string {
 	value := strings.Join([]string{
+		run.ModelName,
 		run.CaptureID, run.CaptureHash, run.TraceHash, strings.ToLower(run.DeliverableSHA),
 		run.DeliverableURL,
 	}, "\x00")
@@ -247,8 +263,8 @@ func ValidatePairwiseCase(c Case, formal bool) []string {
 	if strings.TrimSpace(p.Language) == "" {
 		issues = append(issues, "语言/框架未填写")
 	}
-	if c.PromptDifficulty != "困难" && c.PromptDifficulty != "地狱" {
-		issues = append(issues, "任务难度必须是困难或地狱")
+	if c.PromptDifficulty != "困难" && c.PromptDifficulty != "地狱" && c.PromptDifficulty != "中等" {
+		issues = append(issues, "任务难度必须是困难、地狱或中等")
 	}
 	if !pairwiseSHA.MatchString(c.InitialSHA) {
 		issues = append(issues, "初始快照必须是完整 40 位 SHA")

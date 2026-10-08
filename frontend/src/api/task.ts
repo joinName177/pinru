@@ -1,7 +1,7 @@
 import { callService } from './wails';
 
 export type PromptGenerationStatus = 'idle' | 'running' | 'done' | 'error';
-export type PromptDifficulty = '简单' | '一般' | '困难' | '地狱';
+export type PromptDifficulty = '简单' | '一般' | '中等' | '较难' | '困难' | '地狱';
 
 export interface TaskSessionEvidence {
   workspacePath: string;

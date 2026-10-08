@@ -1,6 +1,12 @@
 type TaskIdentity = { taskName: string; taskId: string; sourcePath: string };
 type PairwiseSide = 'A' | 'B';
 
+export const PAIRWISE_MODELS: Record<PairwiseSide, string> = {
+  A: 'auto_model/urm',
+  // B: 'ark/urm-03',
+  B: 'auto_model/urm',
+};
+
 export function buildContainerCommand(task: TaskIdentity, apiKey = '', side?: PairwiseSide) {
   const name = task.taskName.trim();
   if (!/^[a-zA-Z0-9][a-zA-Z0-9 _-]*$/.test(name)) {
@@ -18,6 +24,7 @@ export function buildContainerCommand(task: TaskIdentity, apiKey = '', side?: Pa
     throw new Error('尚未找到题目的固定编号，请先完成题目创建。');
   }
   const suffix = side ? `-${side.toLowerCase()}` : '';
+  const modelName = side ? PAIRWISE_MODELS[side] : '';
   const containerName = `${prefix}-claude-${sequence}${suffix}`;
   const runDirectory = `run-${sequence}${suffix}`;
   const command = [
@@ -40,7 +47,7 @@ export function buildContainerCommand(task: TaskIdentity, apiKey = '', side?: Pa
     'mkdir "$RUN_DIR" && \\',
     'mkdir "$RUN_DIR/workspace" && \\',
     'printf \'容器：%s\\n本题本地目录：%s\\n\' "$CONTAINER_NAME" "$RUN_DIR" && \\',
-    'docker run -it --init --restart=no --cap-drop ALL --security-opt no-new-privileges --name "$CONTAINER_NAME" --mount "type=bind,src=$RUN_DIR/workspace,dst=/workspace" -e apikey adminfather/benzhi-claude-code2:20260919',
+    `docker run -it --init --restart=no --cap-drop ALL --security-opt no-new-privileges --name "$CONTAINER_NAME" --mount "type=bind,src=$RUN_DIR/workspace,dst=/workspace" -e apikey${modelName ? ` -e "ANTHROPIC_MODEL=${modelName}" -e "ANTHROPIC_DEFAULT_OPUS_MODEL=${modelName}" -e "ANTHROPIC_DEFAULT_SONNET_MODEL=${modelName}" -e "ANTHROPIC_DEFAULT_HAIKU_MODEL=${modelName}" -e "CLAUDE_CODE_SUBAGENT_MODEL=${modelName}"` : ''} adminfather/benzhi-claude-code2:20260919`,
     ')',
   ].join('\n');
   return { containerName, baseDirectory: `$HOME/${prefix}-claude-runs`, runDirectory, command };

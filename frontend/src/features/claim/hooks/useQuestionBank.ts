@@ -64,9 +64,9 @@ async function waitForJobOutput<T>(jobId: string, fallbackMessage: string): Prom
 }
 
 const customPromptHeadingPattern =
-  /^\s{0,3}(?:#{1,6}\s*)?(?:\*\*)?\s*(0-1代码生成|Feature迭代|代码理解|Bug修复|代码重构|工程化|代码测试|未归类)\s*(?:\*\*)?\s*$/;
+  /^\s{0,3}(?:#{1,6}\s*)?(?:\*\*)?\s*(0-1\s*代码\s*生成|Feature\s*迭代|代码\s*理解|Bug\s*修复|代码\s*重构|工程化|代码\s*测试|未\s*归类)\s*(?:\*\*)?\s*$/;
 const customPromptItemPattern = /^\s*(?:[-*]\s+|\d+[.、)]\s+)(.*)$/;
-const customPromptDifficultyPattern = /^【(?:简单|一般|困难|地狱)】\s*(.*)$/;
+const customPromptDifficultyPattern = /^【(?:简单|一般|中等|较难|困难|地狱)】\s*(.*)$/;
 
 function stripCustomPromptDifficulty(value: string) {
   const trimmed = value.trim();
@@ -74,7 +74,7 @@ function stripCustomPromptDifficulty(value: string) {
   return (matches?.[1] ?? trimmed).trim();
 }
 
-function hasCustomPromptEntries(content: string | null | undefined) {
+export function hasCustomPromptEntries(content: string | null | undefined) {
   let currentType = '';
   let currentPrompt: string | null = null;
 
@@ -119,6 +119,12 @@ function hasCustomPromptEntries(content: string | null | undefined) {
 
 function getPromptReadyDocs(docs: CustomProjectPromptDocumentDetail[]) {
   return docs.filter((doc) => hasCustomPromptEntries(doc.content));
+}
+
+function getPromptDocumentCandidates(docs: CustomProjectPromptDocumentDetail[]) {
+  return docs.filter(
+    (doc) => (doc.status === 'generated' || doc.status === 'needs_review') && hasCustomPromptEntries(doc.content),
+  );
 }
 
 export type QuestionBankState = {
@@ -317,6 +323,31 @@ export function useQuestionBank(projectId: string, questionBankProjectIdsRaw: st
   }, [customProjectImporting, customProjectPromptDocGenerating]);
 
   const documentCounts = useRef<Record<string, CustomPromptCounts>>({});
+
+  const createTasksFromPromptDocPaths = useCallback(async (documentPaths: string[]) => {
+    const paths = documentPaths.filter((path) => path.trim().length > 0);
+    if (!projectId || paths.length === 0) return;
+    setCustomPromptTaskCreating(true);
+    setCustomPromptTaskError('');
+    try {
+      const job = await submitCustomPromptTaskCreateJob({
+        projectId,
+        documentPaths: paths,
+      });
+      await loadBackgroundJobs();
+      const result = await waitForJobOutput<CreateTasksFromCustomPromptDocumentsResult>(
+        job.id,
+        '从提示词文档创建任务失败',
+      );
+      setCustomPromptTaskResult(result);
+      await loadTasks();
+    } catch (error) {
+      setCustomPromptTaskError(error instanceof Error ? error.message : '从提示词文档创建任务失败');
+    } finally {
+      setCustomPromptTaskCreating(false);
+    }
+  }, [projectId, loadTasks, loadBackgroundJobs]);
+
   const handleImportSelectedCustomProjects = useCallback(async (projectNames: string[], counts?: CustomPromptCounts) => {
     if (!projectId || projectNames.length === 0) return;
     let generatingPromptDocs = false;
@@ -350,13 +381,24 @@ export function useQuestionBank(projectId: string, questionBankProjectIdsRaw: st
           '生成提示词文档失败',
         );
         setCustomProjectPromptDocResult(docResult);
-        const generatedDocs = docResult.details.filter((detail) => detail.status === 'generated');
-        const promptReadyDocs = getPromptReadyDocs(generatedDocs);
-        const skippedCount = generatedDocs.length - promptReadyDocs.length;
-        setCustomPromptPreviewDocs(promptReadyDocs);
-        setCustomPromptPreviewStatus(skippedCount > 0 ? `已隐藏 ${skippedCount} 个无提示词文档` : '');
-        setCustomPromptPreviewOpen(promptReadyDocs.length > 0);
-        if (generatedDocs.length > 0 && promptReadyDocs.length === 0) {
+        const documentCandidates = getPromptDocumentCandidates(docResult.details);
+        const promptReadyDocs = getPromptReadyDocs(documentCandidates);
+        const generatedDocs = promptReadyDocs.filter((detail) => detail.status === 'generated');
+        const reviewDocs = promptReadyDocs.filter((detail) => detail.status === 'needs_review');
+        const skippedCount = docResult.details.length - promptReadyDocs.length;
+        setCustomPromptPreviewDocs(reviewDocs);
+        setCustomPromptPreviewStatus(
+          docResult.needsReviewCount > 0
+            ? `有 ${docResult.needsReviewCount} 个文档自动校验未通过，已保留内容，请修正后再创建任务`
+            : skippedCount > 0
+              ? `已隐藏 ${skippedCount} 个无提示词文档`
+              : '',
+        );
+        setCustomPromptPreviewOpen(reviewDocs.length > 0);
+        if (generatedDocs.length > 0) {
+          await createTasksFromPromptDocPaths(generatedDocs.map((detail) => detail.outputPath));
+        }
+        if (docResult.details.length > 0 && promptReadyDocs.length === 0) {
           setCustomProjectPromptDocError('没有提示词就绪文档可创建');
         }
         await loadBackgroundJobs();
@@ -373,35 +415,11 @@ export function useQuestionBank(projectId: string, questionBankProjectIdsRaw: st
       setCustomProjectImporting(false);
       setCustomProjectPromptDocGenerating(false);
     }
-  }, [projectId, reloadQuestionBankItems, handleNormalize, loadBackgroundJobs]);
-
-  const createTasksFromPromptDocPaths = useCallback(async (documentPaths: string[]) => {
-    const paths = documentPaths.filter((path) => path.trim().length > 0);
-    if (!projectId || paths.length === 0) return;
-    setCustomPromptTaskCreating(true);
-    setCustomPromptTaskError('');
-    try {
-      const job = await submitCustomPromptTaskCreateJob({
-        projectId,
-        documentPaths: paths,
-      });
-      await loadBackgroundJobs();
-      const result = await waitForJobOutput<CreateTasksFromCustomPromptDocumentsResult>(
-        job.id,
-        '从提示词文档创建任务失败',
-      );
-      setCustomPromptTaskResult(result);
-      await loadTasks();
-    } catch (error) {
-      setCustomPromptTaskError(error instanceof Error ? error.message : '从提示词文档创建任务失败');
-    } finally {
-      setCustomPromptTaskCreating(false);
-    }
-  }, [projectId, loadTasks, loadBackgroundJobs]);
+  }, [projectId, reloadQuestionBankItems, handleNormalize, loadBackgroundJobs, createTasksFromPromptDocPaths]);
 
   const handleCreateTasksFromGeneratedPromptDocs = useCallback(async () => {
     const paths = customProjectPromptDocResult?.details
-      .filter((detail) => detail.status === 'generated' && detail.outputPath && hasCustomPromptEntries(detail.content))
+      .filter((detail) => (detail.status === 'generated' || detail.status === 'needs_review') && detail.outputPath && hasCustomPromptEntries(detail.content))
       .map((detail) => detail.outputPath) ?? [];
     if (customProjectPromptDocResult && paths.length === 0) {
       setCustomPromptTaskError('没有提示词就绪文档可创建');
@@ -478,7 +496,7 @@ export function useQuestionBank(projectId: string, questionBankProjectIdsRaw: st
         '重新生成提示词文档失败',
       );
       setCustomProjectPromptDocResult(result);
-      const generated = result.details.find((detail) => detail.status === 'generated');
+      const generated = getPromptDocumentCandidates(result.details)[0];
       if (!generated) {
         throw new Error(result.details[0]?.message || '重新生成提示词文档失败');
       }

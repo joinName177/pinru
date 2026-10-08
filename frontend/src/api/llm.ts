@@ -1,4 +1,5 @@
 import { callService } from './wails';
+import type { PromptDifficulty } from './task';
 
 export type LlmProviderType = 'openai_compatible' | 'anthropic' | 'claude_code_acp' | 'codex_acp';
 
@@ -31,6 +32,7 @@ export interface GeneratePromptRequest {
   constraints: string[];
   additionalNotes?: string | null;
   thinkingBudget?: string;
+  promptDifficulty?: PromptDifficulty;
 }
 
 export interface AnalyzedFileSnippet {
@@ -66,6 +68,7 @@ export interface CustomPromptCounts {
   codeGen: number;
   feature: number;
   bugFix: number;
+  medium: number;
   difficult: number;
   hell: number;
 }
@@ -86,6 +89,7 @@ export interface GenerateCustomProjectPromptDocumentsResult {
   model: string;
   generatedCount: number;
   errorCount: number;
+  needsReviewCount: number;
   details: CustomProjectPromptDocumentDetail[];
 }
 

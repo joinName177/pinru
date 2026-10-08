@@ -59,12 +59,78 @@ func TestBuildSystemPromptCarriesNaturalWritingRedLines(t *testing.T) {
 func TestBuildSystemPromptIncludesPairwiseChangeVolumeGate(t *testing.T) {
 	prompt := BuildSystemPrompt()
 	for _, want := range []string{
-		"困难或地狱题必须让两次独立实现都需要至少 10 行有效源码改动",
+		"困难或地狱题还必须跨多文件并产生不少于 20 行有效代码改动",
 		"改动规模大致可比",
 		"依赖锁文件、依赖目录、构建产物和纯文档不计入",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("BuildSystemPrompt() missing pairwise gate %q: %q", want, prompt)
+		}
+	}
+}
+
+func TestBuildSystemPromptIncludesDifficultyFeatureGates(t *testing.T) {
+	prompt := BuildSystemPrompt()
+	for _, want := range []string{
+		"中等题必须跨多文件并产生不少于 20 行有效代码改动",
+		"题面必须同时具备调用/数据流理解、实现决策、边界条件与约束三项证据，缺一项都不行",
+		"困难或地狱题还必须跨多文件并产生不少于 20 行有效代码改动",
+		"多模块整合、关键设计取舍、复杂技术关注点中的一项",
+		"只写抽象结论、兼容性口号或技术名词不算命中",
+		MediumDifficultyReferencePrompt,
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("BuildSystemPrompt() missing difficulty feature gate %q: %q", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "调用/数据流理解、实现决策、边界条件与约束中的一项") {
+		t.Fatalf("BuildSystemPrompt() still allows medium tasks with only one of the three criteria: %q", prompt)
+	}
+}
+
+func TestMediumDifficultyRulesCarryBoundaryPatternsAndChecklist(t *testing.T) {
+	boundary := BuildBoundaryExpressionRule()
+	checklist := BuildMediumAcceptanceChecklistRule()
+	for _, want := range []string{
+		"边界条件与约束的写法",
+		"数值或口径冲突",
+		"重复或并发操作",
+		"历史数据或状态被替换",
+		"只写“超过上限就提示”",
+		"不算命中",
+	} {
+		if !strings.Contains(boundary, want) {
+			t.Fatalf("BuildBoundaryExpressionRule() missing %q: %q", want, boundary)
+		}
+	}
+	for _, want := range []string{
+		"中等题交付前逐条打钩",
+		"任何一条没打上钩都必须重写题目，不是修改措辞",
+		"会改变实现的特例",
+		"能否直接对照验收",
+	} {
+		if !strings.Contains(checklist, want) {
+			t.Fatalf("BuildMediumAcceptanceChecklistRule() missing %q: %q", want, checklist)
+		}
+	}
+
+	for name, prompt := range map[string]string{
+		"BuildSystemPrompt": BuildSystemPrompt(),
+		"BuildUserPrompt": BuildUserPrompt(
+			TaskInfo{ProjectName: "PINRU"},
+			PromptRequest{TaskType: "Feature迭代"},
+			analysis.Summary{DetectedStack: []string{"Go"}, TotalFiles: 8},
+			"",
+		),
+	} {
+		for _, want := range []string{
+			BuildBoundaryExpressionRule(),
+			BuildMediumAcceptanceChecklistRule(),
+			BuildMediumDifficultyReferenceRule(),
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Fatalf("%s missing medium rule block %q", name, want[:20])
+			}
 		}
 	}
 }
@@ -142,6 +208,9 @@ func TestBuildUserPromptUsesZeroToOneTaskTypeAndNewLimit(t *testing.T) {
 		"基于现有系统补齐完整新模块/新能力",
 		"150-300 个字之间",
 		"最多不超过 300 个字",
+		"中等题还要同时具备调用/数据流理解、实现决策、边界条件与约束三项证据，缺一项都不算达标",
+		"困难题还要至少体现多模块整合、关键设计取舍、复杂技术关注点中的一项",
+		"三项缺任何一项时必须换题",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("BuildUserPrompt() missing %q in: %q", want, got)

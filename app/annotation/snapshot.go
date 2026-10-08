@@ -130,7 +130,7 @@ func publishInitial(ctx context.Context, baseline, repoName, sha string, account
 	if err != nil {
 		return "", fmt.Errorf("创建初始快照仓库失败：%w", err)
 	}
-	if err := gitops.PublishSnapshotCommit(ctx, work, sha, account.Username, account.Token); err != nil {
+	if err := gitops.PublishPairwiseSnapshotCommit(ctx, work, sha, account.Username, account.Token); err != nil {
 		return "", err
 	}
 	return strings.TrimRight(repo.HTMLURL, "/") + "/commit/" + sha, nil

@@ -255,6 +255,12 @@ export function SyncToolbar({
   ) : customProjectPromptDocResult ? (
     <span>
       文档 <b className="text-stone-700 dark:text-stone-300">{customProjectPromptDocResult.generatedCount}</b>
+      {customProjectPromptDocResult.needsReviewCount > 0 && (
+        <>
+          <span className="mx-1 text-stone-300 dark:text-stone-700">·</span>
+          <span className="text-orange-500">待修正 {customProjectPromptDocResult.needsReviewCount}</span>
+        </>
+      )}
       {customProjectPromptDocResult.errorCount > 0 && (
         <>
           <span className="mx-1 text-stone-300 dark:text-stone-700">·</span>
@@ -361,7 +367,12 @@ export function SyncToolbar({
             state={customPromptTaskState}
             onClick={onCreateTasksFromPickedPromptDocs}
           />
-          {customProjectPromptDocResult && customProjectPromptDocResult.generatedCount > 0 && (
+          {customProjectPromptDocResult && customProjectPromptDocResult.details.some(
+            (detail) =>
+              (detail.status === 'generated' || detail.status === 'needs_review') &&
+              detail.outputPath &&
+              detail.content,
+          ) && (
             <QuickAction
               icon={FileText}
               label="用新文档建任务"
@@ -430,30 +441,37 @@ export function CustomProjectPickerModal({
   const prefixLabel = formatCustomProjectPrefixes(scanResult?.prefixes);
   const [selectedNames, setSelectedNames] = useState<string[]>([]);
   const [quantities, setQuantities] = useState({ codeGen: '10', feature: '10', bugFix: '2' });
-  const [difficultyQuantities, setDifficultyQuantities] = useState({ difficult: '20', hell: '2' });
+  const [difficultyQuantities, setDifficultyQuantities] = useState({ medium: '0', difficult: '22', hell: '0' });
   const counts: CustomPromptCounts = {
     codeGen: Number(quantities.codeGen),
     feature: Number(quantities.feature),
     bugFix: Number(quantities.bugFix),
+    medium: Number(difficultyQuantities.medium),
     difficult: Number(difficultyQuantities.difficult),
     hell: Number(difficultyQuantities.hell),
   };
   const totalCount = counts.codeGen + counts.feature + counts.bugFix;
-  const difficultyTotal = counts.difficult + counts.hell;
+  const difficultyTotal = counts.medium + counts.difficult + counts.hell;
   const allQuantityValues = [
     quantities.codeGen,
     quantities.feature,
     quantities.bugFix,
+    difficultyQuantities.medium,
     difficultyQuantities.difficult,
     difficultyQuantities.hell,
   ];
-  const parsedCounts = [counts.codeGen, counts.feature, counts.bugFix, counts.difficult, counts.hell];
+  const parsedCounts = [counts.codeGen, counts.feature, counts.bugFix, counts.medium, counts.difficult, counts.hell];
   const validCountInputs = allQuantityValues.every((value) => /^\d+$/.test(value))
     && parsedCounts.every((n) => Number.isSafeInteger(n) && n >= 0)
     && Number.isSafeInteger(totalCount)
     && Number.isSafeInteger(difficultyTotal);
-  const difficultyAllocationMatches = validCountInputs && difficultyTotal === totalCount;
-  const validCounts = validCountInputs && difficultyAllocationMatches;
+  const mediumCountWithinLimit = validCountInputs && counts.medium === 0;
+  const hellCountWithinLimit = validCountInputs && counts.hell <= counts.codeGen;
+  const difficultyTotalMatches = validCountInputs && difficultyTotal === totalCount;
+  const validCounts = mediumCountWithinLimit && hellCountWithinLimit && difficultyTotalMatches;
+  const fillAllDifficult = () => {
+    setDifficultyQuantities({ medium: '0', difficult: String(totalCount), hell: '0' });
+  };
   const selectedNameSet = useMemo(() => new Set(selectedNames), [selectedNames]);
 
   useEffect(() => {
@@ -527,13 +545,23 @@ export function CustomProjectPickerModal({
               ))}
             </div>
             <div className="mt-4 border-t border-stone-200 pt-3 dark:border-stone-700">
-              <p className="mb-2 text-xs font-medium text-stone-700 dark:text-stone-200">难度数量分配</p>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-xs font-medium text-stone-700 dark:text-stone-200">难度数量分配</p>
+                <button
+                  type="button"
+                  onClick={fillAllDifficult}
+                  disabled={!validCountInputs || importing || promptDocGenerating}
+                  className="rounded-md border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-600 transition-colors hover:bg-stone-50 disabled:opacity-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800 cursor-default"
+                >
+                  全部困难
+                </button>
+              </div>
               <div className="grid grid-cols-2 gap-3">
-                {([['difficult', '困难'], ['hell', '地狱']] as const).map(([key, label]) => (
+                {([['medium', '中等'], ['difficult', '困难'], ['hell', '地狱']] as const).map(([key, label]) => (
                   <label key={key} className="text-xs text-stone-600 dark:text-stone-300">
                     {label}
                     <input
-                      type="number" min="0" step="1" value={difficultyQuantities[key]}
+                      type="number" min="0" step="1" value={difficultyQuantities[key]} disabled={key === 'medium'}
                       onChange={(event) => setDifficultyQuantities((current) => ({ ...current, [key]: event.target.value }))}
                       className="mt-1 w-full rounded-lg border border-stone-300 bg-transparent p-2 dark:border-stone-700"
                     />
@@ -545,9 +573,13 @@ export function CustomProjectPickerModal({
               前三类可输入非负整数，填 0 表示不生成；其他题型固定为 0，不参与生成。
               {!validCountInputs
                 ? '请输入有效的非负整数。'
-                : difficultyAllocationMatches
-                  ? `每个项目共 ${totalCount} 题，其中困难 ${counts.difficult} 题、地狱 ${counts.hell} 题，难度下限为困难。`
-                  : `难度数量合计 ${difficultyTotal} 题，与题型总数 ${totalCount} 题不一致。`}
+                : !mediumCountWithinLimit
+                  ? '中等标签不再用于出题，Feature/Bug 统一显示困难。'
+                  : !hellCountWithinLimit
+                    ? `地狱题数量不能超过 0-1代码生成数量（最多 ${counts.codeGen} 题）。`
+                    : !difficultyTotalMatches
+                      ? `难度数量合计 ${difficultyTotal} 题，与题型总数 ${totalCount} 题不一致。`
+                      : `每个项目共 ${totalCount} 题，其中中等 ${counts.medium} 题、困难 ${counts.difficult} 题、地狱 ${counts.hell} 题；0-1 按困难标准选题；Feature/Bug 须具备中等三项证据，标签固定为困难。`}
             </p>
           </fieldset>
           {candidates.length === 0 ? (
@@ -607,7 +639,7 @@ export function CustomProjectPickerModal({
               className="inline-flex items-center gap-1.5 rounded-lg border border-stone-900 bg-stone-900 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-50 dark:border-stone-100 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-200 cursor-default"
             >
               {(importing || promptDocGenerating) && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {promptDocGenerating ? '生成文档中' : importing ? '导入中' : '导入并生成文档'}
+              {promptDocGenerating ? '生成并建题中' : importing ? '导入中' : '导入并生成文档'}
             </button>
           </div>
         </div>

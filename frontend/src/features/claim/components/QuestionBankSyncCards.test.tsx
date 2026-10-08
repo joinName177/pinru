@@ -10,13 +10,14 @@ function setup() {
 }
 
 describe('custom document quantities', () => {
-  it('defaults to 22 hard tasks across the three enabled task types', () => {
+  it('defaults to difficult labels for every task type', () => {
     setup();
     expect(screen.getByRole('spinbutton', { name: '0-1代码生成' })).toHaveValue(10);
     expect(screen.getByRole('spinbutton', { name: 'Feature迭代' })).toHaveValue(10);
     expect(screen.getByRole('spinbutton', { name: 'Bug修复' })).toHaveValue(2);
-    expect(screen.getByRole('spinbutton', { name: '困难' })).toHaveValue(20);
-    expect(screen.getByRole('spinbutton', { name: '地狱' })).toHaveValue(2);
+    expect(screen.getByRole('spinbutton', { name: '中等' })).toHaveValue(0);
+    expect(screen.getByRole('spinbutton', { name: '困难' })).toHaveValue(22);
+    expect(screen.getByRole('spinbutton', { name: '地狱' })).toHaveValue(0);
     expect(screen.queryByRole('spinbutton', { name: '一般' })).not.toBeInTheDocument();
     expect(screen.queryByRole('spinbutton', { name: '工程化' })).not.toBeInTheDocument();
   });
@@ -26,14 +27,49 @@ describe('custom document quantities', () => {
     fireEvent.change(screen.getByRole('spinbutton', { name: '0-1代码生成' }), { target: { value: '0' } });
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Feature迭代' }), { target: { value: '3' } });
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Bug修复' }), { target: { value: '2' } });
-    fireEvent.change(screen.getByRole('spinbutton', { name: '困难' }), { target: { value: '3' } });
-    fireEvent.change(screen.getByRole('spinbutton', { name: '地狱' }), { target: { value: '2' } });
+    expect(screen.getByRole('spinbutton', { name: '中等' })).toBeDisabled();
+    fireEvent.change(screen.getByRole('spinbutton', { name: '困难' }), { target: { value: '5' } });
+    fireEvent.change(screen.getByRole('spinbutton', { name: '地狱' }), { target: { value: '0' } });
     for (const name of ['代码理解', '代码测试', '代码重构']) {
       expect(screen.getByRole('spinbutton', { name })).toBeDisabled();
       expect(screen.getByRole('spinbutton', { name })).toHaveValue(0);
     }
     fireEvent.click(screen.getByRole('button', { name: '导入并生成文档' }));
-    expect(onImport).toHaveBeenCalledWith(['cyc-05'], { codeGen: 0, feature: 3, bugFix: 2, difficult: 3, hell: 2 });
+    expect(onImport).toHaveBeenCalledWith(['cyc-05'], { codeGen: 0, feature: 3, bugFix: 2, medium: 0, difficult: 5, hell: 0 });
+  });
+
+  it('allows an all-difficult allocation for every task type', () => {
+    const onImport = setup();
+    fireEvent.change(screen.getByRole('spinbutton', { name: '中等' }), { target: { value: '0' } });
+    fireEvent.change(screen.getByRole('spinbutton', { name: '困难' }), { target: { value: '22' } });
+    expect(screen.getByRole('button', { name: '导入并生成文档' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: '导入并生成文档' }));
+    expect(onImport).toHaveBeenCalledWith(['cyc-05'], { codeGen: 10, feature: 10, bugFix: 2, medium: 0, difficult: 22, hell: 0 });
+  });
+
+  it('fills the whole total with difficult tasks from the shortcut', () => {
+    const onImport = setup();
+    fireEvent.click(screen.getByRole('button', { name: '全部困难' }));
+    expect(screen.getByRole('spinbutton', { name: '中等' })).toHaveValue(0);
+    expect(screen.getByRole('spinbutton', { name: '困难' })).toHaveValue(22);
+    expect(screen.getByRole('spinbutton', { name: '地狱' })).toHaveValue(0);
+    fireEvent.click(screen.getByRole('button', { name: '导入并生成文档' }));
+    expect(onImport).toHaveBeenCalledWith(['cyc-05'], { codeGen: 10, feature: 10, bugFix: 2, medium: 0, difficult: 22, hell: 0 });
+  });
+
+  it('requires difficulty quantities to equal the generated task total', () => {
+    setup();
+    fireEvent.change(screen.getByRole('spinbutton', { name: '困难' }), { target: { value: '11' } });
+    expect(screen.getByText(/难度数量合计 11 题，与题型总数 22 题不一致/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '导入并生成文档' })).toBeDisabled();
+  });
+
+  it('disables medium labels and caps hell by code generation count', () => {
+    setup();
+    expect(screen.getByRole('spinbutton', { name: '中等' })).toBeDisabled();
+    fireEvent.change(screen.getByRole('spinbutton', { name: '地狱' }), { target: { value: '11' } });
+    expect(screen.getByText(/地狱题数量不能超过 0-1代码生成数量/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '导入并生成文档' })).toBeDisabled();
   });
 
   it('blocks empty, fractional and negative quantities', () => {
@@ -43,13 +79,6 @@ describe('custom document quantities', () => {
       expect(screen.getByRole('button', { name: '导入并生成文档' })).toBeDisabled();
     }
     expect(onImport).not.toHaveBeenCalled();
-  });
-
-  it('requires difficulty quantities to equal the generated task total', () => {
-    setup();
-    fireEvent.change(screen.getByRole('spinbutton', { name: '困难' }), { target: { value: '11' } });
-    expect(screen.getByText(/难度数量合计 13 题，与题型总数 22 题不一致/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '导入并生成文档' })).toBeDisabled();
   });
 });
 

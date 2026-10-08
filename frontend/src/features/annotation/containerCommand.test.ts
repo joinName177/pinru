@@ -32,6 +32,15 @@ describe('container startup command', () => {
     expect(runB.runDirectory).toBe('run-9-b');
     expect(runA.command).toContain('adminfather/benzhi-claude-code2:20260919');
     expect(runB.command).toContain('adminfather/benzhi-claude-code2:20260919');
+    for (const variable of ['ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL']) {
+      expect(runA.command).toContain(`-e "${variable}=auto_model/urm"`);
+      expect(runB.command).toContain(`-e "${variable}=ark/urm-03"`);
+    }
+    const normalize = (command: string) => command
+      .replace(/auto_model\/urm|ark\/urm-03/g, '<model>')
+      .replace(/cyc03-claude-9-[ab]/g, '<container>')
+      .replace(/run-9-[ab]/g, '<run>');
+    expect(normalize(runA.command)).toBe(normalize(runB.command));
   });
 
   it('rejects missing, conflicting, and unsafe task identity', () => {

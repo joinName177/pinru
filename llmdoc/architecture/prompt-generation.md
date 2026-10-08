@@ -207,6 +207,22 @@ func (s *PromptService) resolveProviderForTest(provider store.LLMProvider) (stor
 
 ---
 
+## 7. 难度证据规则（G16/G19 与出题标签分开）
+
+来源：`internal/prompt/difficulty_evidence.go`、`app/prompt/service.go`、`app/cli/skills.go`
+
+- 中等题（Feature迭代 / Bug修复）必须同时具备三项可独立验收的证据，缺一项都不行：调用/数据流理解（输入或动作经过的业务环节及最终影响）、实现决策（处理策略的选择及正常/失败/冲突结果）、边界条件与约束（具体触发条件、边界输入或旧数据及预期行为）。
+- 困难 / 地狱题（0-1代码生成）仍按三类特征“至少命中一项”：多模块整合、关键设计取舍、复杂技术关注点，并写出对应的模块汇合、冲突取舍或复杂技术触发证据。
+- 出题标签与内容门槛分离：Feature迭代 / Bug修复固定显示【困难】，内容至少具备 G19 中等三项证据；0-1 使用【困难】或【地狱】，内容须有 G16 困难证据。`TaskTypeDifficultyRule` 为单题、批量、重试与内置技能提供统一说明；所有入口按题型选择证据校验，不按展示标签切换。
+- 批量默认 10 个 0-1、10 个 Feature、2 个 Bug，全部标困难。中等数量固定为 0，地狱名额不能超过 0-1 数量，其余名额为困难。生成文档和建卡导入都校验标签；旧文档需重新核对内容与标签后导入，现有题卡不自动迁移。
+- G16/G19 证据不足必须作废换题，不能靠润色或调高字段返修。关键词校验仅用于初筛，不能证明架构复杂度；真实难度仍需依据源码、调用链、策略后果和异常结果审查。普通提醒、列表多条件筛选或“保存失败重试”本身不构成困难证据。
+- 只写“统一展示”“兼容旧数据”“保持一致”“补充校验”或罗列技术名词不算命中。`ValidatePromptDifficultyEvidence` 会逐项校验，缺失项会写进错误信息并触发换题重生成。
+- 写法范例取自已通过审核的中等题 c2c-001-2，见 `internal/prompt.MediumDifficultyReferencePrompt`；单题出题、批量文档出题和质量重生成提示词共用 `BuildMediumDifficultyReferenceRule`。
+- 边界条件与约束必须是真正改变实现路径的特例，抽出三种可复用模式（`internal/prompt.BoundaryExpressionPatterns`）：数值或口径冲突要指定以哪一处为准、重复或并发操作要说明保留首次或拒绝第二次、历史数据或状态被替换要给出默认值或回退方式。只写“超过上限就提示”“重复提交要处理”这类只点特例名称的擦边写法不算命中。
+- 三项证据另有交付前逐条打钩清单（`internal/prompt.MediumAcceptanceChecklist`），单题与批量出题都会注入；批量生成返回的条目仍由 `ValidatePromptDifficultyEvidence` 兜底。
+
+---
+
 ## 7. 提示词规范 6 条要求
 
 来源：`BuildSystemPrompt()`，`internal/prompt/prompt.go`
@@ -215,13 +231,13 @@ func (s *PromptService) resolveProviderForTest(provider store.LLMProvider) (stor
 
 2. **禁止 Markdown 格式**：不能出现井号标题、双星粗体、代码块、有序或无序列表符号；输出必须是纯文本段落。
 
-3. **简短直接**：正文描述控制在 2–4 句话内，清晰表达「用户遇到了什么问题」或「需要什么新功能」；全文总长度不得超过 80 个字（空白字符不计入）；去掉所有铺垫语、客套语和废话。
+3. **完整适中**：正文写清当前情况、触发场景、目标行为和可核查的交付结果；正文建议控制在 150–300 个非空白字符，最多不超过 300 个字符；去掉铺垫语、客套语和废话，但不要为了压短而丢掉真实边界和验收信息。
 
 4. **约束要求必须融入正文**：所有约束要求（技术栈、架构、代码风格、业务规则等）必须作为正文的自然组成部分写出，和需求描述合在同一段里；严禁将约束单独分段、分行或加任何前缀标签；严禁出现"xx约束：""xx约束:""xx要求："等"标签名称：内容"形式的分类标头；最终输出应该是一整段连贯的文字，像真实开发者在聊天窗口里一口气说完的需求；若无约束，则不要为了凑字数而添加约束相关的句子。
 
 5. **口语化、自然**：读起来要像真实开发者或产品经理发出的任务描述；去除 AI 写作惯用的刻板措辞。
 
-6. **输出前自检**：如果全文超过 80 个字，先自行压缩语言，再输出最终版本。
+6. **输出前自检**：如果正文超过 300 个字符，先自行压缩语言，再输出最终版本；同时自检中等题三项证据是否齐全。
 
 ---
 
@@ -230,7 +246,7 @@ func (s *PromptService) resolveProviderForTest(provider store.LLMProvider) (stor
 ### 触发条件
 
 `PromptBodyExceedsLimit(promptText string) bool` 返回 `true`，即：
-- `PromptBodyRuneCount` > `MaxPromptBodyRunes`（80）
+- `PromptBodyRuneCount` > `MaxPromptBodyRunes`（300）
 - 计算时排除空白字符；兼容旧格式时排除约束标签行
 
 ### 实现

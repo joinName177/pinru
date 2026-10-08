@@ -49,8 +49,13 @@ func (s *AnnotationService) PreparePairwiseSide(ctx context.Context, req Pairwis
 	}
 	containerID, containerName := run.ContainerID, run.ContainerName
 	workspacePath, repoRelativePath := run.WorkspacePath, run.RepoRelativePath
+	modelName := run.ModelName
+	if modelName == "" {
+		modelName = domain.PairwiseModelForSide(req.Side)
+	}
 	*run = domain.PairwiseRun{
 		Side:             req.Side,
+		ModelName:        modelName,
 		Branch:           string(req.Side),
 		ContainerID:      containerID,
 		ContainerName:    containerName,
@@ -214,5 +219,8 @@ func (s *AnnotationService) pushPairwiseBranch(ctx context.Context, path, snapsh
 	} else if _, err := runCommand(ctx, path, "git", "remote", "add", "origin", remote); err != nil {
 		return err
 	}
-	return gitops.PushBranchWithMode(path, side, username, token, false)
+	// Pair-wise A/B branches are disposable result refs. A repeated capture for
+	// the same task must replace the previous result instead of being rejected
+	// because the remote branch contains the old artifact.
+	return gitops.PushBranch(path, side, username, token)
 }

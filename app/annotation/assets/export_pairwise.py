@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import re
 from pathlib import Path
 import sys
 import xml.etree.ElementTree as ET
@@ -21,13 +22,24 @@ FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
 
 HEADERS = [
     "User Prompt", "任务类型", "任务难度", "语言/框架", "Harness", "Harness 版本",
-    "操作系统", "环境可复现等级", "初始环境快照", "A-SessionID", "A-轨迹文件",
+    "操作系统", "环境可复现等级", "初始环境快照", "A-模型", "A-SessionID", "A-轨迹文件",
     "A-产物快照", "A-运行录屏", "B-SessionID", "B-轨迹文件", "B-产物快照",
-    "B-运行录屏", "A-交付完整性", "A-交付完整性描述", "B-交付完整性", "B-交付完整性描述",
+    "B-运行录屏", "B-模型", "A-交付完整性", "A-交付完整性描述", "B-交付完整性", "B-交付完整性描述",
     "GSB 结论", "GSB 理由", "有效性", "备注",
 ]
 CONCLUSIONS = {"A_better": "A 更好", "B_better": "B 更好", "same": "Same"}
-WIDTHS = [36, 18, 14, 28, 16, 16, 18, 24, 48, 24, 42, 48, 42, 24, 42, 48, 42, 14, 48, 14, 48, 14, 72, 22, 32]
+WIDTHS = [36, 18, 14, 28, 16, 16, 18, 24, 24, 24, 42, 48, 42, 24, 42, 48, 42, 24, 14, 48, 14, 48, 14, 72, 22, 32]
+
+
+def workbook_filename(cases):
+    """Use the task name for a single-task export without allowing path escapes."""
+    if len(cases) != 1:
+        return "pairwise-gsb.xlsx"
+    task_name = str(cases[0].get("taskName") or "").strip()
+    task_name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", task_name).strip(" .")
+    if not task_name or task_name in {".", ".."}:
+        return "pairwise-gsb.xlsx"
+    return task_name[:180] + ".xlsx"
 
 
 def current_review(case):
@@ -48,15 +60,17 @@ def row(case, payload):
     run_a = pairwise.get("runA") or {}
     run_b = pairwise.get("runB") or {}
     review = current_review(case)
+    model_a = run_a.get("modelName") or "auto_model/urm"
+    model_b = run_b.get("modelName") or "ark/urm-03"
     return [
         pairwise.get("prompt", ""), case.get("taskType", ""), case.get("promptDifficulty", ""),
         pairwise.get("language", ""),
         pairwise.get("harness", ""), pairwise.get("harnessVersion", ""), pairwise.get("os", ""),
         pairwise.get("environment", ""), case.get("snapshotUrl", ""),
-        run_a.get("sessionId", ""), captured_trace(case, run_a), run_a.get("deliverableUrl", ""),
+        model_a, run_a.get("sessionId", ""), captured_trace(case, run_a), run_a.get("deliverableUrl", ""),
         run_a.get("videoPath") or run_a.get("videoUrl", ""), run_b.get("sessionId", ""),
         captured_trace(case, run_b), run_b.get("deliverableUrl", ""),
-        run_b.get("videoPath") or run_b.get("videoUrl", ""),
+        run_b.get("videoPath") or run_b.get("videoUrl", ""), model_b,
         review.get("aCompletenessScore", ""), review.get("aCompletenessDescription", ""),
         review.get("bCompletenessScore", ""), review.get("bCompletenessDescription", ""),
         CONCLUSIONS.get(review.get("conclusion"), ""), review.get("reason", ""),
@@ -107,7 +121,7 @@ def build_sheet(data, data_rows):
         })
         for column, value in enumerate(values):
             if value is not None and value != "":
-                if column in (17, 19):
+                if column in (19, 21):
                     xml_row.append(number_cell(row_number, column, value, 6))
                 else:
                     xml_row.append(inline_cell(row_number, column, value, 6))
@@ -165,7 +179,7 @@ def export(payload, output):
     output.mkdir(parents=True, exist_ok=True)
     cases = payload.get("cases") or []
     data_rows = [row(case, payload) for case in cases]
-    workbook_path = (output / "pairwise-gsb.xlsx").resolve()
+    workbook_path = (output / workbook_filename(cases)).resolve()
     build_workbook(data_rows, workbook_path)
 
     issues = payload.get("issues") or []

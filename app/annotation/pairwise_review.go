@@ -20,7 +20,7 @@ type PairwiseReviewRequest struct {
 
 // 装饰性引号与括号的规则由生成端剔除和导出端拦截共同保证，
 // 这里不因该规则调整而作废历史 GSB 评价，避免整批重审。
-const pairwiseReviewSkillVersion = "pairwise-gsb-v9-completeness-20260923"
+const pairwiseReviewSkillVersion = "pairwise-gsb-v10-persist-recovery-20260924"
 
 func pairwiseReviewSkillHash() string {
 	return stableKey(pairwiseReviewSkillVersion)
@@ -52,7 +52,11 @@ func (s *AnnotationService) ReviewPairwise(ctx context.Context, req PairwiseRevi
 	if current := domain.CurrentPairwiseReview(*c); current != nil && current.Model == execution.Label && current.SkillHash == pairwiseReviewSkillHash() && !req.Force {
 		value := true
 		current.Current = &value
-		return c, nil
+		saved, err := s.store.SaveAnnotationCase(*c, c.Revision)
+		if err != nil {
+			return nil, err
+		}
+		return saved, nil
 	}
 	if s.cli == nil {
 		return nil, errors.New("未配置审核执行器")
@@ -117,11 +121,11 @@ func (s *AnnotationService) ReviewPairwise(ctx context.Context, req PairwiseRevi
 	if err != nil {
 		return nil, err
 	}
+	value := true
+	review.Current = &value
 	c.Pairwise.Reviews = append(c.Pairwise.Reviews, review)
 	saved, err := s.store.SaveAnnotationCase(*c, c.Revision)
 	if err == nil {
-		value := true
-		saved.Pairwise.Reviews[len(saved.Pairwise.Reviews)-1].Current = &value
 		domain.ReportProgress(ctx, 100, "Pair-wise GSB 已保存")
 	}
 	return saved, err
